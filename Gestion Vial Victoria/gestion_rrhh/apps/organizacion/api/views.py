@@ -18,7 +18,8 @@ class EmpresaViewSet(viewsets.ModelViewSet):
     permission_classes = [LecturaAutenticadaEscrituraPorRol(roles.ADMIN, roles.RRHH)]
     filterset_fields = ("activa",)
     search_fields = ("nombre", "cuit")
-    http_method_names = ["get", "post", "patch", "head", "options"]  # sin DELETE (baja = activa=False)
+    # sin DELETE (baja lógica = activa=False)
+    http_method_names = ["get", "post", "patch", "head", "options"]
 
 
 class SectorViewSet(viewsets.ModelViewSet):
