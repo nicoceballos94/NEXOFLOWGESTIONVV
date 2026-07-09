@@ -79,6 +79,27 @@ def test_baja_logica_finaliza_relacion_sin_borrar(cliente_rrhh, empresa):
     assert RelacionLaboral.objects.filter(pk=relacion.pk).exists()  # no se borró (R10)
 
 
+def test_reingreso_crea_nueva_relacion_activa(cliente_rrhh, empresa):
+    cliente_rrhh.post("/api/v1/empleados/", _payload_alta(empresa), format="json")
+    empleado = Empleado.objects.get(legajo="0001")
+    relacion = empleado.relacion_activa
+    # baja
+    cliente_rrhh.post(
+        f"/api/v1/empleados/{empleado.id}/relaciones/{relacion.id}/finalizar/",
+        {"fecha_egreso": "2025-03-01", "motivo_egreso": "RENUNCIA"},
+        format="json",
+    )
+    # reingreso: nueva relación ACTIVA
+    resp = cliente_rrhh.post(
+        f"/api/v1/empleados/{empleado.id}/relaciones/",
+        {"empresa": empresa.id, "fecha_ingreso": "2025-06-01"},
+        format="json",
+    )
+    assert resp.status_code == 201, resp.data
+    assert empleado.relaciones.filter(estado=EstadoRelacion.ACTIVA).count() == 1
+    assert empleado.relaciones.count() == 2
+
+
 def test_no_hay_delete_de_empleados(cliente_rrhh, empresa):
     cliente_rrhh.post("/api/v1/empleados/", _payload_alta(empresa), format="json")
     empleado = Empleado.objects.get(legajo="0001")

@@ -17,6 +17,7 @@ from .serializers import (
     ActualizarEmpleadoSerializer,
     CrearDocumentoSerializer,
     CrearEmpleadoSerializer,
+    CrearRelacionSerializer,
     DocumentoEmpleadoSerializer,
     EmpleadoSerializer,
     FinalizarRelacionSerializer,
@@ -96,6 +97,17 @@ class EmpleadoViewSet(
             actor=request.user, relacion=relacion, **entrada.validated_data
         )
         return Response(RelacionLaboralSerializer(relacion).data)
+
+    @action(detail=True, methods=["post"], url_path="relaciones")
+    def crear_relacion(self, request, pk=None):
+        """Alta de una nueva relación laboral (p. ej. reingreso). R1 valida en el service."""
+        empleado = get_object_or_404(Empleado, pk=pk)
+        entrada = CrearRelacionSerializer(data=request.data)
+        entrada.is_valid(raise_exception=True)
+        relacion = services.crear_relacion_laboral(
+            actor=request.user, empleado=empleado, **entrada.validated_data
+        )
+        return Response(RelacionLaboralSerializer(relacion).data, status=201)
 
 
 class TipoDocumentoViewSet(viewsets.ModelViewSet):

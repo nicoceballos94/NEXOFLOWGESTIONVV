@@ -66,12 +66,15 @@ class EmpleadoSerializer(serializers.ModelSerializer):
 
 
 class DocumentoEmpleadoSerializer(serializers.ModelSerializer):
+    tipo_documento_nombre = serializers.CharField(source="tipo_documento.nombre", read_only=True)
+
     class Meta:
         model = DocumentoEmpleado
         fields = (
             "id",
             "empleado",
             "tipo_documento",
+            "tipo_documento_nombre",
             "numero",
             "fecha_vencimiento",
             "observaciones",
@@ -86,8 +89,8 @@ class TipoDocumentoSerializer(serializers.ModelSerializer):
 
 
 # ---------- Entrada ----------
-class _RelacionLaboralEntradaSerializer(serializers.ModelSerializer):
-    """Datos de la relación laboral ACTIVA que se crea junto con el alta (spec §1.1)."""
+class CrearRelacionSerializer(serializers.ModelSerializer):
+    """Datos para crear una relación laboral (junto al alta, o suelta en un reingreso)."""
 
     class Meta:
         model = RelacionLaboral
@@ -103,7 +106,7 @@ class _RelacionLaboralEntradaSerializer(serializers.ModelSerializer):
 
 
 class CrearEmpleadoSerializer(serializers.ModelSerializer):
-    relacion = _RelacionLaboralEntradaSerializer(write_only=True)
+    relacion = CrearRelacionSerializer(write_only=True)
 
     class Meta:
         model = Empleado
