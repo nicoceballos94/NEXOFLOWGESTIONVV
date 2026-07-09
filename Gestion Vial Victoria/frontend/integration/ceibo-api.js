@@ -40,7 +40,16 @@
     });
     var data = await r.json().catch(function () { return {}; });
     if (!r.ok) {
-      var msg = data.detalle || JSON.stringify(data.campos || data);
+      var msg;
+      if (data.campos && Object.keys(data.campos).length) {
+        // errores por campo del backend → mensaje legible
+        msg = Object.keys(data.campos).map(function (k) {
+          var v = data.campos[k];
+          return (Array.isArray(v) ? v.join(" ") : String(v));
+        }).join(" · ");
+      } else {
+        msg = data.detalle || ("Error " + r.status);
+      }
       throw new Error(msg);
     }
     return data;
@@ -85,6 +94,22 @@
     if (dias < 0) return "bad";
     if (dias <= 30) return "warn";
     return "ok";
+  }
+
+  // ---------- toast de feedback (sin alert(), que bloquea la automatización) ----------
+  function showToast(msg, kind) {
+    var colors = kind === "error"
+      ? { bg: "#3b1218", bd: "#F87171", fg: "#FCA5A5" }
+      : { bg: "#0f2b26", bd: "#2DD4BF", fg: "#5EEAD4" };
+    var t = document.createElement("div");
+    t.textContent = msg;
+    t.style.cssText =
+      "position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:99999;" +
+      "background:" + colors.bg + ";border:1px solid " + colors.bd + ";color:" + colors.fg + ";" +
+      "font:600 13.5px/1.4 'Hanken Grotesk',-apple-system,sans-serif;padding:12px 20px;border-radius:12px;" +
+      "box-shadow:0 12px 40px rgba(0,0,0,.45);max-width:80vw;opacity:1;transition:opacity .3s";
+    document.body.appendChild(t);
+    setTimeout(function () { t.style.opacity = "0"; setTimeout(function () { t.remove(); }, 320); }, kind === "error" ? 4500 : 2600);
   }
 
   // ---------- adaptador empleado (API → shape del diseño) ----------
@@ -150,6 +175,8 @@
 
   // ============================ API pública ============================
   window.CeiboAPI = {
+    toast: showToast,
+
     async init() {
       var tk = await fetch(CONFIG.API + "/auth/token/", {
         method: "POST", headers: { "content-type": "application/json" },
@@ -182,6 +209,7 @@
         await jsend("PATCH", "/empleados/" + editId + "/", {
           nombre: nm.nombre, apellido: nm.apellido, email: f.email, telefono: f.tel,
         });
+        showToast("Empleado actualizado", "ok");
         return;
       }
       // Alta completa: empleado + relación ACTIVA.
@@ -197,6 +225,7 @@
           puesto: puestoId, fecha_ingreso: fechaISO,
         },
       });
+      showToast("Empleado dado de alta", "ok");
     },
 
     // Baja lógica: lee el motivo del modal, finaliza la relación ACTIVA (fecha = hoy).
@@ -208,6 +237,7 @@
       await jsend("POST", "/empleados/" + emp.id + "/relaciones/" + emp._relacionActivaId + "/finalizar/", {
         fecha_egreso: todayISO(), motivo_egreso: motivo,
       });
+      showToast("Baja registrada", "ok");
     },
 
     // Reingreso: nueva relación ACTIVA (misma empresa de la última relación, fecha = hoy).
@@ -218,6 +248,7 @@
       await jsend("POST", "/empleados/" + emp.id + "/relaciones/", {
         empresa: empresaId, fecha_ingreso: todayISO(),
       });
+      showToast("Reingreso registrado", "ok");
     },
 
     // Documentos de un empleado (lectura) → shape del diseño.

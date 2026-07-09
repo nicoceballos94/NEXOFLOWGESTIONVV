@@ -56,7 +56,7 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
       await window.CeiboAPI.submitAlta(this.state.altaEditId, this.state.selEmp);
       this.setState({ modal: null, altaEditId: null });
       await this.reloadEmpleados();
-    } catch (e) { console.error('[ceibo] alta/edición', e); this.setState({ apiErr: String(e) }); }
+    } catch (e) { console.error('[ceibo] alta/edición', e); window.CeiboAPI.toast(e.message || String(e), 'error'); }
   };
   confirmBaja = async () => {
     try {
@@ -64,14 +64,14 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
       await window.CeiboAPI.darDeBaja(emp);
       this.setState({ modal: null });
       await this.reloadEmpleados();
-    } catch (e) { console.error('[ceibo] baja', e); this.setState({ apiErr: String(e) }); }
+    } catch (e) { console.error('[ceibo] baja', e); window.CeiboAPI.toast(e.message || String(e), 'error'); }
   };
   confirmReingreso = async (id) => {
     try {
       const emp = (this.state.empleados || []).find(e => e.id === id);
       await window.CeiboAPI.reingreso(emp);
       await this.reloadEmpleados();
-    } catch (e) { console.error('[ceibo] reingreso', e); this.setState({ apiErr: String(e) }); }
+    } catch (e) { console.error('[ceibo] reingreso', e); window.CeiboAPI.toast(e.message || String(e), 'error'); }
   };
   selectEmp = (id) => {
     this.setState({ selEmp: id, view: 'ficha' });
