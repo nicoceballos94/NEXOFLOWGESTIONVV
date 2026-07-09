@@ -13,6 +13,7 @@ urlpatterns = [
     # Apps de dominio
     path("api/v1/", include("apps.usuarios.api.urls")),
     path("api/v1/", include("apps.organizacion.api.urls")),
+    path("api/v1/", include("apps.empleados.api.urls")),
     # Contrato OpenAPI — fuente de verdad para el frontend (Claude Design) y n8n
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
     path("api/docs/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),
