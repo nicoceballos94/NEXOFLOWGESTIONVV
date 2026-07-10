@@ -27,10 +27,15 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
     const emps = await window.CeiboAPI.listEmpleados();
     this.setState({ empleados: emps });
   };
+  reloadNovedades = async () => {
+    const novs = await window.CeiboAPI.listNovedades();
+    this.setState({ novedades: novs });
+  };
   async componentDidMount() {
     try {
       await window.CeiboAPI.init();
       await this.reloadEmpleados();
+      await this.reloadNovedades();
       const e = this.state.empleados;
       if (e && e.length) this.setState({ selEmp: e[0].id });
     } catch (err) {
@@ -43,8 +48,28 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
     v.submitAlta = this.submitAlta;
     v.altaTitle = this.state.altaEditId ? 'Editar empleado' : 'Alta de empleado';
     if (v.ficha) v.ficha.openEdit = () => this.openEdit(this.state.selEmp);
+    v.submitNov = this.submitNov;
+    v.submitProrroga = this.submitProrroga;
     return v;
   }
+  openAltaNov = () => {
+    this.setState({ modal: 'altanov' });
+    setTimeout(() => window.CeiboAPI.populateNovForm(), 60);
+  };
+  submitNov = async () => {
+    try {
+      await window.CeiboAPI.submitNov();
+      this.setState({ modal: null });
+      await this.reloadNovedades();
+    } catch (e) { console.error('[ceibo] novedad', e); window.CeiboAPI.toast(e.message || String(e), 'error'); }
+  };
+  submitProrroga = async () => {
+    try {
+      await window.CeiboAPI.submitProrroga(this.state.detNovId);
+      this.setState({ modal: null });
+      await this.reloadNovedades();
+    } catch (e) { console.error('[ceibo] prórroga', e); window.CeiboAPI.toast(e.message || String(e), 'error'); }
+  };
   openAlta = () => this.setState({ modal: 'alta', altaEditId: null });
   openEdit = (id) => {
     this.setState({ modal: 'alta', altaEditId: id });
@@ -96,8 +121,14 @@ EDICIONES = [
     # --- state: campos nuevos ---
     (
         "theme: 'dark', view: 'dashboard', selEmp: 1,",
-        "theme: 'dark', view: 'dashboard', selEmp: 1,\n    empleados: null, apiErr: null, altaEditId: null,",
+        "theme: 'dark', view: 'dashboard', selEmp: 1,\n    empleados: null, novedades: null, apiErr: null, altaEditId: null,",
         "state: campos de integración",
+    ),
+    # --- novBase(): usar datos reales si están cargados ---
+    (
+        "  novBase() {\n    return [",
+        "  novBase() {\n    if (this.state.novedades) return this.state.novedades;\n    return [",
+        "novBase(): guard de datos reales",
     ),
     # --- base(): usar datos reales si están cargados ---
     (
@@ -128,11 +159,33 @@ EDICIONES = [
         "data-modal=\"baja\" style=\"background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:440px;max-width:100%",
         "modal baja: data-modal",
     ),
+    (
+        "style=\"background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:680px;max-width:100%",
+        "data-modal=\"altanov\" style=\"background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:680px;max-width:100%",
+        "modal alta novedad: data-modal",
+    ),
+    (
+        "style=\"background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:460px;max-width:100%",
+        "data-modal=\"prorroga\" style=\"background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:460px;max-width:100%",
+        "modal prórroga: data-modal",
+    ),
     # --- template: botón Guardar empleado → submitAlta ---
     (
         '<button onClick="{{ closeModal }}" style="background:var(--accent);border:none;color:#04201C;font-weight:600;font-size:13px;border-radius:10px;padding:0 20px;height:40px;cursor:pointer;box-shadow:0 4px 14px rgba(45,212,191,.28)">Guardar empleado</button>',
         '<button onClick="{{ submitAlta }}" style="background:var(--accent);border:none;color:#04201C;font-weight:600;font-size:13px;border-radius:10px;padding:0 20px;height:40px;cursor:pointer;box-shadow:0 4px 14px rgba(45,212,191,.28)">Guardar empleado</button>',
         "botón Guardar → submitAlta",
+    ),
+    # --- template: botón Registrar novedad → submitNov ---
+    (
+        '<button onClick="{{ closeModal }}" style="background:var(--accent);border:none;color:#04201C;font-weight:600;font-size:13px;border-radius:10px;padding:0 20px;height:40px;cursor:pointer">Registrar</button>',
+        '<button onClick="{{ submitNov }}" style="background:var(--accent);border:none;color:#04201C;font-weight:600;font-size:13px;border-radius:10px;padding:0 20px;height:40px;cursor:pointer">Registrar</button>',
+        "botón Registrar novedad → submitNov",
+    ),
+    # --- template: botón Registrar prórroga → submitProrroga ---
+    (
+        '<button onClick="{{ backToDet }}" style="background:var(--accent);border:none;color:#04201C;font-weight:600;font-size:13px;border-radius:10px;padding:0 20px;height:40px;cursor:pointer">Registrar prórroga</button>',
+        '<button onClick="{{ submitProrroga }}" style="background:var(--accent);border:none;color:#04201C;font-weight:600;font-size:13px;border-radius:10px;padding:0 20px;height:40px;cursor:pointer">Registrar prórroga</button>',
+        "botón Registrar prórroga → submitProrroga",
     ),
     # --- template: título del modal dinámico (Alta / Editar) ---
     (

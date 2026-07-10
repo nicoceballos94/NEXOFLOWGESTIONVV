@@ -22,6 +22,8 @@
   var _sectorByName = {}, _sectorById = {};
   var _puestoByName = {}, _puestoById = {};
   var _rawEmpleados = [];
+  var _empById = {};              // id → { name, empresa } (para adaptar novedades)
+  var _tipoNovByCodigo = {};      // codigo → tipo de novedad (con flags)
 
   // ---------- HTTP ----------
   function auth() { return { Authorization: "Bearer " + _token }; }
@@ -111,6 +113,23 @@
   Object.keys(EDU).forEach(function (k) { EDU_REV[EDU[k]] = k; });
   Object.keys(JORNADA).forEach(function (k) { JORNADA_REV[JORNADA[k]] = k; });
 
+  // Novedades: texto del <select> del diseño → código/valor de la API.
+  var TIPONOV = {
+    "Falta": "FALTA", "Licencia médica": "LICENCIA_MEDICA", "Accidente": "ACCIDENTE",
+    "Vacaciones": "VACACIONES", "Permiso": "PERMISO", "Horas extra": "HORAS_EXTRA",
+  };
+  var CLASIF = { "Justificada": "JUSTIFICADA", "Injustificada": "INJUSTIFICADA" };
+  var CLASIF_REV = { "JUSTIFICADA": "Justificada", "INJUSTIFICADA": "Injustificada" };
+  // Estado elegido en el alta → endpoint de transición (los que hoy existen en el backend).
+  // "Registrada" es el estado natural; "En proceso"/"Cerrada" aún no tienen endpoint.
+  var ESTADONOV = { "Aprobada": "aprobar", "Rechazada": "rechazar", "Anulada": "anular" };
+
+  function fmtRango(desdeISO, hastaISO) {
+    var d = fmtISOtoDMY(desdeISO);
+    if (!hastaISO || hastaISO === desdeISO) return d;
+    return d + " → " + fmtISOtoDMY(hastaISO);
+  }
+
   function docEstado(iso) {
     if (!iso) return "ok";
     var dias = Math.floor((new Date(iso) - new Date()) / 86400000);
@@ -164,6 +183,37 @@
     };
   }
 
+  // ---------- adaptador novedad (API → shape del diseño) ----------
+  // El diseño espera { id, tipo, emp, empresa, fecha, estado, clasif, praxis, cert, horas,
+  // prorrogas[], madreDesde/Hasta/Motivo }. Las prórrogas se adjuntan agrupando por madre.
+  function adaptNov(n) {
+    var emp = _empById[n.empleado] || {};
+    var tipo = _tipoNovByCodigo[n.tipo_novedad_codigo] || {};
+    var cert = n.certificado_recibido_en ? "Presentado" : (tipo.requiere_certificado ? "Pendiente" : "—");
+    var out = {
+      id: n.id,
+      tipo: n.tipo_novedad_nombre,
+      emp: emp.name || n.empleado_nombre || "—",
+      empresa: emp.empresa || "—",
+      fecha: fmtRango(n.fecha_desde, n.fecha_hasta),
+      estado: n.estado_display,
+      clasif: CLASIF_REV[n.clasificacion] || "",
+      praxis: !!n.requiere_praxis,
+      cert: cert,
+      horas: n.cantidad_horas != null ? Number(n.cantidad_horas) : null,
+      prorrogas: [],
+      _codigo: n.tipo_novedad_codigo,
+      _empId: n.empleado,
+    };
+    // Con fecha_hasta, el detalle arma la línea de tiempo (madre) y calcula días/vigencia.
+    if (n.fecha_hasta) {
+      out.madreDesde = fmtISOtoDMY(n.fecha_desde);
+      out.madreHasta = fmtISOtoDMY(n.fecha_hasta);
+      out.madreMotivo = n.motivo || n.tipo_novedad_nombre;
+    }
+    return out;
+  }
+
   async function getOrCreatePuesto(nombre) {
     nombre = (nombre || "").trim();
     if (!nombre) return null;
@@ -202,9 +252,10 @@
     }
     return "";
   }
-  function readAltaForm() {
-    var m = altaModal();
-    if (!m) throw new Error("modal de alta no encontrado");
+  // Lee un modal a un mapa etiqueta-normalizada → elemento (primer input por etiqueta gana).
+  function readModalForm(sel) {
+    var m = document.querySelector(sel);
+    if (!m) throw new Error("modal no encontrado: " + sel);
     var map = {};
     m.querySelectorAll("input,select,textarea").forEach(function (el) {
       var key = normLabel(labelFor(el));
@@ -212,6 +263,7 @@
     });
     return map;
   }
+  function readAltaForm() { return readModalForm('[data-modal="alta"]'); }
 
   // ============================ API pública ============================
   window.CeiboAPI = {
@@ -230,14 +282,106 @@
       emp.forEach(function (x) { _empresaByName[x.nombre] = x.id; _empresaById[x.id] = x.nombre; });
       sec.forEach(function (x) { _sectorByName[x.nombre] = x.id; _sectorById[x.id] = x.nombre; });
       pue.forEach(function (x) { _puestoByName[x.nombre.toLowerCase()] = x.id; _puestoById[x.id] = x.nombre; });
-      console.log("[ceibo] catálogos: " + emp.length + " empresas, " + sec.length + " sectores, " + pue.length + " puestos");
+      var tipos = await getAllPages("/tipos-novedad/?page_size=200");
+      tipos.forEach(function (t) { _tipoNovByCodigo[t.codigo] = t; });
+      console.log("[ceibo] catálogos: " + emp.length + " empresas, " + sec.length + " sectores, " + pue.length + " puestos, " + tipos.length + " tipos de novedad");
     },
 
     async listEmpleados() {
       _rawEmpleados = await getAllPages("/empleados/?page_size=200");
       var mapped = _rawEmpleados.map(adapt);
+      _empById = {};
+      mapped.forEach(function (m) { _empById[m.id] = { name: m.name, empresa: m.empresa }; });
       console.log("[ceibo] backend conectado: " + mapped.length + " empleados");
       return mapped;
+    },
+
+    // Novedades con cadenas expandidas: se agrupan las prórrogas bajo su madre
+    // (novedad_origen) para tener la cadena completa sin N+1.
+    async listNovedades() {
+      var raw = await getAllPages("/novedades/?expandir_cadenas=true&page_size=200");
+      var madres = raw.filter(function (n) { return !n.novedad_origen; });
+      var rows = madres.map(function (m) {
+        var out = adaptNov(m);
+        var pros = raw.filter(function (n) { return n.novedad_origen === m.id; })
+          .sort(function (a, b) { return a.fecha_desde < b.fecha_desde ? -1 : 1; });
+        out.prorrogas = pros.map(function (p) {
+          return {
+            desde: fmtISOtoDMY(p.fecha_desde), hasta: fmtISOtoDMY(p.fecha_hasta),
+            motivo: p.motivo || "", estado: p.estado_display,
+            cert: !!p.certificado_recibido_en,
+          };
+        });
+        if (pros.length) {
+          out.madreDesde = fmtISOtoDMY(m.fecha_desde);
+          out.madreHasta = fmtISOtoDMY(m.fecha_hasta);
+          out.madreMotivo = m.motivo || m.tipo_novedad_nombre;
+        }
+        return out;
+      });
+      console.log("[ceibo] novedades: " + rows.length + " cadenas");
+      return rows;
+    },
+
+    // Repuebla el <select> de empleado del alta de novedad con la dotación real.
+    populateNovForm() {
+      var f = readModalForm('[data-modal="altanov"]');
+      var sel = f["empleado"];
+      if (sel && sel.tagName === "SELECT") {
+        sel.innerHTML = _rawEmpleados.map(function (e) {
+          return '<option value="' + e.id + '">' + (e.nombre + " " + e.apellido).trim() + "</option>";
+        }).join("");
+      }
+    },
+
+    // Alta de novedad: lee el modal por etiqueta, POST /novedades/ y, si se eligió un
+    // estado con transición (Aprobada/Rechazada/Anulada), la aplica en cadena.
+    async submitNov() {
+      var f = readModalForm('[data-modal="altanov"]');
+      var g = function (k) { var el = f[k]; return el ? el.value.trim() : ""; };
+      var empId = f["empleado"] ? f["empleado"].value : "";
+      if (!empId) throw new Error("Seleccioná un empleado");
+      var codigo = TIPONOV[g("tipo")] || "";
+      var tipo = _tipoNovByCodigo[codigo];
+      if (!tipo) throw new Error("Tipo de novedad inválido");
+      var desde = parseFecha(g("fecha"));
+      if (!desde) throw new Error("Fecha obligatoria (dd/mm/aaaa)");
+      var payload = {
+        empleado: Number(empId), tipo_novedad: tipo.id, fecha_desde: desde,
+        motivo: g("motivo"), observaciones: g("observaciones"),
+      };
+      var dias = g("dias"); if (dias) payload.dias = Number(dias);
+      var aviso = parseFecha(g("fecha aviso del empleado")); if (aviso) payload.fecha_aviso_empleado = aviso;
+      var clasif = CLASIF[g("clasificacion")]; if (clasif) payload.clasificacion = clasif;
+      if (codigo === "HORAS_EXTRA") {
+        var h = g("cantidad de horas");
+        if (!h) throw new Error("Cantidad de horas obligatoria");
+        payload.cantidad_horas = h;
+      } else {
+        // El bloque de praxis se muestra cuando el toggle está activo: si sus inputs existen,
+        // la novedad requiere praxis y se envían las fechas cargadas.
+        var praxisFields = ["fecha turno praxis", "fecha fin estimada", "fecha reintegro", "fecha certificado recibido"];
+        var apiKeys = ["fecha_turno_praxis", "fecha_fin_estimada", "fecha_reintegro", "certificado_recibido_en"];
+        if (f["fecha turno praxis"]) payload.requiere_praxis = true;
+        praxisFields.forEach(function (lbl, i) { var v = parseFecha(g(lbl)); if (v) payload[apiKeys[i]] = v; });
+      }
+      var nov = await jsend("POST", "/novedades/", payload);
+      var accion = ESTADONOV[g("estado")];
+      if (accion) await jsend("POST", "/novedades/" + nov.id + "/" + accion + "/", {});
+      showToast("Novedad registrada", "ok");
+    },
+
+    // Prórroga: lee el modal, POST /novedades/{id}/prorrogar/.
+    async submitProrroga(detNovId) {
+      if (!detNovId) throw new Error("no hay novedad seleccionada");
+      var f = readModalForm('[data-modal="prorroga"]');
+      var g = function (k) { var el = f[k]; return el ? el.value.trim() : ""; };
+      var hasta = parseFecha(g("nueva fecha de fin"));
+      if (!hasta) throw new Error("Nueva fecha de fin obligatoria (dd/mm/aaaa)");
+      var payload = { fecha_hasta_nueva: hasta, motivo: g("motivo de la prórroga") };
+      var cert = parseFecha(g("certificado recibido — fecha")); if (cert) payload.certificado_recibido_en = cert;
+      await jsend("POST", "/novedades/" + detNovId + "/prorrogar/", payload);
+      showToast("Prórroga registrada", "ok");
     },
 
     // Alta (editId=null) o edición (editId=id). Lee el form del DOM por etiqueta.
