@@ -265,6 +265,33 @@
   }
   function readAltaForm() { return readModalForm('[data-modal="alta"]'); }
 
+  // ---------- helpers de novedad ----------
+  // Resuelve el id de empleado por nombre escrito (autocompletado); null si no está en la base.
+  function empIdByName(name) {
+    var key = normLabel(name);
+    if (!key) return null;
+    var found = _rawEmpleados.find(function (e) {
+      return normLabel((e.nombre + " " + e.apellido).trim()) === key;
+    });
+    return found ? found.id : null;
+  }
+  function addDaysISO(iso, n) {
+    var p = iso.split("-");
+    var d = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]));
+    d.setDate(d.getDate() + n);
+    var mm = String(d.getMonth() + 1).padStart(2, "0"), dd = String(d.getDate()).padStart(2, "0");
+    return d.getFullYear() + "-" + mm + "-" + dd;
+  }
+  // "Fecha fin estimada" = fecha_desde + (días − 1), inclusive (misma convención que el back).
+  function recomputeFinEstimada() {
+    var f = readModalForm('[data-modal="altanov"]');
+    var desde = parseFecha(f["fecha"] ? f["fecha"].value : "");
+    var dias = parseInt(f["dias"] ? f["dias"].value : "", 10);
+    var fin = f["fecha fin estimada"];
+    if (!desde || !dias || dias < 1 || !fin) return;
+    fin.value = fmtISOtoDMY(addDaysISO(desde, dias - 1));
+  }
+
   // ============================ API pública ============================
   window.CeiboAPI = {
     toast: showToast,
@@ -323,15 +350,38 @@
       return rows;
     },
 
-    // Repuebla el <select> de empleado del alta de novedad con la dotación real.
+    // Prepara el alta de novedad: empleado como autocomplete (input + datalist) validado
+    // contra la base, fecha por defecto = hoy, y fin estimada que se recalcula con los días.
     populateNovForm() {
+      if (!document.querySelector('[data-modal="altanov"]')) return;
       var f = readModalForm('[data-modal="altanov"]');
-      var sel = f["empleado"];
-      if (sel && sel.tagName === "SELECT") {
-        sel.innerHTML = _rawEmpleados.map(function (e) {
-          return '<option value="' + e.id + '">' + (e.nombre + " " + e.apellido).trim() + "</option>";
+      // Empleado: convertir el <select> en caja de texto con autocompletado.
+      var empEl = f["empleado"];
+      if (empEl && empEl.tagName === "SELECT") {
+        var input = document.createElement("input");
+        input.setAttribute("list", "ceibo-emp-list");
+        input.setAttribute("placeholder", "Escribí el nombre del empleado…");
+        input.setAttribute("autocomplete", "off");
+        input.style.cssText = empEl.style.cssText;  // hereda el look del diseño
+        var dl = document.createElement("datalist");
+        dl.id = "ceibo-emp-list";
+        dl.innerHTML = _rawEmpleados.map(function (e) {
+          return '<option value="' + (e.nombre + " " + e.apellido).trim() + '"></option>';
         }).join("");
+        empEl.parentNode.replaceChild(input, empEl);
+        input.parentNode.appendChild(dl);
       }
+      // Fecha de la novedad: por defecto hoy (si está vacía).
+      var fecha = f["fecha"];
+      if (fecha && !fecha.value) fecha.value = fmtISOtoDMY(todayISO());
+      // Fin estimada = fecha + días: recalcular al tipear días o cambiar la fecha.
+      ["dias", "fecha"].forEach(function (k) {
+        var el = f[k];
+        if (el && !el._ceiboWired) {
+          el._ceiboWired = true;
+          el.addEventListener("input", recomputeFinEstimada);
+        }
+      });
     },
 
     // Alta de novedad: lee el modal por etiqueta, POST /novedades/ y, si se eligió un
@@ -339,8 +389,9 @@
     async submitNov() {
       var f = readModalForm('[data-modal="altanov"]');
       var g = function (k) { var el = f[k]; return el ? el.value.trim() : ""; };
-      var empId = f["empleado"] ? f["empleado"].value : "";
-      if (!empId) throw new Error("Seleccioná un empleado");
+      var empEl = f["empleado"];
+      var empId = empEl && empEl.tagName === "SELECT" ? empEl.value : empIdByName(g("empleado"));
+      if (!empId) throw new Error("Empleado inválido: elegí un nombre de la lista de registrados");
       var codigo = TIPONOV[g("tipo")] || "";
       var tipo = _tipoNovByCodigo[codigo];
       if (!tipo) throw new Error("Tipo de novedad inválido");
