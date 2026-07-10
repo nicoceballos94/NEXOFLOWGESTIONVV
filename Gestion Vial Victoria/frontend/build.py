@@ -53,16 +53,29 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
     return v;
   }
   openAltaNov = () => {
-    this.setState({ modal: 'altanov' });
+    this.setState({ modal: 'altanov', editNovId: null, novFormTipo: 'Falta' });
     setTimeout(() => window.CeiboAPI.populateNovForm(), 60);
+  };
+  openEditNov = (id) => {
+    this.setState({ modal: 'altanov', editNovId: id, novFormTipo: window.CeiboAPI.novFormTipoFor(id) });
+    setTimeout(() => window.CeiboAPI.prefillNovForm(id), 60);
   };
   submitNov = async () => {
     try {
-      await window.CeiboAPI.submitNov();
-      this.setState({ modal: null });
+      await window.CeiboAPI.submitNov(this.state.editNovId);
+      this.setState({ modal: null, editNovId: null });
       await this.reloadNovedades();
     } catch (e) { console.error('[ceibo] novedad', e); window.CeiboAPI.toast(e.message || String(e), 'error'); }
   };
+  _transNov = async (accion) => {
+    try {
+      await window.CeiboAPI.transicionNov(this.state.detNovId, accion);
+      await this.reloadNovedades();   // el detalle se re-renderiza con el nuevo estado
+    } catch (e) { console.error('[ceibo] transición', e); window.CeiboAPI.toast(e.message || String(e), 'error'); }
+  };
+  aprobarNov = () => this._transNov('aprobar');
+  rechazarNov = () => this._transNov('rechazar');
+  anularNov = () => this._transNov('anular');
   submitProrroga = async () => {
     try {
       await window.CeiboAPI.submitProrroga(this.state.detNovId);
@@ -147,6 +160,18 @@ EDICIONES = [
         "  confirmReingreso = (id)=> this.setState(s=>({bajaSet:s.bajaSet.filter(x=>x!==id)}));\n}",
         BLOQUE_INTEGRACION,
         "clase: bloque de integración",
+    ),
+    # --- template: FIX export malformado — <div> de más en el header del modal
+    #     "Registrar/Editar novedad". Deja un <div> sin cerrar → el <sc-if> de
+    #     showAltaNov no cierra y se traga a showBaja/showDetNov/showProrroga, por
+    #     lo que el detalle de novedad (y su prórroga/acciones) nunca abren.
+    #     Se corrige quitando el <div> sobrante; design/ queda pristino. Si un
+    #     export futuro de Claude Design ya trae el header balanceado, este ancla
+    #     no matcheará y habrá que quitar esta edición (ver design-change-intake). ---
+    (
+        '<div><div><div style="font-family:\'Space Grotesk\',sans-serif;font-weight:600;font-size:17px;color:var(--text)">{{ novFormTitle }}',
+        '<div><div style="font-family:\'Space Grotesk\',sans-serif;font-weight:600;font-size:17px;color:var(--text)">{{ novFormTitle }}',
+        "FIX header altanov: quitar <div> sin cerrar",
     ),
     # --- template: marcar modales para leer sus inputs del DOM ---
     (

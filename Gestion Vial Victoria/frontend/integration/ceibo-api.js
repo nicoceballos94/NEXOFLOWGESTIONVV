@@ -24,6 +24,7 @@
   var _rawEmpleados = [];
   var _empById = {};              // id → { name, empresa } (para adaptar novedades)
   var _tipoNovByCodigo = {};      // codigo → tipo de novedad (con flags)
+  var _novRawById = {};           // id → novedad cruda del backend (para precargar edición)
 
   // ---------- HTTP ----------
   function auth() { return { Authorization: "Bearer " + _token }; }
@@ -118,6 +119,8 @@
     "Falta": "FALTA", "Licencia médica": "LICENCIA_MEDICA", "Accidente": "ACCIDENTE",
     "Vacaciones": "VACACIONES", "Permiso": "PERMISO", "Horas extra": "HORAS_EXTRA",
   };
+  var TIPONOV_REV = {};  // codigo → etiqueta del <select> (para precargar en edición)
+  Object.keys(TIPONOV).forEach(function (k) { TIPONOV_REV[TIPONOV[k]] = k; });
   var CLASIF = { "Justificada": "JUSTIFICADA", "Injustificada": "INJUSTIFICADA" };
   var CLASIF_REV = { "JUSTIFICADA": "Justificada", "INJUSTIFICADA": "Injustificada" };
   // Estado elegido en el alta → endpoint de transición (los que hoy existen en el backend).
@@ -282,6 +285,12 @@
     var mm = String(d.getMonth() + 1).padStart(2, "0"), dd = String(d.getDate()).padStart(2, "0");
     return d.getFullYear() + "-" + mm + "-" + dd;
   }
+  function diasEntreISO(aISO, bISO) {  // inclusive
+    var pa = aISO.split("-"), pb = bISO.split("-");
+    var da = new Date(Number(pa[0]), Number(pa[1]) - 1, Number(pa[2]));
+    var db = new Date(Number(pb[0]), Number(pb[1]) - 1, Number(pb[2]));
+    return Math.round((db - da) / 86400000) + 1;
+  }
   // "Fecha fin estimada" = fecha_desde + (días − 1), inclusive (misma convención que el back).
   function recomputeFinEstimada() {
     var f = readModalForm('[data-modal="altanov"]');
@@ -327,6 +336,8 @@
     // (novedad_origen) para tener la cadena completa sin N+1.
     async listNovedades() {
       var raw = await getAllPages("/novedades/?expandir_cadenas=true&page_size=200");
+      _novRawById = {};
+      raw.forEach(function (n) { _novRawById[n.id] = n; });
       var madres = raw.filter(function (n) { return !n.novedad_origen; });
       var rows = madres.map(function (m) {
         var out = adaptNov(m);
@@ -386,22 +397,20 @@
 
     // Alta de novedad: lee el modal por etiqueta, POST /novedades/ y, si se eligió un
     // estado con transición (Aprobada/Rechazada/Anulada), la aplica en cadena.
-    async submitNov() {
+    async submitNov(editNovId) {
       var f = readModalForm('[data-modal="altanov"]');
       var g = function (k) { var el = f[k]; return el ? el.value.trim() : ""; };
-      var empEl = f["empleado"];
-      var empId = empEl && empEl.tagName === "SELECT" ? empEl.value : empIdByName(g("empleado"));
-      if (!empId) throw new Error("Empleado inválido: elegí un nombre de la lista de registrados");
       var codigo = TIPONOV[g("tipo")] || "";
       var tipo = _tipoNovByCodigo[codigo];
       if (!tipo) throw new Error("Tipo de novedad inválido");
       var desde = parseFecha(g("fecha"));
       if (!desde) throw new Error("Fecha obligatoria (dd/mm/aaaa)");
       var payload = {
-        empleado: Number(empId), tipo_novedad: tipo.id, fecha_desde: desde,
+        tipo_novedad: tipo.id, fecha_desde: desde,
         motivo: g("motivo"), observaciones: g("observaciones"),
       };
-      var dias = g("dias"); if (dias) payload.dias = Number(dias);
+      // Días → fecha_hasta (el PATCH de edición no acepta 'dias', así que mandamos el rango).
+      var dias = g("dias"); if (dias) payload.fecha_hasta = addDaysISO(desde, Number(dias) - 1);
       var aviso = parseFecha(g("fecha aviso del empleado")); if (aviso) payload.fecha_aviso_empleado = aviso;
       var clasif = CLASIF[g("clasificacion")]; if (clasif) payload.clasificacion = clasif;
       if (codigo === "HORAS_EXTRA") {
@@ -416,10 +425,61 @@
         if (f["fecha turno praxis"]) payload.requiere_praxis = true;
         praxisFields.forEach(function (lbl, i) { var v = parseFecha(g(lbl)); if (v) payload[apiKeys[i]] = v; });
       }
+      if (editNovId) {
+        await jsend("PATCH", "/novedades/" + editNovId + "/", payload);  // empleado/estado no se tocan
+        showToast("Novedad actualizada", "ok");
+        return;
+      }
+      var empEl = f["empleado"];
+      var empId = empEl && empEl.tagName === "SELECT" ? empEl.value : empIdByName(g("empleado"));
+      if (!empId) throw new Error("Empleado inválido: elegí un nombre de la lista de registrados");
+      payload.empleado = Number(empId);
       var nov = await jsend("POST", "/novedades/", payload);
       var accion = ESTADONOV[g("estado")];
       if (accion) await jsend("POST", "/novedades/" + nov.id + "/" + accion + "/", {});
       showToast("Novedad registrada", "ok");
+    },
+
+    // Transición de estado por endpoint dedicado (aprobar/rechazar/anular).
+    async transicionNov(id, accion) {
+      if (!id) throw new Error("no hay novedad seleccionada");
+      await jsend("POST", "/novedades/" + id + "/" + accion + "/", {});
+      var txt = { aprobar: "aprobada", rechazar: "rechazada", anular: "anulada" }[accion] || accion;
+      showToast("Novedad " + txt, "ok");
+    },
+
+    // Etiqueta del <select> Tipo para precargar en edición (desde el código real del backend).
+    novFormTipoFor(id) {
+      var n = _novRawById[id];
+      return n ? (TIPONOV_REV[n.tipo_novedad_codigo] || "Falta") : "Falta";
+    },
+
+    // Precarga el form en modo edición desde la novedad real (DOM). El empleado no se edita:
+    // se muestra su nombre en un campo deshabilitado.
+    prefillNovForm(id) {
+      var n = _novRawById[id];
+      if (!n) return;
+      var f = readModalForm('[data-modal="altanov"]');
+      var set = function (k, iso) { if (f[k] != null) f[k].value = iso ? fmtISOtoDMY(iso) : ""; };
+      var empEl = f["empleado"];
+      if (empEl) {
+        var ro = document.createElement("input");
+        ro.value = (_empById[n.empleado] && _empById[n.empleado].name) || n.empleado_nombre || "";
+        ro.disabled = true;
+        ro.style.cssText = empEl.style.cssText + ";opacity:.65;cursor:not-allowed";
+        empEl.parentNode.replaceChild(ro, empEl);
+      }
+      set("fecha", n.fecha_desde);
+      if (f["motivo"]) f["motivo"].value = n.motivo || "";
+      if (f["observaciones"]) f["observaciones"].value = n.observaciones || "";
+      if (f["clasificacion"]) f["clasificacion"].value = CLASIF_REV[n.clasificacion] || "";
+      if (f["dias"] && n.fecha_hasta) f["dias"].value = String(diasEntreISO(n.fecha_desde, n.fecha_hasta));
+      if (f["cantidad de horas"] && n.cantidad_horas != null) f["cantidad de horas"].value = String(Number(n.cantidad_horas));
+      set("fecha aviso del empleado", n.fecha_aviso_empleado);
+      set("fecha turno praxis", n.fecha_turno_praxis);
+      set("fecha fin estimada", n.fecha_fin_estimada);
+      set("fecha reintegro", n.fecha_reintegro);
+      set("fecha certificado recibido", n.certificado_recibido_en);
     },
 
     // Prórroga: lee el modal, POST /novedades/{id}/prorrogar/.
