@@ -5,8 +5,11 @@ Frontend del sistema de RRHH, **separado del backend** (`../gestion_rrhh`).
 ## Flujo de trabajo
 
 1. El front se **diseña en Claude Design** (proyecto "Ceibo RRHH").
-2. Se **baja** con `DesignSync get_file` a `design/` (la fuente `*.dc.html` + `support.js`).
-   Esos archivos son **pristinos: no se editan a mano**.
+2. Se **baja** con `DesignSync get_file`. La primera importación vive en `design/`
+   (la fuente `*.dc.html` + `support.js`); esos archivos son **pristinos: no se
+   editan a mano**. Los cambios visuales nuevos **no se bajan directo a `design/`**:
+   entran por `design-inbox/` siguiendo el flujo de
+   [Design Change Intake](docs/design-change-intake.md).
 3. `build.py` **inyecta el cableado** al backend (shims que llaman a `window.CeiboAPI`,
    definido en `integration/ceibo-api.js`) y escribe `dist/`.
 4. Se sirve `dist/` como estático apuntando al backend Django.
@@ -16,6 +19,11 @@ frontend/
 ├── design/                     # bajado de Claude Design — NO editar
 │   ├── Ceibo RRHH standalone-src.dc.html
 │   └── support.js              # runtime de Claude Design (carga React solo)
+├── design-inbox/               # exports nuevos de Claude Design (referencia, no producción)
+│   └── AAAA-MM-DD-nombre/      # un cambio visual por subcarpeta fechada
+├── docs/
+│   ├── design-change-intake.md   # flujo para traer cambios visuales
+│   └── design-change-template.md # plantilla para pedir un cambio
 ├── integration/
 │   └── ceibo-api.js            # capa de integración con la API (lo único a mano)
 ├── build.py                    # inyecta el cableado → dist/
