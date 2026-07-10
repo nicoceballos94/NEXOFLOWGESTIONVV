@@ -19,7 +19,7 @@ import sys
 RAIZ = Path(__file__).resolve().parent
 DESIGN = RAIZ / "design"
 DIST = RAIZ / "dist"
-SRC = DESIGN / "Ceibo RRHH standalone-src.dc.html"
+SRC = DESIGN / "Ceibo RRHH.dc.html"  # el canvas que se edita en Claude Design (fuente de verdad)
 
 # Bloque de métodos que se inyecta en la clase Component (reemplaza confirmReingreso).
 BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por build.py) =====
@@ -119,8 +119,8 @@ EDICIONES = [
     ),
     # --- template: marcar modales para leer sus inputs del DOM ---
     (
-        "style=\"background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:600px;max-width:100%",
-        "data-modal=\"alta\" style=\"background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:600px;max-width:100%",
+        "style=\"background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:720px;max-width:100%",
+        "data-modal=\"alta\" style=\"background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:720px;max-width:100%",
         "modal alta: data-modal",
     ),
     (

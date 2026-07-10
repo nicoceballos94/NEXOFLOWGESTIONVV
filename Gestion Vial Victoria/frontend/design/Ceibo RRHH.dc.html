@@ -6,14 +6,6 @@
 <script src="./support.js"></script>
 </head>
 <body>
-<template id="__bundler_thumbnail" data-bg-color="#0A1120">
-  <svg viewBox="0 0 1200 800" xmlns="http://www.w3.org/2000/svg">
-    <rect width="1200" height="800" fill="#0A1120"/>
-    <rect x="470" y="300" width="260" height="200" rx="56" fill="#2DD4BF"/>
-    <path d="M600 340c-26 68-80 92-130 104 30 90 106 148 130 154 24-6 100-64 130-154-50-12-104-36-130-104z" fill="#04201C"/>
-    <text x="600" y="580" font-family="'Space Grotesk',sans-serif" font-size="70" font-weight="700" fill="#E9EEF7" text-anchor="middle">Ceibo</text>
-  </svg>
-</template>
 <x-dc>
 <helmet data-dc-atomics>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -231,21 +223,15 @@
           <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:20px 22px;box-shadow:var(--shadow)">
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
               <div style="font-weight:600;font-size:15px;color:var(--text)">Llegadas tarde</div>
-              <div style="font-size:11px;color:var(--text3)">Julio 2026</div>
+              <span style="font-size:10.5px;font-weight:600;color:var(--text3);background:var(--surface2);border:1px solid var(--border);padding:2px 9px;border-radius:20px">Próximamente</span>
             </div>
-            <sc-for list="{{ rankTarde }}" as="r" hint-placeholder-count="5">
-              <div style="display:flex;align-items:center;gap:12px;margin-bottom:11px">
-                <div style="width:26px;height:26px;border-radius:8px;background:var(--surface2);color:var(--text2);font-size:11px;font-weight:600;display:flex;align-items:center;justify-content:center;flex:none">{{ r.rank }}</div>
-                <div style="min-width:120px;flex:none">
-                  <div style="font-weight:600;font-size:12.5px;color:var(--text)">{{ r.name }}</div>
-                  <div style="font-size:10.5px;color:var(--text3)">{{ r.emp }}</div>
-                </div>
-                <div style="flex:1;height:8px;border-radius:5px;background:var(--surface2);overflow:hidden">
-                  <div style="{{ r.bar }}"></div>
-                </div>
-                <div style="font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:14px;color:var(--text);width:20px;text-align:right">{{ r.val }}</div>
+            <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:26px 12px;gap:10px">
+              <div style="width:44px;height:44px;border-radius:12px;background:var(--surface2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;color:var(--text3)">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5v4.5l3 2"/></svg>
               </div>
-            </sc-for>
+              <div style="font-size:13px;font-weight:600;color:var(--text2)">Requiere control de fichadas</div>
+              <div style="font-size:11.5px;color:var(--text3);max-width:220px;line-height:1.5">Disponible cuando se integre la fuente de fichadas de entrada/salida.</div>
+            </div>
           </div>
         </div>
       </div>
@@ -448,14 +434,16 @@
             <option value="Falta">Faltas</option>
             <option value="Licencia">Licencias</option>
             <option value="Vacaciones">Vacaciones</option>
+            <option value="Horas extra">Horas extra</option>
           </select>
           <select value="{{ novEstado }}" onChange="{{ onNovEstado }}" style="{{ selStyle }}">
             <option value="todos">Todos los estados</option>
             <option value="Registrada">Registrada</option>
             <option value="En proceso">En proceso</option>
             <option value="Aprobada">Aprobada</option>
-            <option value="Pendiente">Pendiente</option>
+            <option value="Rechazada">Rechazada</option>
             <option value="Cerrada">Cerrada</option>
+            <option value="Anulada">Anulada</option>
           </select>
           <div style="flex:1"></div>
           <button onClick="{{ openAltaNov }}" style="display:flex;align-items:center;gap:7px;background:var(--accent);color:#04201C;font-weight:600;font-size:13px;border:none;border-radius:10px;padding:0 15px;height:38px;cursor:pointer;box-shadow:0 4px 14px rgba(45,212,191,.28)" style-hover="filter:brightness(1.06)">
@@ -465,25 +453,42 @@
         </div>
 
         <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow:hidden;box-shadow:var(--shadow)">
-          <div style="display:grid;grid-template-columns:1.5fr 1.4fr 1.3fr 1fr 1fr;gap:14px;padding:13px 20px;border-bottom:1px solid var(--border);font-size:11px;font-weight:600;letter-spacing:.04em;color:var(--text3);background:var(--surface2)">
-            <div>TIPO</div><div>EMPLEADO</div><div>FECHA</div><div>CERTIFICADO</div><div>ESTADO</div>
+          <div style="display:grid;grid-template-columns:1.6fr 1.4fr 1.2fr 1fr 1fr;gap:14px;padding:13px 20px;border-bottom:1px solid var(--border);font-size:11px;font-weight:600;letter-spacing:.04em;color:var(--text3);background:var(--surface2)">
+            <div>TIPO</div><div>EMPLEADO</div><div>FECHA</div><div>CLASIFICACIÓN</div><div>ESTADO</div>
           </div>
           <sc-for list="{{ filteredNov }}" as="n" hint-placeholder-count="6">
-            <div onClick="{{ openAltaNov }}" style="display:grid;grid-template-columns:1.5fr 1.4fr 1.3fr 1fr 1fr;gap:14px;padding:14px 20px;border-bottom:1px solid var(--border);align-items:center;cursor:pointer" style-hover="background:var(--surface2)">
-              <div style="display:flex;align-items:center;gap:10px;min-width:0">
-                <div style="{{ n.iconWrap }}"><span style="{{ n.icon }}"></span></div>
-                <div style="min-width:0">
-                  <div style="font-weight:600;font-size:13px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ n.tipo }}</div>
-                  <span style="{{ n.praxisInline }}">{{ n.praxisLbl }}</span>
+            <div>
+              <div onClick="{{ n.openDet }}" style="display:grid;grid-template-columns:1.6fr 1.4fr 1.2fr 1fr 1fr;gap:14px;padding:14px 20px;border-bottom:1px solid var(--border);align-items:center;cursor:pointer" style-hover="background:var(--surface2)">
+                <div style="display:flex;align-items:center;gap:10px;min-width:0">
+                  <div style="{{ n.iconWrap }}"><span style="{{ n.icon }}"></span></div>
+                  <div style="min-width:0">
+                    <div style="font-weight:600;font-size:13px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ n.tipo }}</div>
+                    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:2px">
+                      <span style="{{ n.praxisInline }}">{{ n.praxisLbl }}</span>
+                      <span style="{{ n.horasShow }}">{{ n.horasLbl }}</span>
+                      <span onClick="{{ n.toggleExpand }}" style="{{ n.proBadge }}"><span style="{{ n.chevStyle }}">▸</span> {{ n.proLbl }}</span>
+                    </div>
+                  </div>
                 </div>
+                <div style="min-width:0">
+                  <div style="font-size:12.5px;color:var(--text);font-weight:500">{{ n.emp }}</div>
+                  <div style="font-size:11px;color:var(--text3)">{{ n.empresa }}</div>
+                </div>
+                <div style="font-size:12.5px;color:var(--text2)">{{ n.fecha }}</div>
+                <div><span style="{{ n.clasifBadge }}">{{ n.clasifLbl }}</span></div>
+                <div><span style="{{ n.estadoBadge }}">{{ n.estado }}</span></div>
               </div>
-              <div style="min-width:0">
-                <div style="font-size:12.5px;color:var(--text);font-weight:500">{{ n.emp }}</div>
-                <div style="font-size:11px;color:var(--text3)">{{ n.empresa }}</div>
+              <div style="{{ n.expandWrap }}">
+                <div style="font-size:10.5px;font-weight:600;letter-spacing:.05em;color:var(--text3);margin-bottom:8px">CADENA DE VIGENCIA</div>
+                <sc-for list="{{ n.cadena }}" as="c" hint-placeholder-count="2">
+                  <div style="display:flex;align-items:center;gap:11px;padding:7px 0">
+                    <div style="{{ c.dot }}"></div>
+                    <div style="width:82px;flex:none;font-size:11.5px;font-weight:600;color:var(--text2)">{{ c.label }}</div>
+                    <div style="flex:1;font-size:12px;color:var(--text)">{{ c.desde }} → {{ c.hasta }}<span style="color:var(--text3)"> · {{ c.motivo }}</span></div>
+                    <span style="{{ c.estadoBadge }}">{{ c.estado }}</span>
+                  </div>
+                </sc-for>
               </div>
-              <div style="font-size:12.5px;color:var(--text2)">{{ n.fecha }}</div>
-              <div><span style="{{ n.certBadge }}">{{ n.cert }}</span></div>
-              <div><span style="{{ n.estadoBadge }}">{{ n.estado }}</span></div>
             </div>
           </sc-for>
           <sc-if value="{{ noNovList }}" hint-placeholder-val="{{ false }}">
@@ -649,22 +654,74 @@
   <!-- ===================== MODALES ===================== -->
   <sc-if value="{{ showAlta }}" hint-placeholder-val="{{ false }}">
     <div onClick="{{ closeModal }}" style="position:fixed;inset:0;background:rgba(4,8,16,.6);backdrop-filter:blur(3px);display:flex;align-items:flex-start;justify-content:center;padding:6vh 20px;z-index:50;animation:ov .2s ease both">
-      <div onClick="{{ stop }}" style="background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:600px;max-width:100%;box-shadow:0 30px 80px rgba(0,0,0,.5);animation:pop .28s cubic-bezier(.2,.9,.3,1) both">
-        <div style="display:flex;align-items:center;justify-content:space-between;padding:20px 24px;border-bottom:1px solid var(--border)">
+      <div onClick="{{ stop }}" style="background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:720px;max-width:100%;box-shadow:0 30px 80px rgba(0,0,0,.5);animation:pop .28s cubic-bezier(.2,.9,.3,1) both;display:flex;flex-direction:column;max-height:88vh">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:20px 24px;border-bottom:1px solid var(--border);flex:none">
           <div><div style="font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:17px;color:var(--text)">Alta de empleado</div><div style="font-size:12px;color:var(--text3)">Los campos con · son obligatorios</div></div>
           <button onClick="{{ closeModal }}" style="width:32px;height:32px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text2);cursor:pointer;font-size:16px">✕</button>
         </div>
-        <div style="padding:22px 24px;display:grid;grid-template-columns:1fr 1fr;gap:15px 18px">
-          <div style="grid-column:span 2"><div style="{{ lblStyle }}">Nombre y apellido ·</div><input placeholder="Ej. Juan Pérez" style="{{ inputStyle }}"/></div>
-          <div><div style="{{ lblStyle }}">DNI ·</div><input placeholder="00.000.000" style="{{ inputStyle }}"/></div>
-          <div><div style="{{ lblStyle }}">Fecha de ingreso ·</div><input placeholder="dd/mm/aaaa" style="{{ inputStyle }}"/></div>
-          <div><div style="{{ lblStyle }}">Empresa ·</div><select style="{{ inputStyle }}"><option>PREMOCOR</option><option>VIAL VICTORIA</option></select></div>
-          <div><div style="{{ lblStyle }}">Sector ·</div><select style="{{ inputStyle }}"><option>RRHH</option><option>Administración</option><option>Obra</option><option>Logística</option></select></div>
-          <div style="grid-column:span 2"><div style="{{ lblStyle }}">Puesto</div><input placeholder="Ej. Administrativo/a" style="{{ inputStyle }}"/></div>
-          <div><div style="{{ lblStyle }}">Email</div><input placeholder="nombre@empresa.com" style="{{ inputStyle }}"/></div>
-          <div><div style="{{ lblStyle }}">Teléfono</div><input placeholder="+54 379 …" style="{{ inputStyle }}"/></div>
+        <div style="padding:20px 24px 24px;overflow-y:auto;display:flex;flex-direction:column;gap:22px">
+
+          <div>
+            <div style="{{ secStyle }}">Datos personales</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px 18px">
+              <div style="grid-column:span 2"><div style="{{ lblStyle }}">Nombre y apellido ·</div><input placeholder="Ej. Juan Pérez" style="{{ inputStyle }}"/></div>
+              <div><div style="{{ lblStyle }}">DNI ·</div><input placeholder="00.000.000" style="{{ inputStyle }}"/></div>
+              <div><div style="{{ lblStyle }}">CUIL</div><input placeholder="20-00000000-0" style="{{ inputStyle }}"/></div>
+              <div><div style="{{ lblStyle }}">Fecha de nacimiento</div><div style="position:relative"><input placeholder="dd/mm/aaaa" maxlength="10" onInput="{{ maskDate }}" style="{{ inputStyle }};padding-right:36px"/><input type="date" onChange="{{ pickDate }}" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);width:22px;height:22px;opacity:0;cursor:pointer;border:none;background:transparent"/><svg style="position:absolute;right:9px;top:50%;transform:translateY(-50%);pointer-events:none" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></div></div>
+              <div><div style="{{ lblStyle }}">Educación</div><select style="{{ inputStyle }}"><option value="">Seleccionar…</option><option>Primario incompleto</option><option>Primario completo</option><option>Secundario incompleto</option><option>Secundario completo</option><option>Terciario</option><option>Universitario</option></select></div>
+              <div style="grid-column:span 2"><div style="{{ lblStyle }}">Domicilio</div><input placeholder="Calle, número, localidad" style="{{ inputStyle }}"/></div>
+            </div>
+          </div>
+
+          <div>
+            <div style="{{ secStyle }}">Contacto</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px 18px">
+              <div><div style="{{ lblStyle }}">Teléfono</div><input placeholder="+54 379 …" style="{{ inputStyle }}"/></div>
+              <div><div style="{{ lblStyle }}">Email</div><input placeholder="nombre@empresa.com" style="{{ inputStyle }}"/></div>
+              <div style="grid-column:span 2"><div style="{{ lblStyle }}">Contacto de emergencia</div><input placeholder="Nombre · vínculo · teléfono" style="{{ inputStyle }}"/></div>
+            </div>
+          </div>
+
+          <div>
+            <div style="{{ secStyle }}">Datos laborales</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px 18px">
+              <div><div style="{{ lblStyle }}">Empresa ·</div><select style="{{ inputStyle }}"><option>PREMOCOR</option><option>VIAL VICTORIA</option></select></div>
+              <div><div style="{{ lblStyle }}">Sector ·</div><select style="{{ inputStyle }}"><option>RRHH</option><option>Administración</option><option>Obra</option><option>Logística</option></select></div>
+              <div><div style="{{ lblStyle }}">Puesto</div><input placeholder="Ej. Administrativo/a" style="{{ inputStyle }}"/></div>
+              <div><div style="{{ lblStyle }}">ID de huella</div><input placeholder="Ej. HUELLA-0042" style="{{ inputStyle }}"/></div>
+              <div><div style="{{ lblStyle }}">Fecha de ingreso ·</div><div style="position:relative"><input placeholder="dd/mm/aaaa" maxlength="10" onInput="{{ maskDate }}" style="{{ inputStyle }};padding-right:36px"/><input type="date" onChange="{{ pickDate }}" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);width:22px;height:22px;opacity:0;cursor:pointer;border:none;background:transparent"/><svg style="position:absolute;right:9px;top:50%;transform:translateY(-50%);pointer-events:none" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></div></div>
+              <div><div style="{{ lblStyle }}">Jornada legal</div><select style="{{ inputStyle }}"><option value="">Seleccionar…</option><option>Completa (8 h)</option><option>Reducida (6 h)</option><option>Media jornada (4 h)</option><option>Turnos rotativos</option></select></div>
+              <div style="grid-column:span 2"><div style="{{ lblStyle }}">Estado</div><select style="{{ inputStyle }}"><option>Activo</option><option>Inactivo</option></select></div>
+              <div style="grid-column:span 2;display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:11px;background:var(--surface);border:1px solid var(--border2)">
+                <div onClick="{{ toggleExento }}" style="{{ exentoTrack }}"><div style="{{ exentoKnob }}"></div></div>
+                <div><div style="font-size:13px;font-weight:600;color:var(--text)">Exento de marcación</div><div style="font-size:11.5px;color:var(--text3)">El empleado no ficha entrada/salida (no genera ausencias ni tardanzas)</div></div>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <div style="{{ secStyle }}">Cobertura</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px 18px">
+              <div><div style="{{ lblStyle }}">Obra social</div><input placeholder="Ej. OSDE, Swiss Medical…" style="{{ inputStyle }}"/></div>
+              <div><div style="{{ lblStyle }}">ART</div><input placeholder="Aseguradora de riesgos" style="{{ inputStyle }}"/></div>
+            </div>
+          </div>
+
+          <div>
+            <div style="{{ secStyle }}">Egreso <span style="font-weight:400;color:var(--text3);text-transform:none;letter-spacing:0">— completar al dar de baja</span></div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px 18px">
+              <div><div style="{{ lblStyle }}">Fecha de egreso</div><div style="position:relative"><input placeholder="dd/mm/aaaa" maxlength="10" onInput="{{ maskDate }}" style="{{ inputStyle }};padding-right:36px"/><input type="date" onChange="{{ pickDate }}" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);width:22px;height:22px;opacity:0;cursor:pointer;border:none;background:transparent"/><svg style="position:absolute;right:9px;top:50%;transform:translateY(-50%);pointer-events:none" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></div></div>
+              <div><div style="{{ lblStyle }}">Motivo de egreso</div><select style="{{ inputStyle }}"><option value="">—</option><option>Renuncia</option><option>Fin de contrato</option><option>Despido</option><option>Jubilación</option><option>Otro</option></select></div>
+            </div>
+          </div>
+
+          <div>
+            <div style="{{ secStyle }}">Observaciones</div>
+            <textarea placeholder="Notas internas, aclaraciones, antecedentes…" style="{{ inputStyle }};height:80px;padding:10px 13px;resize:vertical;line-height:1.5"></textarea>
+          </div>
+
         </div>
-        <div style="display:flex;justify-content:flex-end;gap:10px;padding:18px 24px;border-top:1px solid var(--border)">
+        <div style="display:flex;justify-content:flex-end;gap:10px;padding:18px 24px;border-top:1px solid var(--border);flex:none">
           <button onClick="{{ closeModal }}" style="background:var(--surface);border:1px solid var(--border2);color:var(--text);font-weight:600;font-size:13px;border-radius:10px;padding:0 18px;height:40px;cursor:pointer">Cancelar</button>
           <button onClick="{{ closeModal }}" style="background:var(--accent);border:none;color:#04201C;font-weight:600;font-size:13px;border-radius:10px;padding:0 20px;height:40px;cursor:pointer;box-shadow:0 4px 14px rgba(45,212,191,.28)">Guardar empleado</button>
         </div>
@@ -674,23 +731,70 @@
 
   <sc-if value="{{ showAltaNov }}" hint-placeholder-val="{{ false }}">
     <div onClick="{{ closeModal }}" style="position:fixed;inset:0;background:rgba(4,8,16,.6);backdrop-filter:blur(3px);display:flex;align-items:flex-start;justify-content:center;padding:6vh 20px;z-index:50;animation:ov .2s ease both">
-      <div onClick="{{ stop }}" style="background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:560px;max-width:100%;box-shadow:0 30px 80px rgba(0,0,0,.5);animation:pop .28s cubic-bezier(.2,.9,.3,1) both">
-        <div style="display:flex;align-items:center;justify-content:space-between;padding:20px 24px;border-bottom:1px solid var(--border)">
-          <div style="font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:17px;color:var(--text)">Registrar novedad</div>
+      <div onClick="{{ stop }}" style="background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:680px;max-width:100%;box-shadow:0 30px 80px rgba(0,0,0,.5);animation:pop .28s cubic-bezier(.2,.9,.3,1) both;display:flex;flex-direction:column;max-height:88vh">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:20px 24px;border-bottom:1px solid var(--border);flex:none">
+          <div><div style="font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:17px;color:var(--text)">Registrar novedad</div><div style="font-size:12px;color:var(--text3)">Los campos con · son obligatorios</div></div>
           <button onClick="{{ closeModal }}" style="width:32px;height:32px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text2);cursor:pointer;font-size:16px">✕</button>
         </div>
-        <div style="padding:22px 24px;display:grid;grid-template-columns:1fr 1fr;gap:15px 18px">
-          <div><div style="{{ lblStyle }}">Tipo ·</div><select style="{{ inputStyle }}"><option>Accidente</option><option>Falta injustificada</option><option>Licencia por enfermedad</option><option>Vacaciones</option></select></div>
-          <div><div style="{{ lblStyle }}">Empleado ·</div><select style="{{ inputStyle }}"><option>Ramón Ojeda</option><option>María Godoy</option><option>Néstor Aquino</option></select></div>
-          <div><div style="{{ lblStyle }}">Desde ·</div><input placeholder="dd/mm/aaaa" style="{{ inputStyle }}"/></div>
-          <div><div style="{{ lblStyle }}">Hasta</div><input placeholder="dd/mm/aaaa" style="{{ inputStyle }}"/></div>
-          <div style="grid-column:span 2;display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:11px;background:var(--warn-dim);border:1px solid var(--border)">
+        <div style="padding:20px 24px 24px;overflow-y:auto;display:flex;flex-direction:column;gap:22px">
+
+          <div>
+            <div style="{{ secStyle }}">Datos de la novedad</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px 18px">
+              <div style="grid-column:span 2"><div style="{{ lblStyle }}">Empleado ·</div><select style="{{ inputStyle }}"><option>Ramón Ojeda</option><option>María Godoy</option><option>Néstor Aquino</option><option>Carla Benítez</option></select></div>
+              <div><div style="{{ lblStyle }}">Tipo ·</div><select value="{{ novFormTipo }}" onChange="{{ onNovFormTipo }}" style="{{ inputStyle }}"><option>Accidente</option><option>Falta</option><option>Licencia</option><option>Vacaciones</option><option>Horas extra</option></select></div>
+              <div><div style="{{ lblStyle }}">Fecha ·</div><div style="position:relative"><input placeholder="dd/mm/aaaa" maxlength="10" onInput="{{ maskDate }}" style="{{ inputStyle }};padding-right:36px"/><input type="date" onChange="{{ pickDate }}" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);width:22px;height:22px;opacity:0;cursor:pointer;border:none;background:transparent"/><svg style="position:absolute;right:9px;top:50%;transform:translateY(-50%);pointer-events:none" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></div></div>
+              <sc-if value="{{ novIsHoras }}" hint-placeholder-val="{{ false }}">
+                <div style="grid-column:span 2"><div style="{{ lblStyle }}">Cantidad de horas ·</div><input type="number" min="0" step="0.5" placeholder="Ej. 6" style="{{ inputStyle }}"/></div>
+              </sc-if>
+              <div><div style="{{ lblStyle }}">Estado ·</div><select style="{{ inputStyle }}"><option>Registrada</option><option>En proceso</option><option>Aprobada</option><option>Rechazada</option><option>Cerrada</option><option>Anulada</option></select></div>
+              <sc-if value="{{ novIsFaltaLic }}" hint-placeholder-val="{{ false }}">
+                <div><div style="{{ lblStyle }}">Clasificación ·</div><select style="{{ inputStyle }}"><option>Justificada</option><option>Injustificada</option></select></div>
+              </sc-if>
+              <div><div style="{{ lblStyle }}">Motivo</div><input placeholder="Ej. pie roto, reposo…" style="{{ inputStyle }}"/></div>
+              <div><div style="{{ lblStyle }}">Fecha aviso del empleado</div><div style="position:relative"><input placeholder="dd/mm/aaaa" maxlength="10" onInput="{{ maskDate }}" style="{{ inputStyle }};padding-right:36px"/><input type="date" onChange="{{ pickDate }}" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);width:22px;height:22px;opacity:0;cursor:pointer;border:none;background:transparent"/><svg style="position:absolute;right:9px;top:50%;transform:translateY(-50%);pointer-events:none" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></div></div>
+              <div><div style="{{ lblStyle }}">Días</div><input placeholder="Ej. 3" style="{{ inputStyle }}"/></div>
+            </div>
+          </div>
+
+          <sc-if value="{{ novNoHoras }}" hint-placeholder-val="{{ true }}">
+          <div style="display:flex;flex-direction:column;gap:22px">
+          <div style="display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:11px;background:var(--warn-dim);border:1px solid var(--border)">
             <div onClick="{{ togglePraxis }}" style="{{ praxisTrack }}"><div style="{{ praxisKnob }}"></div></div>
             <div><div style="font-size:13px;font-weight:600;color:var(--text)">Requiere praxis</div><div style="font-size:11.5px;color:var(--text3)">Marcar si interviene ART / seguimiento médico</div></div>
           </div>
-          <div style="grid-column:span 2"><div style="{{ lblStyle }}">Certificado</div><select style="{{ inputStyle }}"><option>Pendiente</option><option>Presentado</option><option>No aplica</option></select></div>
+
+          <sc-if value="{{ praxisOn }}" hint-placeholder-val="{{ true }}">
+            <div>
+              <div style="{{ secStyle }}">Seguimiento praxis / ART</div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px 18px">
+                <div><div style="{{ lblStyle }}">Fecha turno praxis</div><div style="position:relative"><input placeholder="dd/mm/aaaa" maxlength="10" onInput="{{ maskDate }}" style="{{ inputStyle }};padding-right:36px"/><input type="date" onChange="{{ pickDate }}" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);width:22px;height:22px;opacity:0;cursor:pointer;border:none;background:transparent"/><svg style="position:absolute;right:9px;top:50%;transform:translateY(-50%);pointer-events:none" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></div></div>
+                <div><div style="{{ lblStyle }}">Fecha fin estimada</div><div style="position:relative"><input placeholder="dd/mm/aaaa" maxlength="10" onInput="{{ maskDate }}" style="{{ inputStyle }};padding-right:36px"/><input type="date" onChange="{{ pickDate }}" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);width:22px;height:22px;opacity:0;cursor:pointer;border:none;background:transparent"/><svg style="position:absolute;right:9px;top:50%;transform:translateY(-50%);pointer-events:none" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></div></div>
+                <div><div style="{{ lblStyle }}">Fecha reintegro</div><div style="position:relative"><input placeholder="dd/mm/aaaa" maxlength="10" onInput="{{ maskDate }}" style="{{ inputStyle }};padding-right:36px"/><input type="date" onChange="{{ pickDate }}" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);width:22px;height:22px;opacity:0;cursor:pointer;border:none;background:transparent"/><svg style="position:absolute;right:9px;top:50%;transform:translateY(-50%);pointer-events:none" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></div></div>
+                <div><div style="{{ lblStyle }}">Fecha certificado recibido</div><div style="position:relative"><input placeholder="dd/mm/aaaa" maxlength="10" onInput="{{ maskDate }}" style="{{ inputStyle }};padding-right:36px"/><input type="date" onChange="{{ pickDate }}" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);width:22px;height:22px;opacity:0;cursor:pointer;border:none;background:transparent"/><svg style="position:absolute;right:9px;top:50%;transform:translateY(-50%);pointer-events:none" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></div></div>
+              </div>
+            </div>
+          </sc-if>
+
+          <div>
+            <div style="{{ secStyle }}">Certificado y observaciones</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px 18px">
+              <div style="grid-column:span 2"><div style="{{ lblStyle }}">Archivo certificado</div><input type="file" style="{{ inputStyle }};height:auto;padding:9px 12px;line-height:1.4"/></div>
+              <div style="grid-column:span 2"><div style="{{ lblStyle }}">Observaciones</div><textarea placeholder="Notas internas, aclaraciones…" style="{{ inputStyle }};height:72px;padding:10px 13px;resize:vertical;line-height:1.5"></textarea></div>
+            </div>
+          </div>
+          </div>
+          </sc-if>
+
+          <sc-if value="{{ novIsHoras }}" hint-placeholder-val="{{ false }}">
+            <div>
+              <div style="{{ secStyle }}">Observaciones</div>
+              <textarea placeholder="Detalle de la tarea, autorización…" style="{{ inputStyle }};height:72px;padding:10px 13px;resize:vertical;line-height:1.5"></textarea>
+            </div>
+          </sc-if>
+
         </div>
-        <div style="display:flex;justify-content:flex-end;gap:10px;padding:18px 24px;border-top:1px solid var(--border)">
+        <div style="display:flex;justify-content:flex-end;gap:10px;padding:18px 24px;border-top:1px solid var(--border);flex:none">
           <button onClick="{{ closeModal }}" style="background:var(--surface);border:1px solid var(--border2);color:var(--text);font-weight:600;font-size:13px;border-radius:10px;padding:0 18px;height:40px;cursor:pointer">Cancelar</button>
           <button onClick="{{ closeModal }}" style="background:var(--accent);border:none;color:#04201C;font-weight:600;font-size:13px;border-radius:10px;padding:0 20px;height:40px;cursor:pointer">Registrar</button>
         </div>
@@ -715,6 +819,98 @@
     </div>
   </sc-if>
 
+  <sc-if value="{{ showDetNov }}" hint-placeholder-val="{{ false }}">
+    <div onClick="{{ closeModal }}" style="position:fixed;inset:0;background:rgba(4,8,16,.6);backdrop-filter:blur(3px);display:flex;align-items:flex-start;justify-content:center;padding:6vh 20px;z-index:50;animation:ov .2s ease both">
+      <div onClick="{{ stop }}" style="background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:640px;max-width:100%;box-shadow:0 30px 80px rgba(0,0,0,.5);animation:pop .28s cubic-bezier(.2,.9,.3,1) both;display:flex;flex-direction:column;max-height:88vh">
+        <div style="display:flex;align-items:center;gap:14px;padding:20px 24px;border-bottom:1px solid var(--border);flex:none">
+          <div style="{{ detNov.iconWrap }}"><span style="{{ detNov.icon }}"></span></div>
+          <div style="flex:1;min-width:0">
+            <div style="display:flex;align-items:center;gap:9px;flex-wrap:wrap">
+              <div style="font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:17px;color:var(--text)">{{ detNov.tipo }}</div>
+              <span style="{{ detNov.estadoBadge }}">{{ detNov.estado }}</span>
+              <span style="{{ detNov.clasifShow }}">{{ detNov.clasifLbl }}</span>
+            </div>
+            <div style="font-size:12.5px;color:var(--text3);margin-top:2px">{{ detNov.emp }} · {{ detNov.empresa }}</div>
+          </div>
+          <button onClick="{{ closeModal }}" style="width:32px;height:32px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text2);cursor:pointer;font-size:16px;flex:none">✕</button>
+        </div>
+        <div style="padding:20px 24px 24px;overflow-y:auto;display:flex;flex-direction:column;gap:20px">
+
+          <div style="display:flex;align-items:center;gap:16px;padding:16px 18px;border-radius:13px;background:var(--accent-dim);border:1px solid var(--border)">
+            <div>
+              <div style="font-size:11px;font-weight:600;letter-spacing:.05em;color:var(--accent);text-transform:uppercase">Vigencia total</div>
+              <div style="font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:16px;color:var(--text);margin-top:3px">{{ detNov.vigLbl }}</div>
+            </div>
+            <div style="flex:1"></div>
+            <div style="text-align:right;{{ detNov.diasShow }}">
+              <div style="font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:26px;color:var(--text);line-height:1">{{ detNov.diasTot }}</div>
+              <div style="font-size:11px;color:var(--text3)">días totales</div>
+            </div>
+          </div>
+
+          <div>
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+              <div style="{{ secStyle }};margin:0;padding:0;border:none">Cadena de la novedad</div>
+              <sc-if value="{{ detNov.puedeProrrogar }}" hint-placeholder-val="{{ false }}">
+                <button onClick="{{ openProrroga }}" style="display:flex;align-items:center;gap:6px;background:var(--accent);color:#04201C;font-weight:600;font-size:12.5px;border:none;border-radius:9px;padding:0 13px;height:34px;cursor:pointer">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+                  Prorrogar
+                </button>
+              </sc-if>
+            </div>
+            <div style="position:relative;padding-left:26px">
+              <div style="position:absolute;left:6px;top:6px;bottom:6px;width:2px;background:var(--border2)"></div>
+              <sc-for list="{{ detNov.timeline }}" as="t" hint-placeholder-count="2">
+                <div style="position:relative;margin-bottom:18px">
+                  <div style="{{ t.dot }}"></div>
+                  <div style="display:flex;align-items:center;gap:9px;flex-wrap:wrap">
+                    <span style="font-weight:600;font-size:13.5px;color:var(--text)">{{ t.label }}</span>
+                    <span style="{{ t.estadoBadge }}">{{ t.estado }}</span>
+                  </div>
+                  <div style="font-size:12.5px;color:var(--text2);margin-top:3px">{{ t.fechasLbl }}</div>
+                  <div style="font-size:12px;color:var(--text3);margin-top:2px;font-style:italic">{{ t.motivo }}</div>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+
+        </div>
+        <div style="display:flex;justify-content:flex-end;gap:10px;padding:16px 24px;border-top:1px solid var(--border);flex:none">
+          <button onClick="{{ closeModal }}" style="background:var(--surface);border:1px solid var(--border2);color:var(--text);font-weight:600;font-size:13px;border-radius:10px;padding:0 18px;height:40px;cursor:pointer">Cerrar</button>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ showProrroga }}" hint-placeholder-val="{{ false }}">
+    <div onClick="{{ closeModal }}" style="position:fixed;inset:0;background:rgba(4,8,16,.6);backdrop-filter:blur(3px);display:flex;align-items:center;justify-content:center;padding:20px;z-index:51;animation:ov .2s ease both">
+      <div onClick="{{ stop }}" style="background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:460px;max-width:100%;box-shadow:0 30px 80px rgba(0,0,0,.5);animation:pop .28s cubic-bezier(.2,.9,.3,1) both;padding:24px 26px">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+          <div style="width:40px;height:40px;border-radius:11px;background:var(--accent-dim);color:var(--accent);display:flex;align-items:center;justify-content:center;flex:none">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 4v4h4"/></svg>
+          </div>
+          <div>
+            <div style="font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:17px;color:var(--text)">Prorrogar {{ detNov.tipo }}</div>
+            <div style="font-size:12px;color:var(--text3)">{{ detNov.emp }}</div>
+          </div>
+        </div>
+        <div style="font-size:12px;color:var(--text2);margin:8px 0 18px;line-height:1.5;padding:10px 12px;border-radius:10px;background:var(--surface2);border:1px solid var(--border)">La novedad original no se modifica. Cada extensión se registra como una <b style="color:var(--text)">prórroga nueva</b> en la cadena.</div>
+        <div style="display:flex;flex-direction:column;gap:14px">
+          <div><div style="{{ lblStyle }}">Nueva fecha de fin ·</div><div style="position:relative"><input placeholder="dd/mm/aaaa" maxlength="10" onInput="{{ maskDate }}" style="{{ inputStyle }};padding-right:36px"/><input type="date" onChange="{{ pickDate }}" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);width:22px;height:22px;opacity:0;cursor:pointer;border:none;background:transparent"/><svg style="position:absolute;right:9px;top:50%;transform:translateY(-50%);pointer-events:none" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></div></div>
+          <div><div style="{{ lblStyle }}">Motivo de la prórroga ·</div><input placeholder="Ej. continuidad de reposo" style="{{ inputStyle }}"/></div>
+          <div style="display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:11px;background:var(--surface);border:1px solid var(--border2)">
+            <div onClick="{{ toggleProrrogaCert }}" style="{{ prorrogaCertTrack }}"><div style="{{ prorrogaCertKnob }}"></div></div>
+            <div><div style="font-size:13px;font-weight:600;color:var(--text)">Certificado recibido</div><div style="font-size:11.5px;color:var(--text3)">Marcar si ya se presentó el comprobante</div></div>
+          </div>
+        </div>
+        <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:20px">
+          <button onClick="{{ backToDet }}" style="background:var(--surface);border:1px solid var(--border2);color:var(--text);font-weight:600;font-size:13px;border-radius:10px;padding:0 18px;height:40px;cursor:pointer">Volver</button>
+          <button onClick="{{ backToDet }}" style="background:var(--accent);border:none;color:#04201C;font-weight:600;font-size:13px;border-radius:10px;padding:0 20px;height:40px;cursor:pointer">Registrar prórroga</button>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
 </div>
 </x-dc>
 <script type="text/x-dc" data-dc-script>
@@ -728,7 +924,9 @@ class Component extends DCLogic {
     cfg: { carnet: 30, apto: 15, cnrt: 30, contrato: 45 },
     roles: { rrhh: true, admin: true, jefe: false },
     canales: { email: true, sistema: true, whatsapp: false },
-    praxis: true
+    praxis: true,
+    novFormTipo: 'Accidente', exento: false,
+    expandedNov: null, detNovId: null, prorrogaCert: false
   };
 
   // ---------- data ----------
@@ -772,12 +970,18 @@ class Component extends DCLogic {
 
   novBase() {
     return [
-      { id:1, tipo:'Accidente', emp:'Ramón Ojeda', empresa:'VIAL VICTORIA', fecha:'28/06/2026', estado:'En proceso', praxis:true, cert:'Pendiente' },
-      { id:2, tipo:'Falta injustificada', emp:'Néstor Aquino', empresa:'VIAL VICTORIA', fecha:'01/07/2026', estado:'Registrada', praxis:false, cert:'—' },
-      { id:3, tipo:'Licencia por enfermedad', emp:'Carla Benítez', empresa:'PREMOCOR', fecha:'20/06 → 24/06/2026', estado:'Aprobada', praxis:false, cert:'Presentado' },
-      { id:4, tipo:'Vacaciones', emp:'Diego Fernández', empresa:'VIAL VICTORIA', fecha:'14/07 → 28/07/2026', estado:'Aprobada', praxis:false, cert:'—' },
-      { id:5, tipo:'Accidente in itínere', emp:'Julián Rolón', empresa:'VIAL VICTORIA', fecha:'30/05/2026', estado:'Cerrada', praxis:false, cert:'Presentado' },
-      { id:6, tipo:'Licencia por estudio', emp:'Sofía Meza', empresa:'PREMOCOR', fecha:'08/07/2026', estado:'Pendiente', praxis:false, cert:'—' }
+      { id:1, tipo:'Accidente', emp:'Ramón Ojeda', empresa:'VIAL VICTORIA', fecha:'28/06/2026', estado:'En proceso', clasif:'', praxis:true, cert:'Pendiente', horas:null, prorrogas:[] },
+      { id:2, tipo:'Falta', emp:'Néstor Aquino', empresa:'VIAL VICTORIA', fecha:'01/07/2026', estado:'Registrada', clasif:'Injustificada', praxis:false, cert:'—', horas:null, prorrogas:[] },
+      { id:3, tipo:'Licencia por enfermedad', emp:'Carla Benítez', empresa:'PREMOCOR', fecha:'20/06/2026', estado:'Aprobada', clasif:'Justificada', praxis:false, cert:'Presentado', horas:null,
+        madreDesde:'20/06/2026', madreHasta:'24/06/2026', madreMotivo:'Reposo por enfermedad (5 días)',
+        prorrogas:[
+          { desde:'25/06/2026', hasta:'30/06/2026', motivo:'Continuidad de reposo', estado:'Aprobada', cert:true },
+          { desde:'01/07/2026', hasta:'04/07/2026', motivo:'Rehabilitación', estado:'En proceso', cert:false }
+        ] },
+      { id:4, tipo:'Vacaciones', emp:'Diego Fernández', empresa:'VIAL VICTORIA', fecha:'14/07 → 28/07/2026', estado:'Aprobada', clasif:'', praxis:false, cert:'—', horas:null, prorrogas:[] },
+      { id:5, tipo:'Accidente in itínere', emp:'Julián Rolón', empresa:'VIAL VICTORIA', fecha:'30/05/2026', estado:'Cerrada', clasif:'', praxis:false, cert:'Presentado', horas:null, prorrogas:[] },
+      { id:6, tipo:'Licencia por estudio', emp:'Sofía Meza', empresa:'PREMOCOR', fecha:'08/07/2026', estado:'Registrada', clasif:'Justificada', praxis:false, cert:'—', horas:null, prorrogas:[] },
+      { id:7, tipo:'Horas extra', emp:'Marcos Duarte', empresa:'VIAL VICTORIA', fecha:'02/07/2026', estado:'Aprobada', clasif:'', praxis:false, cert:'—', horas:6, prorrogas:[] }
     ];
   }
 
@@ -801,8 +1005,17 @@ class Component extends DCLogic {
   novKind(est){
     if(est==='Aprobada') return 'ok';
     if(est==='En proceso') return 'accent';
-    if(est==='Pendiente') return 'warn';
-    return 'neutral';
+    if(est==='Rechazada') return 'bad';
+    if(est==='Registrada') return 'warn';
+    return 'neutral'; // Cerrada, Anulada
+  }
+  clasifKind(c){ return c==='Justificada'?'ok':c==='Injustificada'?'bad':'neutral'; }
+  esFaltaLic(tipo){ return tipo.indexOf('Falta')>=0 || tipo.indexOf('Licencia')>=0; }
+  esProrrogable(tipo){ return tipo.indexOf('Licencia')>=0 || tipo.indexOf('Accidente')>=0; }
+  // suma de días de una fecha dd/mm/aaaa a otra (inclusive)
+  diasEntre(a,b){
+    const p=(s)=>{const[d,m,y]=s.split('/').map(Number);return new Date(y,m-1,d);};
+    return Math.round((p(b)-p(a))/86400000)+1;
   }
   certKind(c){ return c==='Presentado'?'ok':c==='Pendiente'?'bad':'neutral'; }
   novIconColor(tipo){
@@ -843,6 +1056,26 @@ class Component extends DCLogic {
   closeModal = ()=> this.setState({modal:null});
   stop = (e)=> e.stopPropagation();
   togglePraxis = ()=> this.setState(s=>({praxis:!s.praxis}));
+  maskDate = (e)=>{
+    let v = e.target.value.replace(/\D/g,'').slice(0,8);
+    if(v.length>4) v = v.slice(0,2)+'/'+v.slice(2,4)+'/'+v.slice(4);
+    else if(v.length>2) v = v.slice(0,2)+'/'+v.slice(2);
+    e.target.value = v;
+  };
+  pickDate = (e)=>{
+    const v = e.target.value;
+    if(!v) return;
+    const [y,m,d] = v.split('-');
+    const txt = e.target.previousElementSibling;
+    if(txt) txt.value = d+'/'+m+'/'+y;
+  };
+  onNovFormTipo = (e)=> this.setState({novFormTipo:e.target.value});
+  toggleExento = ()=> this.setState(s=>({exento:!s.exento}));
+  toggleExpandNov = (id)=> this.setState(s=>({expandedNov:s.expandedNov===id?null:id}));
+  openDetNov = (id)=> this.setState({modal:'detnov', detNovId:id});
+  openProrroga = ()=> this.setState({modal:'prorroga'});
+  backToDet = ()=> this.setState({modal:'detnov'});
+  toggleProrrogaCert = ()=> this.setState(s=>({prorrogaCert:!s.prorrogaCert}));
   confirmBaja = ()=> this.setState(s=>({ bajaSet: s.bajaSet.indexOf(s.bajaId)>=0?s.bajaSet:[...s.bajaSet,s.bajaId], modal:null }));
 
   cfgChange = (k,d)=> this.setState(s=>{ const v=Math.max(0,Math.min(180,s.cfg[k]+d)); return {cfg:{...s.cfg,[k]:v}}; });
@@ -871,6 +1104,7 @@ class Component extends DCLogic {
     const selStyle = 'height:38px;border:1px solid var(--border);background:var(--surface);color:var(--text);border-radius:10px;padding:0 12px;font-size:13px;cursor:pointer;outline:none';
     const inputStyle = 'width:100%;height:40px;border:1px solid var(--border2);background:var(--surface);color:var(--text);border-radius:10px;padding:0 13px;font-size:13.5px;outline:none';
     const lblStyle = 'font-size:11.5px;color:var(--text3);margin-bottom:6px;font-weight:500';
+    const secStyle = 'font-size:11px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--accent);margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid var(--border)';
 
     // metrics
     const metricIcon = (p)=> this.iconGlyph('var(--accent)', p);
@@ -878,8 +1112,9 @@ class Component extends DCLogic {
       { label:'Empleados activos', value:'134', delta:'▲ 3', dir:'up', sub:'vs. mes anterior', icon:this.iconGlyph('var(--accent)', "%3Csvg xmlns='http%3A//www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.8'%3E%3Ccircle cx='9' cy='8' r='3'/%3E%3Cpath d='M3.5 20a5.5 5.5 0 0 1 11 0'/%3E%3C/svg%3E") },
       { label:'Ingresos del mes', value:'6', delta:'▲ 2', dir:'up', sub:'Julio 2026', icon:this.iconGlyph('var(--accent)', "%3Csvg xmlns='http%3A//www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.8'%3E%3Cpath d='M12 5v14M5 12l7 7 7-7'/%3E%3C/svg%3E") },
       { label:'Egresos del mes', value:'2', delta:'▼ 1', dir:'down', sub:'Julio 2026', icon:this.iconGlyph('var(--accent)', "%3Csvg xmlns='http%3A//www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.8'%3E%3Cpath d='M12 19V5M5 12l7-7 7 7'/%3E%3C/svg%3E") },
-      { label:'Ausentismo del mes', value:'4,2%', delta:'▲ 0,4', dir:'up', sub:'sobre horas trabajadas', icon:this.iconGlyph('var(--accent)', "%3Csvg xmlns='http%3A//www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.8'%3E%3Ccircle cx='12' cy='12' r='8'/%3E%3Cpath d='M12 8v4l2.5 2'/%3E%3C/svg%3E") }
+      { label:'Ausentismo del mes', value:'—', delta:'Próximamente', dir:'soon', sub:'Requiere control de fichadas', icon:this.iconGlyph('var(--accent)', "%3Csvg xmlns='http%3A//www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.8'%3E%3Ccircle cx='12' cy='12' r='8'/%3E%3Cpath d='M12 8v4l2.5 2'/%3E%3C/svg%3E") }
     ].map((m,i)=>{
+      if(m.dir==='soon') return {...m, deltaStyle:'font-size:10.5px;font-weight:600;color:var(--text3);background:var(--surface2);border:1px solid var(--border);padding:2px 8px;border-radius:20px'};
       const good = m.label==='Egresos del mes' ? m.dir==='down' : (m.label==='Ausentismo del mes' ? m.dir==='down' : m.dir==='up');
       const c = good ? 'var(--ok)' : 'var(--bad)';
       return {...m, deltaStyle:`font-size:12px;font-weight:600;color:${c}`};
@@ -931,6 +1166,7 @@ class Component extends DCLogic {
         : 'display:flex;align-items:center;gap:7px;background:var(--ok-dim);color:var(--ok);font-weight:600;font-size:13px;border:1px solid var(--border);border-radius:10px;padding:0 15px;height:38px;cursor:pointer',
       requestBaja: fEstado==='activo' ? ()=>this.openBaja(raw.id) : ()=>this.confirmReingreso(raw.id),
       datos:[
+        {k:'Legajo (sistema)', v:'LEG-'+String(raw.id).padStart(4,'0')},
         {k:'DNI', v:raw.dni},{k:'CUIL', v:raw.cuil},{k:'Fecha de nacimiento', v:raw.nac},
         {k:'Empresa', v:raw.empresa},{k:'Sector', v:raw.sector},{k:'Domicilio', v:raw.domicilio}
       ],
@@ -964,15 +1200,66 @@ class Component extends DCLogic {
       return true;
     }).map(n=>{
       const col=this.novIconColor(n.tipo);
+      const nPro=(n.prorrogas||[]).length;
+      const expanded=S.expandedNov===n.id;
+      // cadena para el expand inline
+      const cadena=[];
+      if(nPro>0){
+        cadena.push({label:'Original', desde:n.madreDesde, hasta:n.madreHasta, motivo:n.madreMotivo, estado:'Aprobada', estadoBadge:this.badge('ok'), dot:this.dot('var(--accent)')});
+        n.prorrogas.forEach((p,i)=>cadena.push({label:'Prórroga '+(i+1), desde:p.desde, hasta:p.hasta, motivo:p.motivo, estado:p.estado, estadoBadge:this.badge(this.novKind(p.estado)), dot:this.dot(this.semColor(p.estado==='Aprobada'?'ok':p.estado==='En proceso'?'warn':'bad'))}));
+      }
       return {...n,
         iconWrap:`width:32px;height:32px;border-radius:9px;background:color-mix(in srgb, ${col} 13%, transparent);display:flex;align-items:center;justify-content:center;flex:none`,
         icon:this.iconGlyph(col, "%3Csvg xmlns='http%3A//www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.8'%3E%3Cpath d='M12 8v5M12 16v.5'/%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3C/svg%3E"),
         estadoBadge:this.badge(this.novKind(n.estado)),
         certBadge:this.badge(this.certKind(n.cert)),
+        clasifLbl:n.clasif||'', clasifBadge:n.clasif?this.badge(this.clasifKind(n.clasif)):'display:none',
+        horasLbl:n.horas?(n.horas+' h'):'', horasShow:n.horas?'font-size:10.5px;color:var(--accent);font-weight:600':'display:none',
         praxisLbl:n.praxis?'Requiere praxis':'',
-        praxisInline:n.praxis?'font-size:10.5px;color:var(--warn);font-weight:600':'display:none'
+        praxisInline:n.praxis?'font-size:10.5px;color:var(--warn);font-weight:600':'display:none',
+        hasPro:nPro>0, proLbl:nPro+(nPro===1?' prórroga':' prórrogas'),
+        proBadge:nPro>0?'display:inline-flex;align-items:center;gap:4px;background:var(--accent-dim);color:var(--accent);font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:20px;cursor:pointer':'display:none',
+        expanded, cadena,
+        chevStyle:`display:inline-block;transition:transform .18s;transform:rotate(${expanded?90:0}deg);color:var(--text3)`,
+        expandWrap:expanded?'padding:4px 20px 14px 62px;background:var(--surface2);border-bottom:1px solid var(--border)':'display:none',
+        toggleExpand:(e)=>{e.stopPropagation();this.toggleExpandNov(n.id);},
+        openDet:()=>this.openDetNov(n.id)
       };
     });
+
+    // detalle de novedad
+    const dn = this.novBase().find(n=>n.id===S.detNovId) || this.novBase()[0];
+    const dnPro=(dn.prorrogas||[]).length;
+    const dnCol=this.novIconColor(dn.tipo);
+    const dnTimeline=[];
+    let vigDesde, vigHasta, diasTot=0, hasRange=false;
+    if(dnPro>0){
+      hasRange=true;
+      dnTimeline.push({label:'Novedad original', fechasLbl:dn.madreDesde+' → '+dn.madreHasta, motivo:dn.madreMotivo, estado:'Aprobada', estadoBadge:this.badge('ok'), dot:`position:absolute;left:-25px;top:3px;width:13px;height:13px;border-radius:50%;background:var(--accent);border:2px solid var(--surface);box-shadow:0 0 0 3px var(--accent-dim)`});
+      vigDesde=dn.madreDesde; vigHasta=dn.madreHasta; diasTot+=this.diasEntre(dn.madreDesde,dn.madreHasta);
+      dn.prorrogas.forEach((p,i)=>{
+        dnTimeline.push({label:'Prórroga '+(i+1), fechasLbl:p.desde+' → '+p.hasta, motivo:p.motivo, estado:p.estado, estadoBadge:this.badge(this.novKind(p.estado)), dot:`position:absolute;left:-25px;top:3px;width:13px;height:13px;border-radius:50%;background:${p.estado==='Aprobada'?'var(--ok)':p.estado==='En proceso'?'var(--warn)':'var(--bad)'};border:2px solid var(--surface)`});
+        vigHasta=p.hasta; diasTot+=this.diasEntre(p.desde,p.hasta);
+      });
+    } else if(dn.madreDesde && dn.madreHasta){
+      hasRange=true;
+      dnTimeline.push({label:'Novedad original', fechasLbl:dn.madreDesde+' → '+dn.madreHasta, motivo:dn.madreMotivo||dn.tipo, estado:dn.estado, estadoBadge:this.badge(this.novKind(dn.estado)), dot:`position:absolute;left:-25px;top:3px;width:13px;height:13px;border-radius:50%;background:var(--accent);border:2px solid var(--surface);box-shadow:0 0 0 3px var(--accent-dim)`});
+      vigDesde=dn.madreDesde; vigHasta=dn.madreHasta; diasTot=this.diasEntre(dn.madreDesde,dn.madreHasta);
+    } else {
+      // evento único o rango textual: mostrar fecha tal cual, sin días calculados
+      dnTimeline.push({label:'Novedad original', fechasLbl:dn.fecha, motivo:dn.clasif||dn.tipo, estado:dn.estado, estadoBadge:this.badge(this.novKind(dn.estado)), dot:`position:absolute;left:-25px;top:3px;width:13px;height:13px;border-radius:50%;background:var(--accent);border:2px solid var(--surface);box-shadow:0 0 0 3px var(--accent-dim)`});
+    }
+    const detNov={
+      tipo:dn.tipo, emp:dn.emp, empresa:dn.empresa, estado:dn.estado, estadoBadge:this.badge(this.novKind(dn.estado)),
+      clasifLbl:dn.clasif||'', clasifShow:dn.clasif?this.badge(this.clasifKind(dn.clasif)):'display:none',
+      iconWrap:`width:44px;height:44px;border-radius:12px;background:color-mix(in srgb, ${dnCol} 14%, transparent);color:${dnCol};display:flex;align-items:center;justify-content:center;flex:none`,
+      icon:this.iconGlyph(dnCol, "%3Csvg xmlns='http%3A//www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.8'%3E%3Cpath d='M12 8v5M12 16v.5'/%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3C/svg%3E"),
+      timeline:dnTimeline,
+      vigLbl: hasRange ? (vigDesde+' → '+vigHasta) : dn.fecha,
+      diasTot: diasTot, diasShow: hasRange ? '' : 'display:none',
+      puedeProrrogar: this.esProrrogable(dn.tipo) && dn.estado==='Aprobada',
+      proCount:dnPro
+    };
 
     // vencimientos
     const grp = (tipo,path,items)=>({
@@ -1035,7 +1322,7 @@ class Component extends DCLogic {
       metrics, rankFaltas:mkRank(faltas,4,'var(--accent)'), rankTarde:mkRank(tarde,7,'var(--warn)'),
       alertasDia,
       rot:S.rot, rotMStyle:this.segStyle(S.rot==='m'), rotAStyle:this.segStyle(S.rot==='a'),
-      selStyle, inputStyle, lblStyle,
+      selStyle, inputStyle, lblStyle, secStyle,
       empEmpresa:S.empEmpresa, empSector:S.empSector,
       estTodos:this.segStyle(S.empEstado==='todos'), estActivo:this.segStyle(S.empEstado==='activo'), estInactivo:this.segStyle(S.empEstado==='inactivo'),
       setEstTodos:this.setEstTodos, setEstActivo:this.setEstActivo, setEstInactivo:this.setEstInactivo,
@@ -1049,8 +1336,15 @@ class Component extends DCLogic {
       ausentismo, egresos,
       cfgRows, roles, canales,
       showAlta:S.modal==='alta', showAltaNov:S.modal==='altanov', showBaja:S.modal==='baja',
+      showDetNov:S.modal==='detnov', showProrroga:S.modal==='prorroga', detNov,
+      openProrroga:this.openProrroga, backToDet:this.backToDet,
+      prorrogaCertOn:S.prorrogaCert, prorrogaCertTrack:this.switchTrack(S.prorrogaCert), prorrogaCertKnob:this.switchKnob(S.prorrogaCert), toggleProrrogaCert:this.toggleProrrogaCert,
       closeModal:this.closeModal, stop:this.stop, confirmBaja:this.confirmBaja,
-      togglePraxis:this.togglePraxis, praxisTrack:this.switchTrack(S.praxis), praxisKnob:this.switchKnob(S.praxis),
+      togglePraxis:this.togglePraxis, praxisOn:S.praxis, praxisTrack:this.switchTrack(S.praxis), praxisKnob:this.switchKnob(S.praxis),
+      maskDate:this.maskDate, pickDate:this.pickDate,
+      novFormTipo:S.novFormTipo, onNovFormTipo:this.onNovFormTipo,
+      novIsHoras:S.novFormTipo==='Horas extra', novIsFaltaLic:this.esFaltaLic(S.novFormTipo), novNoHoras:S.novFormTipo!=='Horas extra',
+      exentoOn:S.exento, exentoTrack:this.switchTrack(S.exento), exentoKnob:this.switchKnob(S.exento), toggleExento:this.toggleExento,
       bajaName:(this.base().find(e=>e.id===S.bajaId)||{}).name||''
     };
   }
