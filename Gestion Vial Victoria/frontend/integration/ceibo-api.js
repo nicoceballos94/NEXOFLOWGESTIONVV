@@ -266,7 +266,9 @@
   // Etiqueta de un input: sube por los ancestros hasta el wrapper del campo y toma
   // el primer <div> "de texto" (sin input adentro). Robusto a envolturas extra
   // (p. ej. el input type="date" del diseño tiene un wrapper de calendario).
-  function labelFor(el) {
+  // El <div> de etiqueta de un input (subiendo hasta 4 niveles). Devolver el nodo —no solo
+  // el texto— permite renombrar la etiqueta en runtime (ver prefill de prórroga).
+  function labelDivOf(el) {
     var node = el;
     for (var i = 0; i < 4 && node; i++) {
       node = node.parentElement;
@@ -276,11 +278,12 @@
         var d = divs[j];
         if (d.querySelector("input,select,textarea")) continue;   // no es la etiqueta
         var txt = d.textContent.trim();
-        if (txt && txt.length <= 32) return txt;
+        if (txt && txt.length <= 32) return d;
       }
     }
-    return "";
+    return null;
   }
+  function labelFor(el) { var d = labelDivOf(el); return d ? d.textContent.trim() : ""; }
   // Lee un modal a un mapa etiqueta-normalizada → elemento (primer input por etiqueta gana).
   function readModalForm(sel) {
     var m = document.querySelector(sel);
@@ -442,15 +445,26 @@
         tipo_novedad: tipo.id, fecha_desde: desde,
         motivo: g("motivo"), observaciones: g("observaciones"),
       };
-      // Días → fecha_hasta (el PATCH de edición no acepta 'dias', así que mandamos el rango).
-      var dias = g("dias"); if (dias) payload.fecha_hasta = addDaysISO(desde, Number(dias) - 1);
+      // Al editar una prórroga, prefillNovForm renombró "Días" → "Fecha de fin": se corrige
+      // por su fecha_hasta directa (no por días, ni tocando praxis; ver prefillNovForm).
+      var editRaw = editNovId ? _novRawById[editNovId] : null;
+      var esProrrogaEdit = !!(editRaw && editRaw.novedad_origen);
+      if (esProrrogaEdit) {
+        var fin = parseFecha(g("fecha de fin"));
+        if (!fin) throw new Error("Fecha de fin obligatoria (dd/mm/aaaa)");
+        if (fin < desde) throw new Error("La fecha de fin no puede ser anterior al inicio.");
+        payload.fecha_hasta = fin;
+      } else {
+        // Días → fecha_hasta (el PATCH de edición no acepta 'dias', así que mandamos el rango).
+        var dias = g("dias"); if (dias) payload.fecha_hasta = addDaysISO(desde, Number(dias) - 1);
+      }
       var aviso = parseFecha(g("fecha aviso del empleado")); if (aviso) payload.fecha_aviso_empleado = aviso;
       var clasif = CLASIF[g("clasificacion")]; if (clasif) payload.clasificacion = clasif;
       if (codigo === "HORAS_EXTRA") {
         var h = g("cantidad de horas");
         if (!h) throw new Error("Cantidad de horas obligatoria");
         payload.cantidad_horas = h;
-      } else {
+      } else if (!esProrrogaEdit) {
         // El bloque de praxis se muestra cuando el toggle está activo: si sus inputs existen,
         // la novedad requiere praxis y se envían las fechas cargadas.
         var praxisFields = ["fecha turno praxis", "fecha fin estimada", "fecha reintegro", "fecha certificado recibido"];
@@ -506,7 +520,24 @@
       if (f["motivo"]) f["motivo"].value = n.motivo || "";
       if (f["observaciones"]) f["observaciones"].value = n.observaciones || "";
       if (f["clasificacion"]) f["clasificacion"].value = CLASIF_REV[n.clasificacion] || "";
-      if (f["dias"] && n.fecha_hasta) f["dias"].value = String(diasEntreISO(n.fecha_desde, n.fecha_hasta));
+      if (n.novedad_origen) {
+        // Editar una PRÓRROGA: su inicio es contiguo a la cadena (no se edita) y su
+        // corrección natural es la FECHA DE FIN (fecha_hasta), no "Días" ni "Fecha fin
+        // estimada" (esta última es una anotación de praxis, no la vigencia). Se reusa
+        // el input de "Días" in situ, renombrando la etiqueta —solo en este modo.
+        var fIni = f["fecha"];
+        if (fIni) { fIni.disabled = true; fIni.style.cssText += ";opacity:.65;cursor:not-allowed"; }
+        var fDias = f["dias"];
+        if (fDias) {
+          var lblDias = labelDivOf(fDias);
+          if (lblDias) lblDias.textContent = "Fecha de fin";
+          fDias.placeholder = "dd/mm/aaaa";
+          fDias.setAttribute("maxlength", "10");
+          fDias.value = fmtISOtoDMY(n.fecha_hasta);
+        }
+      } else if (f["dias"] && n.fecha_hasta) {
+        f["dias"].value = String(diasEntreISO(n.fecha_desde, n.fecha_hasta));
+      }
       if (f["cantidad de horas"] && n.cantidad_horas != null) f["cantidad de horas"].value = String(Number(n.cantidad_horas));
       set("fecha aviso del empleado", n.fecha_aviso_empleado);
       set("fecha turno praxis", n.fecha_turno_praxis);
