@@ -18,11 +18,29 @@ Code: viven fuera del export. El riesgo real es que un rediseño **rompa un
 anclaje** o cambie estructura que el cableado asume. Este flujo agrega un paso
 de revisión antes de promover cualquier export.
 
+## Conexión con Claude Design (DesignSync)
+
+El canvas vive en Claude Design y se accede con la tool **DesignSync** (MCP de
+Anthropic, autorizado en la sesión con `/design-login`). **No es un MCP a
+configurar en `.mcp.json`**: ya viene en el harness.
+
+- **projectId**: `6146d4a1-1905-4bba-8d9a-335e1c43b2bd`
+  (nombre interno "# Sistema RRHH Corrientes", dueño "Nico").
+- **Gotcha**: es `PROJECT_TYPE_PROJECT`, así que `DesignSync list_projects`
+  devuelve **vacío** (filtra a design-system). Usar `get_project` / `list_files`
+  / `get_file` con el `projectId` **directo** — funcionan igual.
+- **Bajar (canvas → repo)**: `get_file` de `Ceibo RRHH.dc.html` y `support.js`
+  (devuelve JSON `{content}`; extraer `content` al inbox). Es el sentido normal.
+- **Subir (repo → canvas)**: `write_files` existe, pero **solo para cambios de
+  diseño puro**. Nunca subir el cableado (`ceibo-api.js`, shims de `build.py`):
+  ensuciaría el export pristino. Por defecto la comunicación es canvas → repo.
+
 ## El flujo, paso a paso
 
 ### Paso 1 — Bajar el export al inbox
 
-Bajar el canvas actualizado (DesignSync `get_file`) a una subcarpeta nueva:
+Bajar el canvas actualizado (DesignSync `get_file`, projectId arriba) a una
+subcarpeta nueva:
 
 ```
 frontend/design-inbox/AAAA-MM-DD-nombre-del-cambio/

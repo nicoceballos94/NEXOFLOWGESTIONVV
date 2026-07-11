@@ -709,14 +709,6 @@
           </div>
 
           <div>
-            <div style="{{ secStyle }}">Egreso <span style="font-weight:400;color:var(--text3);text-transform:none;letter-spacing:0">— completar al dar de baja</span></div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px 18px">
-              <div><div style="{{ lblStyle }}">Fecha de egreso</div><div style="position:relative"><input placeholder="dd/mm/aaaa" maxlength="10" onInput="{{ maskDate }}" style="{{ inputStyle }};padding-right:36px"/><input type="date" onChange="{{ pickDate }}" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);width:22px;height:22px;opacity:0;cursor:pointer;border:none;background:transparent"/><svg style="position:absolute;right:9px;top:50%;transform:translateY(-50%);pointer-events:none" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></div></div>
-              <div><div style="{{ lblStyle }}">Motivo de egreso</div><select style="{{ inputStyle }}"><option value="">—</option><option>Renuncia</option><option>Fin de contrato</option><option>Despido</option><option>Jubilación</option><option>Otro</option></select></div>
-            </div>
-          </div>
-
-          <div>
             <div style="{{ secStyle }}">Observaciones</div>
             <textarea placeholder="Notas internas, aclaraciones, antecedentes…" style="{{ inputStyle }};height:80px;padding:10px 13px;resize:vertical;line-height:1.5"></textarea>
           </div>
@@ -734,7 +726,7 @@
     <div onClick="{{ closeModal }}" style="position:fixed;inset:0;background:rgba(4,8,16,.6);backdrop-filter:blur(3px);display:flex;align-items:flex-start;justify-content:center;padding:6vh 20px;z-index:50;animation:ov .2s ease both">
       <div onClick="{{ stop }}" style="background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:680px;max-width:100%;box-shadow:0 30px 80px rgba(0,0,0,.5);animation:pop .28s cubic-bezier(.2,.9,.3,1) both;display:flex;flex-direction:column;max-height:88vh">
         <div style="display:flex;align-items:center;justify-content:space-between;padding:20px 24px;border-bottom:1px solid var(--border);flex:none">
-          <div><div><div style="font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:17px;color:var(--text)">{{ novFormTitle }}</div><div style="font-size:12px;color:var(--text3)">Los campos con · son obligatorios</div></div>
+          <div><div style="font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:17px;color:var(--text)">{{ novFormTitle }}</div><div style="font-size:12px;color:var(--text3)">Los campos con · son obligatorios</div></div>
           <button onClick="{{ closeModal }}" style="width:32px;height:32px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text2);cursor:pointer;font-size:16px">✕</button>
         </div>
         <div style="padding:20px 24px 24px;overflow-y:auto;display:flex;flex-direction:column;gap:22px">
@@ -811,7 +803,8 @@
         </div>
         <div style="font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:18px;color:var(--text)">Dar de baja a {{ bajaName }}</div>
         <div style="font-size:13px;color:var(--text2);margin-top:8px;line-height:1.55">Esto registra una <b style="color:var(--text)">baja lógica</b>: el empleado pasa a estado <b style="color:var(--text)">Inactivo</b> y conserva todo su historial y novedades. No se elimina ningún dato — la relación laboral queda trazada para un eventual reingreso.</div>
-        <div style="margin-top:16px"><div style="{{ lblStyle }}">Motivo de baja</div><select style="{{ inputStyle }}"><option>Renuncia</option><option>Fin de contrato</option><option>Despido</option><option>Mudanza</option><option>Jubilación</option></select></div>
+        <div style="margin-top:16px"><div style="{{ lblStyle }}">Fecha de egreso</div><div style="position:relative"><input placeholder="dd/mm/aaaa (vacío = hoy)" maxlength="10" onInput="{{ maskDate }}" style="{{ inputStyle }};padding-right:36px"/><input type="date" onChange="{{ pickDate }}" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);width:22px;height:22px;opacity:0;cursor:pointer;border:none;background:transparent"/><svg style="position:absolute;right:9px;top:50%;transform:translateY(-50%);pointer-events:none" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></div></div>
+        <div style="margin-top:14px"><div style="{{ lblStyle }}">Motivo de baja</div><select style="{{ inputStyle }}"><option>Renuncia</option><option>Fin de contrato</option><option>Despido</option><option>Mudanza</option><option>Jubilación</option></select></div>
         <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:20px">
           <button onClick="{{ closeModal }}" style="background:var(--surface);border:1px solid var(--border2);color:var(--text);font-weight:600;font-size:13px;border-radius:10px;padding:0 18px;height:40px;cursor:pointer">Cancelar</button>
           <button onClick="{{ confirmBaja }}" style="background:var(--bad);border:none;color:#fff;font-weight:600;font-size:13px;border-radius:10px;padding:0 20px;height:40px;cursor:pointer">Confirmar baja lógica</button>
@@ -870,6 +863,22 @@
                   </div>
                   <div style="font-size:12.5px;color:var(--text2);margin-top:3px">{{ t.fechasLbl }}</div>
                   <div style="font-size:12px;color:var(--text3);margin-top:2px;font-style:italic">{{ t.motivo }}</div>
+                  <sc-if value="{{ t.isProrroga }}" hint-placeholder-val="{{ false }}">
+                    <div style="display:flex;gap:7px;flex-wrap:wrap;margin-top:8px">
+                      <sc-if value="{{ t.canEdit }}" hint-placeholder-val="{{ false }}">
+                        <button onClick="{{ t.doEdit }}" style="{{ t.editBtn }}">Editar</button>
+                      </sc-if>
+                      <sc-if value="{{ t.canAprobar }}" hint-placeholder-val="{{ false }}">
+                        <button onClick="{{ t.doAprobar }}" style="{{ t.aprobarBtn }}">Aprobar</button>
+                      </sc-if>
+                      <sc-if value="{{ t.canRechazar }}" hint-placeholder-val="{{ false }}">
+                        <button onClick="{{ t.doRechazar }}" style="{{ t.rechazarBtn }}">Rechazar</button>
+                      </sc-if>
+                      <sc-if value="{{ t.canAnular }}" hint-placeholder-val="{{ false }}">
+                        <button onClick="{{ t.doAnular }}" style="{{ t.anularBtn }}">Anular</button>
+                      </sc-if>
+                    </div>
+                  </sc-if>
                 </div>
               </sc-for>
             </div>
@@ -937,7 +946,7 @@ class Component extends DCLogic {
     praxis: true,
     novFormTipo: 'Accidente', exento: false,
     expandedNov: null, detNovId: null, prorrogaCert: false,
-    novOverrides: {}, editNovId: null
+    novOverrides: {}, editNovId: null, prorrogaOverrides: {}, editProrrogaIdx: null
   };
 
   // ---------- data ----------
@@ -1069,7 +1078,7 @@ class Component extends DCLogic {
   openAlta = ()=> this.setState({modal:'alta'});
   openAltaNov = ()=> this.setState({modal:'altanov', editNovId:null, novFormTipo:'Falta'});
   openBaja = (id)=> this.setState({modal:'baja', bajaId:id});
-  closeModal = ()=> this.setState({modal:null, editNovId:null});
+  closeModal = ()=> this.setState({modal:null, editNovId:null, editProrrogaIdx:null});
   stop = (e)=> e.stopPropagation();
   togglePraxis = ()=> this.setState(s=>({praxis:!s.praxis}));
   maskDate = (e)=>{
@@ -1098,7 +1107,18 @@ class Component extends DCLogic {
   anularNov = ()=> this.setNovEstado(this.state.detNovId, 'Anulada');
   openEditNov = (id)=>{
     const n=this.novList().find(x=>x.id===id);
-    this.setState({modal:'altanov', editNovId:id, novFormTipo: n?n.tipo:'Falta'});
+    this.setState({modal:'altanov', editNovId:id, editProrrogaIdx:null, novFormTipo: n?n.tipo:'Falta'});
+  };
+  setProrrogaEstado = (novId, idx, estado)=> this.setState(s=>{
+    const key = novId+'_'+idx;
+    return { prorrogaOverrides:{...s.prorrogaOverrides, [key]:{...(s.prorrogaOverrides[key]||{}), estado}} };
+  });
+  aprobarProrroga = (novId, idx)=> this.setProrrogaEstado(novId, idx, 'Aprobada');
+  rechazarProrroga = (novId, idx)=> this.setProrrogaEstado(novId, idx, 'Rechazada');
+  anularProrroga = (novId, idx)=> this.setProrrogaEstado(novId, idx, 'Anulada');
+  openEditProrroga = (novId, idx)=>{
+    const n=this.novList().find(x=>x.id===novId);
+    this.setState({modal:'altanov', editNovId:novId, editProrrogaIdx:idx, novFormTipo: n?n.tipo:'Falta'});
   };
   confirmBaja = ()=> this.setState(s=>({ bajaSet: s.bajaSet.indexOf(s.bajaId)>=0?s.bajaSet:[...s.bajaSet,s.bajaId], modal:null }));
 
@@ -1253,25 +1273,43 @@ class Component extends DCLogic {
 
     // detalle de novedad
     const dn = this.novList().find(n=>n.id===S.detNovId) || this.novList()[0];
-    const dnPro=(dn.prorrogas||[]).length;
+    const prorrogasEff = (dn.prorrogas||[]).map((p,i)=>({...p, ...(S.prorrogaOverrides[dn.id+'_'+i]||{})}));
+    const dnPro=prorrogasEff.length;
     const dnCol=this.novIconColor(dn.tipo);
     const dnTimeline=[];
+    const compactBtn = (bg,border,color)=>`background:${bg};border:${border};color:${color};font-weight:600;font-size:11px;border-radius:7px;padding:0 10px;height:26px;cursor:pointer`;
+    const proActions=(p,i)=>({
+      isProrroga:true,
+      canEdit: p.estado==='Registrada',
+      canAprobar: p.estado==='Registrada' || p.estado==='En proceso',
+      canRechazar: p.estado==='Registrada' || p.estado==='En proceso',
+      canAnular: !this.esTerminal(p.estado),
+      editBtn: compactBtn('var(--surface)','1px solid var(--border2)','var(--text)'),
+      aprobarBtn: compactBtn('var(--ok)','none','#fff'),
+      rechazarBtn: compactBtn('var(--surface)','1px solid var(--border2)','var(--bad)'),
+      anularBtn: compactBtn('transparent','1px solid var(--border2)','var(--bad)')+';opacity:.85',
+      doEdit:()=>this.openEditProrroga(dn.id,i),
+      doAprobar:()=>this.aprobarProrroga(dn.id,i),
+      doRechazar:()=>this.rechazarProrroga(dn.id,i),
+      doAnular:()=>this.anularProrroga(dn.id,i)
+    });
+    const noActions={isProrroga:false, canEdit:false, canAprobar:false, canRechazar:false, canAnular:false};
     let vigDesde, vigHasta, diasTot=0, hasRange=false;
     if(dnPro>0){
       hasRange=true;
-      dnTimeline.push({label:'Novedad original', fechasLbl:dn.madreDesde+' → '+dn.madreHasta, motivo:dn.madreMotivo, estado:'Aprobada', estadoBadge:this.badge('ok'), dot:`position:absolute;left:-25px;top:3px;width:13px;height:13px;border-radius:50%;background:var(--accent);border:2px solid var(--surface);box-shadow:0 0 0 3px var(--accent-dim)`});
+      dnTimeline.push({label:'Novedad original', fechasLbl:dn.madreDesde+' → '+dn.madreHasta, motivo:dn.madreMotivo, estado:'Aprobada', estadoBadge:this.badge('ok'), dot:`position:absolute;left:-25px;top:3px;width:13px;height:13px;border-radius:50%;background:var(--accent);border:2px solid var(--surface);box-shadow:0 0 0 3px var(--accent-dim)`, ...noActions});
       vigDesde=dn.madreDesde; vigHasta=dn.madreHasta; diasTot+=this.diasEntre(dn.madreDesde,dn.madreHasta);
-      dn.prorrogas.forEach((p,i)=>{
-        dnTimeline.push({label:'Prórroga '+(i+1), fechasLbl:p.desde+' → '+p.hasta, motivo:p.motivo, estado:p.estado, estadoBadge:this.badge(this.novKind(p.estado)), dot:`position:absolute;left:-25px;top:3px;width:13px;height:13px;border-radius:50%;background:${p.estado==='Aprobada'?'var(--ok)':p.estado==='En proceso'?'var(--warn)':'var(--bad)'};border:2px solid var(--surface)`});
+      prorrogasEff.forEach((p,i)=>{
+        dnTimeline.push({label:'Prórroga '+(i+1), fechasLbl:p.desde+' → '+p.hasta, motivo:p.motivo, estado:p.estado, estadoBadge:this.badge(this.novKind(p.estado)), dot:`position:absolute;left:-25px;top:3px;width:13px;height:13px;border-radius:50%;background:${p.estado==='Aprobada'?'var(--ok)':p.estado==='En proceso'?'var(--warn)':'var(--bad)'};border:2px solid var(--surface)`, ...proActions(p,i)});
         vigHasta=p.hasta; diasTot+=this.diasEntre(p.desde,p.hasta);
       });
     } else if(dn.madreDesde && dn.madreHasta){
       hasRange=true;
-      dnTimeline.push({label:'Novedad original', fechasLbl:dn.madreDesde+' → '+dn.madreHasta, motivo:dn.madreMotivo||dn.tipo, estado:dn.estado, estadoBadge:this.badge(this.novKind(dn.estado)), dot:`position:absolute;left:-25px;top:3px;width:13px;height:13px;border-radius:50%;background:var(--accent);border:2px solid var(--surface);box-shadow:0 0 0 3px var(--accent-dim)`});
+      dnTimeline.push({label:'Novedad original', fechasLbl:dn.madreDesde+' → '+dn.madreHasta, motivo:dn.madreMotivo||dn.tipo, estado:dn.estado, estadoBadge:this.badge(this.novKind(dn.estado)), dot:`position:absolute;left:-25px;top:3px;width:13px;height:13px;border-radius:50%;background:var(--accent);border:2px solid var(--surface);box-shadow:0 0 0 3px var(--accent-dim)`, ...noActions});
       vigDesde=dn.madreDesde; vigHasta=dn.madreHasta; diasTot=this.diasEntre(dn.madreDesde,dn.madreHasta);
     } else {
       // evento único o rango textual: mostrar fecha tal cual, sin días calculados
-      dnTimeline.push({label:'Novedad original', fechasLbl:dn.fecha, motivo:dn.clasif||dn.tipo, estado:dn.estado, estadoBadge:this.badge(this.novKind(dn.estado)), dot:`position:absolute;left:-25px;top:3px;width:13px;height:13px;border-radius:50%;background:var(--accent);border:2px solid var(--surface);box-shadow:0 0 0 3px var(--accent-dim)`});
+      dnTimeline.push({label:'Novedad original', fechasLbl:dn.fecha, motivo:dn.clasif||dn.tipo, estado:dn.estado, estadoBadge:this.badge(this.novKind(dn.estado)), dot:`position:absolute;left:-25px;top:3px;width:13px;height:13px;border-radius:50%;background:var(--accent);border:2px solid var(--surface);box-shadow:0 0 0 3px var(--accent-dim)`, ...noActions});
     }
     const detNov={
       tipo:dn.tipo, emp:dn.emp, empresa:dn.empresa, estado:dn.estado, estadoBadge:this.badge(this.novKind(dn.estado)),
@@ -1292,11 +1330,15 @@ class Component extends DCLogic {
     const diaSiguiente=(s)=>{ if(!s) return ''; const[d,m,y]=s.split('/').map(Number); const dt=new Date(y,m-1,d+1); return String(dt.getDate()).padStart(2,'0')+'/'+String(dt.getMonth()+1).padStart(2,'0')+'/'+dt.getFullYear(); };
     const prorrogaInicio = diaSiguiente(vigHasta||dn.madreHasta||dn.fecha);
     const editingNov = S.editNovId!=null ? this.novList().find(n=>n.id===S.editNovId) : null;
-    const editSeed = editingNov ? {
+    const editingProrroga = (editingNov && S.editProrrogaIdx!=null) ? {...(editingNov.prorrogas||[])[S.editProrrogaIdx], ...(S.prorrogaOverrides[editingNov.id+'_'+S.editProrrogaIdx]||{})} : null;
+    const editSeed = editingProrroga ? {
+      emp:editingNov.emp, fecha:editingProrroga.desde+' → '+editingProrroga.hasta, estado:editingProrroga.estado, clasif:editingNov.clasif||'',
+      motivo:editingProrroga.motivo||'', fechaAviso:'', dias:'', horas:''
+    } : editingNov ? {
       emp:editingNov.emp, fecha:editingNov.fecha, estado:editingNov.estado, clasif:editingNov.clasif||'',
       motivo:editingNov.madreMotivo||'', fechaAviso:'', dias: editingNov.horas?'':'', horas: editingNov.horas||''
     } : {};
-    const novFormTitle = editingNov ? 'Editar novedad' : 'Registrar novedad';
+    const novFormTitle = (editingNov||editingProrroga) ? 'Editar novedad' : 'Registrar novedad';
 
     // vencimientos
     const grp = (tipo,path,items)=>({

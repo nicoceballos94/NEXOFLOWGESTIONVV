@@ -57,15 +57,48 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
     setTimeout(() => window.CeiboAPI.populateNovForm(), 60);
   };
   openEditNov = (id) => {
-    this.setState({ modal: 'altanov', editNovId: id, novFormTipo: window.CeiboAPI.novFormTipoFor(id) });
+    this.setState({ modal: 'altanov', editNovId: id, editProrrogaIdx: null, novFormTipo: window.CeiboAPI.novFormTipoFor(id) });
     setTimeout(() => window.CeiboAPI.prefillNovForm(id), 60);
   };
   submitNov = async () => {
     try {
-      await window.CeiboAPI.submitNov(this.state.editNovId);
-      this.setState({ modal: null, editNovId: null });
+      // Si se está editando una prórroga (fila hija), el id real es el de la prórroga,
+      // no el de la madre; se resuelve por (madre, índice) del estado del diseño.
+      let editId = this.state.editNovId;
+      if (this.state.editProrrogaIdx != null) {
+        const n = this.novList().find(x => x.id === this.state.editNovId);
+        const p = n && n.prorrogas && n.prorrogas[this.state.editProrrogaIdx];
+        if (p && p.id != null) editId = p.id;
+      }
+      await window.CeiboAPI.submitNov(editId);
+      this.setState({ modal: null, editNovId: null, editProrrogaIdx: null });
       await this.reloadNovedades();
     } catch (e) { console.error('[ceibo] novedad', e); window.CeiboAPI.toast(e.message || String(e), 'error'); }
+  };
+  // ===== acciones por fila de prórroga (el canvas las dejó en mock; acá van al backend) =====
+  // El diseño identifica una prórroga por (id de la madre, índice); resolvemos el id real
+  // del backend con prorrogas[idx].id (lo agrega CeiboAPI.listNovedades).
+  _prorrogaId = (novId, idx) => {
+    const n = this.novList().find(x => x.id === novId);
+    const p = n && n.prorrogas && n.prorrogas[idx];
+    return p ? p.id : null;
+  };
+  _transProrroga = async (novId, idx, accion) => {
+    try {
+      const id = this._prorrogaId(novId, idx);
+      if (id == null) throw new Error('prórroga no encontrada');
+      await window.CeiboAPI.transicionNov(id, accion);
+      await this.reloadNovedades();
+    } catch (e) { console.error('[ceibo] prórroga', e); window.CeiboAPI.toast(e.message || String(e), 'error'); }
+  };
+  aprobarProrroga = (novId, idx) => this._transProrroga(novId, idx, 'aprobar');
+  rechazarProrroga = (novId, idx) => this._transProrroga(novId, idx, 'rechazar');
+  anularProrroga = (novId, idx) => this._transProrroga(novId, idx, 'anular');
+  openEditProrroga = (novId, idx) => {
+    const id = this._prorrogaId(novId, idx);
+    this.setState({ modal: 'altanov', editNovId: novId, editProrrogaIdx: idx,
+      novFormTipo: id != null ? window.CeiboAPI.novFormTipoFor(id) : 'Falta' });
+    if (id != null) setTimeout(() => window.CeiboAPI.prefillNovForm(id), 60);
   };
   _transNov = async (accion) => {
     try {
@@ -161,18 +194,8 @@ EDICIONES = [
         BLOQUE_INTEGRACION,
         "clase: bloque de integración",
     ),
-    # --- template: FIX export malformado — <div> de más en el header del modal
-    #     "Registrar/Editar novedad". Deja un <div> sin cerrar → el <sc-if> de
-    #     showAltaNov no cierra y se traga a showBaja/showDetNov/showProrroga, por
-    #     lo que el detalle de novedad (y su prórroga/acciones) nunca abren.
-    #     Se corrige quitando el <div> sobrante; design/ queda pristino. Si un
-    #     export futuro de Claude Design ya trae el header balanceado, este ancla
-    #     no matcheará y habrá que quitar esta edición (ver design-change-intake). ---
-    (
-        '<div><div><div style="font-family:\'Space Grotesk\',sans-serif;font-weight:600;font-size:17px;color:var(--text)">{{ novFormTitle }}',
-        '<div><div style="font-family:\'Space Grotesk\',sans-serif;font-weight:600;font-size:17px;color:var(--text)">{{ novFormTitle }}',
-        "FIX header altanov: quitar <div> sin cerrar",
-    ),
+    # (El FIX del header malformado de "Registrar/Editar novedad" ya no hace falta:
+    #  el export 2026-07-10 de Claude Design trae el header balanceado de fábrica.)
     # --- template: marcar modales para leer sus inputs del DOM ---
     (
         "style=\"background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:720px;max-width:100%",
@@ -224,6 +247,10 @@ EDICIONES = [
         '<button onClick="{{ ficha.openEdit }}" style="display:flex;align-items:center;gap:7px;background:var(--surface2);color:var(--text);font-weight:600;font-size:13px;border:1px solid var(--border2);border-radius:10px;padding:0 15px;height:38px;cursor:pointer" style-hover="border-color:var(--text3)">',
         "botón Editar → openEdit",
     ),
+    # (El campo "Fecha de egreso" del modal de baja y los botones de acción por fila en
+    #  la cadena de novedad ahora vienen del canvas (export 2026-07-10). Ya no se inyectan;
+    #  el cableado de esos botones al backend está en BLOQUE_INTEGRACION —overrides de
+    #  aprobarProrroga/rechazarProrroga/anularProrroga/openEditProrroga—.)
 ]
 
 
@@ -235,6 +262,9 @@ def main():
     if not SRC.exists():
         sys.exit(f"ERROR: no está el diseño en {SRC}")
     html = SRC.read_text(encoding="utf-8")
+
+    # (La sección "Egreso" del alta ya no viene en el canvas (export 2026-07-10); no hay
+    #  nada que remover acá.)
 
     for ancla, reemplazo, desc in EDICIONES:
         if ancla not in html:

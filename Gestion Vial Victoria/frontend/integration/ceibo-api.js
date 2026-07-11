@@ -17,7 +17,7 @@
     PASS: "Clave-Segura-123",
   };
 
-  var _token = null;
+  var _token = null, _refresh = null;
   var _empresaByName = {}, _empresaById = {};
   var _sectorByName = {}, _sectorById = {};
   var _puestoByName = {}, _puestoById = {};
@@ -28,6 +28,32 @@
 
   // ---------- HTTP ----------
   function auth() { return { Authorization: "Bearer " + _token }; }
+  // El access token dura 15 min (SIMPLE_JWT). Se renueva con el refresh ante un 401,
+  // así una sesión de trabajo larga no muere con "token inválido" a mitad de una acción.
+  async function refreshToken() {
+    if (!_refresh) return false;
+    var r = await fetch(CONFIG.API + "/auth/token/refresh/", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ refresh: _refresh }),
+    });
+    if (!r.ok) { _refresh = null; return false; }
+    var d = await r.json().catch(function () { return {}; });
+    if (!d.access) return false;
+    _token = d.access;
+    if (d.refresh) _refresh = d.refresh;   // ROTATE_REFRESH_TOKENS=True → llega uno nuevo
+    return true;
+  }
+  // fetch con Authorization y reintento único ante 401 (access vencido → refresh → retry).
+  async function authedFetch(url, opts) {
+    opts = opts || {};
+    opts.headers = Object.assign({}, opts.headers, auth());
+    var r = await fetch(url, opts);
+    if (r.status === 401 && await refreshToken()) {
+      opts.headers = Object.assign({}, opts.headers, auth());
+      r = await fetch(url, opts);
+    }
+    return r;
+  }
   function flattenErrs(obj) {
     var out = [];
     Object.keys(obj).forEach(function (k) {
@@ -39,14 +65,14 @@
     return out;
   }
   async function jget(path) {
-    var r = await fetch(CONFIG.API + path, { headers: auth() });
+    var r = await authedFetch(CONFIG.API + path, {});
     if (!r.ok) throw new Error("GET " + path + " → " + r.status);
     return r.json();
   }
   async function jsend(method, path, body) {
-    var r = await fetch(CONFIG.API + path, {
+    var r = await authedFetch(CONFIG.API + path, {
       method: method,
-      headers: Object.assign({ "content-type": "application/json" }, auth()),
+      headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
     });
     var data = await r.json().catch(function () { return {}; });
@@ -64,7 +90,7 @@
   async function getAllPages(path) {
     var rows = [], url = CONFIG.API + path;
     while (url) {
-      var d = await fetch(url, { headers: auth() }).then(function (r) { return r.json(); });
+      var d = await authedFetch(url, {}).then(function (r) { return r.json(); });
       rows = rows.concat(d.results || []);
       url = d.next;
     }
@@ -312,6 +338,7 @@
       }).then(function (r) { return r.json(); });
       if (!tk.access) throw new Error("login falló: " + JSON.stringify(tk));
       _token = tk.access;
+      _refresh = tk.refresh || null;   // para renovar el access cuando venza (authedFetch)
       var emp = await getAllPages("/empresas/?page_size=200");
       var sec = await getAllPages("/sectores/?page_size=200");
       var pue = await getAllPages("/puestos/?page_size=200");
@@ -345,6 +372,7 @@
           .sort(function (a, b) { return a.fecha_desde < b.fecha_desde ? -1 : 1; });
         out.prorrogas = pros.map(function (p) {
           return {
+            id: p.id, esProrroga: true,
             desde: fmtISOtoDMY(p.fecha_desde), hasta: fmtISOtoDMY(p.fecha_hasta),
             motivo: p.motivo || "", estado: p.estado_display,
             cert: !!p.certificado_recibido_en,
@@ -354,6 +382,11 @@
           out.madreDesde = fmtISOtoDMY(m.fecha_desde);
           out.madreHasta = fmtISOtoDMY(m.fecha_hasta);
           out.madreMotivo = m.motivo || m.tipo_novedad_nombre;
+          // La grilla muestra la vigencia EFECTIVA: madre.desde → hasta de la última
+          // prórroga no anulada (antes mostraba solo el rango original de la madre).
+          var vigHasta = m.fecha_hasta;
+          pros.forEach(function (p) { if (p.estado_display !== "Anulada") vigHasta = p.fecha_hasta; });
+          out.fecha = fmtRango(m.fecha_desde, vigHasta);
         }
         return out;
       });
@@ -565,8 +598,11 @@
       var m = document.querySelector('[data-modal="baja"]');
       var sel = m ? m.querySelector("select") : null;
       var motivo = MOTIVO[sel ? sel.value : "Renuncia"] || "RENUNCIA";
+      // Fecha de egreso: input de fecha del modal (placeholder empieza "dd/mm/aaaa"); vacío = hoy.
+      var fEl = m ? m.querySelector('input[placeholder^="dd/mm/aaaa"]') : null;
+      var fecha = parseFecha(fEl ? fEl.value : "") || todayISO();
       await jsend("POST", "/empleados/" + emp.id + "/relaciones/" + emp._relacionActivaId + "/finalizar/", {
-        fecha_egreso: todayISO(), motivo_egreso: motivo,
+        fecha_egreso: fecha, motivo_egreso: motivo,
       });
       showToast("Baja registrada", "ok");
     },
