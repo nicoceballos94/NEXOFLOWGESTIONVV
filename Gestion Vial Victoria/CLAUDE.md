@@ -18,6 +18,21 @@
 - Si hay conflicto entre lo que dice Claude Design y lo que hay en el repo,
   **gana el repo**, salvo indicación explícita del usuario.
 
+## Sincronización bidireccional con el canvas (regla)
+
+El canvas y el repo se mantienen en sincronía en las **dos direcciones**, usando
+la tool **DesignSync** (projectId y detalles en `frontend/docs/design-change-intake.md`):
+
+- **Claude Code interviene en lo visual → actualiza el canvas.** Si Claude Code
+  hace un cambio **visual** (markup/diseño), además de aplicarlo en el repo debe
+  **subirlo al canvas** de Claude Design (`DesignSync write_files`), para que el
+  canvas siga siendo la fuente del diseño visual. **Solo lo visual**: el cableado
+  (`ceibo-api.js`, shims de `build.py`) **nunca** se sube al canvas.
+- **El usuario avisa que cambió el canvas → Claude Code lo descarga.** Cuando el
+  usuario dice que tocó algo en Claude Design, Claude Code **baja** el canvas
+  actualizado (`DesignSync get_file`) y corre el intake (inbox → diff → promover →
+  `build.py`).
+
 ## Reglas obligatorias para cambios visuales (Design Change Intake)
 
 El proceso completo está en `frontend/docs/design-change-intake.md`. Resumen:

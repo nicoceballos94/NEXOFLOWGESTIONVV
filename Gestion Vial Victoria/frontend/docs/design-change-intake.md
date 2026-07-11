@@ -29,11 +29,15 @@ configurar en `.mcp.json`**: ya viene en el harness.
 - **Gotcha**: es `PROJECT_TYPE_PROJECT`, así que `DesignSync list_projects`
   devuelve **vacío** (filtra a design-system). Usar `get_project` / `list_files`
   / `get_file` con el `projectId` **directo** — funcionan igual.
-- **Bajar (canvas → repo)**: `get_file` de `Ceibo RRHH.dc.html` y `support.js`
-  (devuelve JSON `{content}`; extraer `content` al inbox). Es el sentido normal.
-- **Subir (repo → canvas)**: `write_files` existe, pero **solo para cambios de
-  diseño puro**. Nunca subir el cableado (`ceibo-api.js`, shims de `build.py`):
-  ensuciaría el export pristino. Por defecto la comunicación es canvas → repo.
+Sincronía en las dos direcciones (regla, ver `CLAUDE.md`):
+
+- **Bajar (canvas → repo)** — cuando el usuario avisa que cambió el canvas:
+  `get_file` de `Ceibo RRHH.dc.html` y `support.js` (devuelve JSON `{content}`;
+  extraer `content` al inbox) y correr el intake de abajo.
+- **Subir (repo → canvas)** — cuando Claude Code hace un cambio **visual**:
+  aplicarlo en el repo y además `write_files` para reflejarlo en el canvas, así
+  el canvas sigue siendo la fuente del diseño visual. **Solo lo visual**: el
+  cableado (`ceibo-api.js`, shims de `build.py`) **nunca** se sube al canvas.
 
 ## El flujo, paso a paso
 
