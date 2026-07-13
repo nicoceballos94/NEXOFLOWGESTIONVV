@@ -31,11 +31,16 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
     const novs = await window.CeiboAPI.listNovedades();
     this.setState({ novedades: novs });
   };
+  reloadDashboard = async () => {
+    const d = await window.CeiboAPI.loadDashboard();
+    this.setState({ dashboard: d });
+  };
   async componentDidMount() {
     try {
       await window.CeiboAPI.init();
       await this.reloadEmpleados();
       await this.reloadNovedades();
+      await this.reloadDashboard();
       const e = this.state.empleados;
       if (e && e.length) this.setState({ selEmp: e[0].id });
     } catch (err) {
@@ -50,6 +55,10 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
     if (v.ficha) v.ficha.openEdit = () => this.openEdit(this.state.selEmp);
     v.submitNov = this.submitNov;
     v.submitProrroga = this.submitProrroga;
+    // Dashboard con datos reales: reemplaza las métricas mock del canvas.
+    if (this.state.dashboard) {
+      Object.assign(v, window.CeiboAPI.dashboardVals(this.state.dashboard, this.state.rot, v.metrics));
+    }
     return v;
   }
   openAltaNov = () => {
@@ -137,10 +146,11 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
       await this.reloadEmpleados();
     } catch (e) { console.error('[ceibo] baja', e); window.CeiboAPI.toast(e.message || String(e), 'error'); }
   };
-  confirmReingreso = async (id) => {
+  confirmReingreso = async () => {
     try {
-      const emp = (this.state.empleados || []).find(e => e.id === id);
-      await window.CeiboAPI.reingreso(emp);
+      const emp = (this.state.empleados || []).find(e => e.id === this.state.reingresoId);
+      await window.CeiboAPI.reingreso(emp);   // lee la fecha del modal de reincorporación
+      this.setState({ modal: null });
       await this.reloadEmpleados();
     } catch (e) { console.error('[ceibo] reingreso', e); window.CeiboAPI.toast(e.message || String(e), 'error'); }
   };
@@ -167,7 +177,7 @@ EDICIONES = [
     # --- state: campos nuevos ---
     (
         "theme: 'dark', view: 'dashboard', selEmp: 1,",
-        "theme: 'dark', view: 'dashboard', selEmp: 1,\n    empleados: null, novedades: null, apiErr: null, altaEditId: null,",
+        "theme: 'dark', view: 'dashboard', selEmp: 1,\n    empleados: null, novedades: null, dashboard: null, apiErr: null, altaEditId: null,",
         "state: campos de integración",
     ),
     # --- novBase(): usar datos reales si están cargados ---
@@ -190,7 +200,7 @@ EDICIONES = [
     ),
     # --- inyectar métodos de integración (reemplaza confirmReingreso + cierre de clase) ---
     (
-        "  confirmReingreso = (id)=> this.setState(s=>({bajaSet:s.bajaSet.filter(x=>x!==id)}));\n}",
+        "  confirmReingreso = ()=> this.setState(s=>({ bajaSet: s.bajaSet.filter(x=>x!==s.reingresoId), modal:null }));\n}",
         BLOQUE_INTEGRACION,
         "clase: bloque de integración",
     ),
@@ -206,6 +216,11 @@ EDICIONES = [
         "style=\"background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:440px;max-width:100%",
         "data-modal=\"baja\" style=\"background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:440px;max-width:100%",
         "modal baja: data-modal",
+    ),
+    (
+        "style=\"background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:430px;max-width:100%",
+        "data-modal=\"reingreso\" style=\"background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:430px;max-width:100%",
+        "modal reingreso: data-modal",
     ),
     (
         "style=\"background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:680px;max-width:100%",

@@ -28,6 +28,12 @@ def crear_novedad(*, actor, datos: dict) -> Novedad:
     empleado = datos["empleado"]
     fecha_hasta = datos.get("fecha_hasta")
 
+    if not empleado.activo:
+        # No se cargan novedades nuevas sobre un empleado dado de baja (sin relación ACTIVA).
+        # Las novedades históricas (cargadas cuando estaba activo) se conservan.
+        raise ValidationError(
+            {"empleado": "No se pueden registrar novedades de un empleado dado de baja."}
+        )
     if tipo.requiere_cantidad_horas and datos.get("cantidad_horas") is None:
         raise ValidationError(
             {"cantidad_horas": f"El tipo '{tipo.nombre}' requiere la cantidad de horas."}

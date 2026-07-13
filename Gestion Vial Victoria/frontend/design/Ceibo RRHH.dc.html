@@ -160,9 +160,9 @@
               </div>
             </div>
             <div style="display:flex;align-items:baseline;gap:8px;margin:4px 0 8px">
-              <span style="font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:26px;color:var(--text)">4,2%</span>
-              <span style="font-size:12px;color:var(--bad);font-weight:600">▲ 0,4 pts</span>
-              <span style="font-size:12px;color:var(--text3)">últimos 12 meses</span>
+              <span style="font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:26px;color:var(--text)">{{ rotValor }}</span>
+              <span style="{{ rotDeltaStyle }}">{{ rotDelta }}</span>
+              <span style="font-size:12px;color:var(--text3)">{{ rotPeriodoLbl }}</span>
             </div>
             <svg viewBox="0 0 560 190" style="width:100%;height:190px;display:block">
               <defs>
@@ -171,13 +171,12 @@
               <line x1="20" y1="30" x2="540" y2="30" stroke="var(--border)" stroke-width="1"/>
               <line x1="20" y1="80" x2="540" y2="80" stroke="var(--border)" stroke-width="1"/>
               <line x1="20" y1="130" x2="540" y2="130" stroke="var(--border)" stroke-width="1"/>
-              <path d="M20,160 L20,79.4 L67.3,87.2 L114.5,69 L161.8,56 L209.1,76.8 L256.4,92.4 L303.6,61.2 L350.9,45.6 L398.2,58.6 L445.5,74.2 L492.7,53.4 L540,50.8 L540,160 Z" fill="url(#rotG)"/>
-              <polyline points="20,79.4 67.3,87.2 114.5,69 161.8,56 209.1,76.8 256.4,92.4 303.6,61.2 350.9,45.6 398.2,58.6 445.5,74.2 492.7,53.4 540,50.8" fill="none" stroke="var(--accent)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
-              <circle cx="350.9" cy="45.6" r="4" fill="var(--accent)" stroke="var(--surface)" stroke-width="2.5"/>
-              <circle cx="540" cy="50.8" r="4" fill="var(--accent)" stroke="var(--surface)" stroke-width="2.5"/>
+              <path d="{{ rotArea }}" fill="url(#rotG)"/>
+              <polyline points="{{ rotPoints }}" fill="none" stroke="var(--accent)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+              <circle cx="{{ rotDotX }}" cy="{{ rotDotY }}" r="4" fill="var(--accent)" stroke="var(--surface)" stroke-width="2.5"/>
             </svg>
             <div style="display:flex;justify-content:space-between;font-size:10.5px;color:var(--text3);padding:0 16px;margin-top:2px">
-              <span>Ago</span><span>Sep</span><span>Oct</span><span>Nov</span><span>Dic</span><span>Ene</span><span>Feb</span><span>Mar</span><span>Abr</span><span>May</span><span>Jun</span><span>Jul</span>
+              <sc-for list="{{ rotLabels }}" as="l" hint-placeholder-count="12"><span>{{ l.label }}</span></sc-for>
             </div>
           </div>
 
@@ -813,6 +812,23 @@
     </div>
   </sc-if>
 
+  <sc-if value="{{ showReingreso }}" hint-placeholder-val="{{ false }}">
+    <div onClick="{{ closeModal }}" style="position:fixed;inset:0;background:rgba(4,8,16,.6);backdrop-filter:blur(3px);display:flex;align-items:center;justify-content:center;padding:20px;z-index:50;animation:ov .2s ease both">
+      <div onClick="{{ stop }}" style="background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:430px;max-width:100%;box-shadow:0 30px 80px rgba(0,0,0,.5);animation:pop .28s cubic-bezier(.2,.9,.3,1) both;padding:26px">
+        <div style="width:48px;height:48px;border-radius:12px;background:var(--accent-dim);color:var(--accent);display:flex;align-items:center;justify-content:center;margin-bottom:16px">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6M22 11h-6"/></svg>
+        </div>
+        <div style="font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:18px;color:var(--text)">Reincorporar a {{ reingresoName }}</div>
+        <div style="font-size:13px;color:var(--text2);margin-top:8px;line-height:1.55">Esto registra una <b style="color:var(--text)">nueva relación laboral activa</b> en la misma empresa. El empleado vuelve a estado <b style="color:var(--text)">Activo</b> y conserva su historial anterior. Indicá la <b style="color:var(--text)">fecha de reincorporación</b>: es la base de la nueva antigüedad.</div>
+        <div style="margin-top:16px"><div style="{{ lblStyle }}">Fecha de reincorporación</div><div style="position:relative"><input placeholder="dd/mm/aaaa (vacío = hoy)" maxlength="10" onInput="{{ maskDate }}" style="{{ inputStyle }};padding-right:36px"/><input type="date" onChange="{{ pickDate }}" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);width:22px;height:22px;opacity:0;cursor:pointer;border:none;background:transparent"/><svg style="position:absolute;right:9px;top:50%;transform:translateY(-50%);pointer-events:none" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></div></div>
+        <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:20px">
+          <button onClick="{{ closeModal }}" style="background:var(--surface);border:1px solid var(--border2);color:var(--text);font-weight:600;font-size:13px;border-radius:10px;padding:0 18px;height:40px;cursor:pointer">Cancelar</button>
+          <button onClick="{{ confirmReingreso }}" style="background:var(--accent);border:none;color:#04201C;font-weight:600;font-size:13px;border-radius:10px;padding:0 20px;height:40px;cursor:pointer">Confirmar reincorporación</button>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
   <sc-if value="{{ showDetNov }}" hint-placeholder-val="{{ false }}">
     <div onClick="{{ closeModal }}" style="position:fixed;inset:0;background:rgba(4,8,16,.6);backdrop-filter:blur(3px);display:flex;align-items:flex-start;justify-content:center;padding:6vh 20px;z-index:50;animation:ov .2s ease both">
       <div onClick="{{ stop }}" style="background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:640px;max-width:100%;box-shadow:0 30px 80px rgba(0,0,0,.5);animation:pop .28s cubic-bezier(.2,.9,.3,1) both;display:flex;flex-direction:column;max-height:88vh">
@@ -939,7 +955,7 @@ class Component extends DCLogic {
     empEstado: 'todos', empEmpresa: 'todas', empSector: 'todos', empSearch: '',
     novTipo: 'todos', novEstado: 'todos',
     rot: 'm',
-    modal: null, bajaId: null, bajaSet: [],
+    modal: null, bajaId: null, reingresoId: null, bajaSet: [],
     cfg: { carnet: 30, apto: 15, cnrt: 30, contrato: 45 },
     roles: { rrhh: true, admin: true, jefe: false },
     canales: { email: true, sistema: true, whatsapp: false },
@@ -1078,6 +1094,7 @@ class Component extends DCLogic {
   openAlta = ()=> this.setState({modal:'alta'});
   openAltaNov = ()=> this.setState({modal:'altanov', editNovId:null, novFormTipo:'Falta'});
   openBaja = (id)=> this.setState({modal:'baja', bajaId:id});
+  openReingreso = (id)=> this.setState({modal:'reingreso', reingresoId:id});
   closeModal = ()=> this.setState({modal:null, editNovId:null, editProrrogaIdx:null});
   stop = (e)=> e.stopPropagation();
   togglePraxis = ()=> this.setState(s=>({praxis:!s.praxis}));
@@ -1169,6 +1186,11 @@ class Component extends DCLogic {
     const tarde = [['Marcos Duarte','VIAL VICTORIA',7],['Carla Benítez','PREMOCOR',5],['Diego Fernández','VIAL VICTORIA',4],['Sofía Meza','PREMOCOR',3],['Néstor Aquino','VIAL VICTORIA',2]];
     const mkRank = (arr,max,color)=> arr.map((r,i)=>({rank:i+1,name:r[0],emp:r[1],val:r[2],bar:`height:100%;width:${Math.round(r[2]/max*100)}%;border-radius:5px;background:${color}`}));
 
+    // rotación (mock del canvas; el cableado la reemplaza con datos reales del backend)
+    const rotLabelsMock = ['Ago','Sep','Oct','Nov','Dic','Ene','Feb','Mar','Abr','May','Jun','Jul'].map(l=>({label:l}));
+    const rotPointsMock = '20,79.4 67.3,87.2 114.5,69 161.8,56 209.1,76.8 256.4,92.4 303.6,61.2 350.9,45.6 398.2,58.6 445.5,74.2 492.7,53.4 540,50.8';
+    const rotAreaMock = 'M20,160 L'+rotPointsMock.split(' ').join(' L')+' L540,160 Z';
+
     // alertas del día
     const alertasDia = [
       {title:'Cumpleaños del día', text:'María Godoy cumple años hoy', dot:this.dot('var(--accent)')},
@@ -1208,7 +1230,7 @@ class Component extends DCLogic {
       bajaBtn: fEstado==='activo'
         ? 'display:flex;align-items:center;gap:7px;background:var(--bad-dim);color:var(--bad);font-weight:600;font-size:13px;border:1px solid var(--border);border-radius:10px;padding:0 15px;height:38px;cursor:pointer'
         : 'display:flex;align-items:center;gap:7px;background:var(--ok-dim);color:var(--ok);font-weight:600;font-size:13px;border:1px solid var(--border);border-radius:10px;padding:0 15px;height:38px;cursor:pointer',
-      requestBaja: fEstado==='activo' ? ()=>this.openBaja(raw.id) : ()=>this.confirmReingreso(raw.id),
+      requestBaja: fEstado==='activo' ? ()=>this.openBaja(raw.id) : ()=>this.openReingreso(raw.id),
       datos:[
         {k:'Legajo (sistema)', v:'LEG-'+String(raw.id).padStart(4,'0')},
         {k:'DNI', v:raw.dni},{k:'CUIL', v:raw.cuil},{k:'Fecha de nacimiento', v:raw.nac},
@@ -1401,6 +1423,9 @@ class Component extends DCLogic {
       metrics, rankFaltas:mkRank(faltas,4,'var(--accent)'), rankTarde:mkRank(tarde,7,'var(--warn)'),
       alertasDia,
       rot:S.rot, rotMStyle:this.segStyle(S.rot==='m'), rotAStyle:this.segStyle(S.rot==='a'),
+      rotValor:'4,2%', rotDelta:'▲ 0,4 pts', rotDeltaStyle:'font-size:12px;color:var(--bad);font-weight:600',
+      rotPeriodoLbl:'últimos 12 meses', rotPoints:rotPointsMock, rotArea:rotAreaMock,
+      rotDotX:540, rotDotY:50.8, rotLabels:rotLabelsMock,
       selStyle, inputStyle, lblStyle, secStyle,
       empEmpresa:S.empEmpresa, empSector:S.empSector,
       estTodos:this.segStyle(S.empEstado==='todos'), estActivo:this.segStyle(S.empEstado==='activo'), estInactivo:this.segStyle(S.empEstado==='inactivo'),
@@ -1414,22 +1439,23 @@ class Component extends DCLogic {
       vencGroups, vencResumen,
       ausentismo, egresos,
       cfgRows, roles, canales,
-      showAlta:S.modal==='alta', showAltaNov:S.modal==='altanov', showBaja:S.modal==='baja',
+      showAlta:S.modal==='alta', showAltaNov:S.modal==='altanov', showBaja:S.modal==='baja', showReingreso:S.modal==='reingreso',
       showDetNov:S.modal==='detnov', showProrroga:S.modal==='prorroga', detNov, prorrogaInicio,
       editSeed, novFormTitle,
       aprobarNov:this.aprobarNov, rechazarNov:this.rechazarNov, anularNov:this.anularNov,
       openProrroga:this.openProrroga, backToDet:this.backToDet,
-      closeModal:this.closeModal, stop:this.stop, confirmBaja:this.confirmBaja,
+      closeModal:this.closeModal, stop:this.stop, confirmBaja:this.confirmBaja, confirmReingreso:this.confirmReingreso,
       togglePraxis:this.togglePraxis, praxisOn:S.praxis, praxisTrack:this.switchTrack(S.praxis), praxisKnob:this.switchKnob(S.praxis),
       maskDate:this.maskDate, pickDate:this.pickDate,
       novFormTipo:S.novFormTipo, onNovFormTipo:this.onNovFormTipo,
       novIsHoras:S.novFormTipo==='Horas extra', novIsFaltaLic:this.esFaltaLic(S.novFormTipo), novNoHoras:S.novFormTipo!=='Horas extra',
       exentoOn:S.exento, exentoTrack:this.switchTrack(S.exento), exentoKnob:this.switchKnob(S.exento), toggleExento:this.toggleExento,
-      bajaName:(this.base().find(e=>e.id===S.bajaId)||{}).name||''
+      bajaName:(this.base().find(e=>e.id===S.bajaId)||{}).name||'',
+      reingresoName:(this.base().find(e=>e.id===S.reingresoId)||{}).name||''
     };
   }
 
-  confirmReingreso = (id)=> this.setState(s=>({bajaSet:s.bajaSet.filter(x=>x!==id)}));
+  confirmReingreso = ()=> this.setState(s=>({ bajaSet: s.bajaSet.filter(x=>x!==s.reingresoId), modal:null }));
 }
 </script>
 </body>

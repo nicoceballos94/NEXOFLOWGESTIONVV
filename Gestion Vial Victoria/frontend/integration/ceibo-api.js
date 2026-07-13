@@ -208,6 +208,8 @@
       historial: historial, docs: [],
       // metadatos para el cableado:
       _relacionActivaId: activa.id || null, _empresaId: activa.empresa || null,
+      _sectorId: activa.sector || null, _puestoId: activa.puesto || null,
+      _jornadaLegal: activa.jornada_legal || "", _tipoContrato: activa.tipo_contrato || "",
       _nacISO: e.fecha_nacimiento || "", _ingresoISO: activa.fecha_ingreso || "",
     };
   }
@@ -331,6 +333,71 @@
   }
 
   // ============================ API pública ============================
+  // ---------- adaptador dashboard (API → vars del diseño) ----------
+  function fmtNum1(v) { return (Math.round((v || 0) * 10) / 10).toFixed(1).replace(".", ","); }
+  function kpiDelta(n, goodWhenUp) {
+    if (!n) return { txt: "—", style: "font-size:12px;font-weight:600;color:var(--text3)" };
+    var up = n > 0, good = goodWhenUp ? up : !up;
+    var color = good ? "var(--ok)" : "var(--bad)";
+    return { txt: (up ? "▲ " : "▼ ") + Math.abs(n), style: "font-size:12px;font-weight:600;color:" + color };
+  }
+  // Íconos SVG: se reusan los del diseño (mockMetrics), en el mismo orden de tarjetas.
+  function dashMetrics(d, mockMetrics) {
+    mockMetrics = mockMetrics || [];
+    var mes = (d.periodo && d.periodo.mes_label) || "";
+    var cards = [
+      { key: "activos", label: "Empleados activos", sub: "vs. mes anterior", goodUp: true },
+      { key: "ingresos_mes", label: "Ingresos del mes", sub: mes, goodUp: true },
+      { key: "egresos_mes", label: "Egresos del mes", sub: mes, goodUp: false },
+      { key: "ausentismo_mes", label: "Ausentismo del mes", sub: mes, goodUp: false },
+    ];
+    return cards.map(function (c, i) {
+      var m = d[c.key] || { valor: 0, delta: 0 };
+      var dl = kpiDelta(m.delta, c.goodUp);
+      return {
+        label: c.label, value: String(m.valor), sub: c.sub,
+        delta: dl.txt, deltaStyle: dl.style,
+        icon: (mockMetrics[i] && mockMetrics[i].icon) || "",
+      };
+    });
+  }
+  function dashRank(d) {
+    var arr = d.ranking_faltas || [];
+    var max = arr.reduce(function (a, r) { return Math.max(a, r.total); }, 0) || 1;
+    return arr.map(function (r, i) {
+      return {
+        rank: i + 1, name: r.nombre, emp: r.empresa, val: r.total,
+        bar: "height:100%;width:" + Math.round(r.total / max * 100) + "%;border-radius:5px;background:var(--accent)",
+      };
+    });
+  }
+  // Sparkline sobre el viewBox 0 0 560 190 del diseño (x: 20→540, y: 40→160).
+  function dashRotacion(d, rotState) {
+    var rot = d.rotacion || {}, serie = rot.serie || [];
+    var pick = (rotState === "a") ? (rot.anual || {}) : (rot.mensual || {});
+    var dpts = pick.delta_pts || 0, same = !dpts, up = dpts > 0;
+    var color = same ? "var(--text3)" : (up ? "var(--bad)" : "var(--ok)");
+    var deltaTxt = same ? "sin cambios" : ((up ? "▲ " : "▼ ") + fmtNum1(Math.abs(dpts)) + " pts");
+    var vals = serie.map(function (p) { return p.valor; });
+    var vmin = Math.min.apply(null, vals.concat([0])), vmax = Math.max.apply(null, vals.concat([0]));
+    var range = (vmax - vmin) || 1, n = serie.length || 1;
+    var pts = serie.map(function (p, i) {
+      var x = 20 + (n > 1 ? i * (520 / (n - 1)) : 0);
+      var y = 160 - ((p.valor - vmin) / range) * 120;
+      return { x: Math.round(x * 10) / 10, y: Math.round(y * 10) / 10 };
+    });
+    var pointsStr = pts.map(function (p) { return p.x + "," + p.y; }).join(" ");
+    var first = pts[0] || { x: 20, y: 100 }, last = pts[pts.length - 1] || { x: 540, y: 100 };
+    var area = "M" + first.x + ",160 L" + pointsStr.split(" ").join(" L") + " L" + last.x + ",160 Z";
+    return {
+      rotValor: fmtNum1(pick.valor) + "%", rotDelta: deltaTxt,
+      rotDeltaStyle: "font-size:12px;color:" + color + ";font-weight:600",
+      rotPeriodoLbl: (rotState === "a") ? "últimos 12 meses" : "vs. mes anterior",
+      rotPoints: pointsStr, rotArea: area, rotDotX: last.x, rotDotY: last.y,
+      rotLabels: serie.map(function (p) { return { label: p.label }; }),
+    };
+  }
+
   window.CeiboAPI = {
     toast: showToast,
 
@@ -360,6 +427,19 @@
       mapped.forEach(function (m) { _empById[m.id] = { name: m.name, empresa: m.empresa }; });
       console.log("[ceibo] backend conectado: " + mapped.length + " empleados");
       return mapped;
+    },
+
+    // Métricas del panel general. Devuelve el dict crudo del backend (o null si el
+    // rol no tiene panel / falla la red); el componente lo pasa por dashboardVals.
+    async loadDashboard() {
+      try { return await jget("/dashboard/metricas/"); }
+      catch (e) { console.warn("[ceibo] dashboard no disponible", e); return null; }
+    },
+    // Traduce la respuesta del backend a las vars del diseño (metrics, rankFaltas,
+    // rotación). `mockMetrics` aporta solo los íconos SVG del canvas.
+    dashboardVals(d, rotState, mockMetrics) {
+      var out = { metrics: dashMetrics(d, mockMetrics), rankFaltas: dashRank(d) };
+      return Object.assign(out, dashRotacion(d, rotState || "m"));
     },
 
     // Novedades con cadenas expandidas: se agrupan las prórrogas bajo su madre
@@ -412,7 +492,9 @@
         input.style.cssText = empEl.style.cssText;  // hereda el look del diseño
         var dl = document.createElement("datalist");
         dl.id = "ceibo-emp-list";
-        dl.innerHTML = _rawEmpleados.map(function (e) {
+        // Solo empleados ACTIVOS: no se cargan novedades nuevas sobre egresados (el backend
+        // también lo rechaza). Las novedades históricas de un egresado se conservan.
+        dl.innerHTML = _rawEmpleados.filter(function (e) { return e.activo; }).map(function (e) {
           return '<option value="' + (e.nombre + " " + e.apellido).trim() + '"></option>';
         }).join("");
         empEl.parentNode.replaceChild(input, empEl);
@@ -638,13 +720,22 @@
       showToast("Baja registrada", "ok");
     },
 
-    // Reingreso: nueva relación ACTIVA (misma empresa de la última relación, fecha = hoy).
+    // Reingreso: nueva relación ACTIVA (misma empresa de la última relación).
+    // La fecha de reincorporación sale del modal (placeholder empieza "dd/mm/aaaa"); vacío = hoy.
+    // Arrastra sector/puesto/jornada/contrato de la última relación: el modal no los
+    // pregunta, y sin esto la relación nueva queda pelada (la ficha mostraría "—").
     async reingreso(emp) {
       if (!emp) throw new Error("empleado no encontrado");
       if (!emp._empresaId) throw new Error("no hay empresa de referencia para el reingreso");
-      await jsend("POST", "/empleados/" + emp.id + "/relaciones/", {
-        empresa: emp._empresaId, fecha_ingreso: todayISO(),
-      });
+      var m = document.querySelector('[data-modal="reingreso"]');
+      var fEl = m ? m.querySelector('input[placeholder^="dd/mm/aaaa"]') : null;
+      var fecha = parseFecha(fEl ? fEl.value : "") || todayISO();
+      var nueva = { empresa: emp._empresaId, fecha_ingreso: fecha };
+      if (emp._sectorId) nueva.sector = emp._sectorId;
+      if (emp._puestoId) nueva.puesto = emp._puestoId;
+      if (emp._jornadaLegal) nueva.jornada_legal = emp._jornadaLegal;
+      if (emp._tipoContrato) nueva.tipo_contrato = emp._tipoContrato;
+      await jsend("POST", "/empleados/" + emp.id + "/relaciones/", nueva);
       showToast("Reingreso registrado", "ok");
     },
 

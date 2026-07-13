@@ -107,6 +107,18 @@ def test_empleado_no_puede_cargar_novedad(cliente_empleado, empleado, tipo_licen
     assert resp.status_code == 403
 
 
+def test_no_se_carga_novedad_a_empleado_egresado(cliente_supervisor, empresa, tipo_licencia):
+    """Un empleado dado de baja (sin relación ACTIVA) no admite novedades nuevas."""
+    egresado = Empleado.objects.create(legajo="0099", dni="39999888", nombre="Ex", apellido="Baja")
+    RelacionLaboral.objects.create(
+        empleado=egresado, empresa=empresa, fecha_ingreso="2020-01-01",
+        fecha_egreso="2024-06-30", estado="FINALIZADA",
+    )
+    resp = _alta(cliente_supervisor, egresado, tipo_licencia)
+    assert resp.status_code == 400, resp.data
+    assert "empleado" in resp.data["campos"]
+
+
 # ---------- Transiciones ----------
 def test_supervisor_no_aprueba_solo_rrhh(cliente_supervisor, empleado, tipo_licencia):
     novedad_id = _alta(cliente_supervisor, empleado, tipo_licencia).data["id"]
