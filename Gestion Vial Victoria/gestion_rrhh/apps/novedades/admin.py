@@ -5,8 +5,10 @@ from .models import Novedad, TipoNovedad
 
 @admin.register(TipoNovedad)
 class TipoNovedadAdmin(admin.ModelAdmin):
-    list_display = ("codigo", "nombre", "admite_prorroga", "justifica_ausencia", "activo")
-    list_filter = ("admite_prorroga", "justifica_ausencia", "activo")
+    list_display = (
+        "codigo", "nombre", "admite_prorroga", "justifica_ausencia", "ocupa_periodo", "activo"
+    )
+    list_filter = ("admite_prorroga", "justifica_ausencia", "ocupa_periodo", "activo")
     search_fields = ("codigo", "nombre")
 
 

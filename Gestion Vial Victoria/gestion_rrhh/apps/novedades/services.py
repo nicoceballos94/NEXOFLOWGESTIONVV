@@ -19,34 +19,69 @@ from .models import EstadoNovedad, Novedad
 
 # Estados desde los que una novedad todavía puede editarse o resolverse.
 _ABIERTOS = (EstadoNovedad.REGISTRADA, EstadoNovedad.EN_PROCESO)
-# Estados en los que una novedad "corre" (ocupa el calendario del empleado): pendientes
-# y aprobadas. Las RECHAZADAS/ANULADAS/CERRADAS ya no bloquean nada.
-_VIGENTES = (EstadoNovedad.REGISTRADA, EstadoNovedad.EN_PROCESO, EstadoNovedad.APROBADA)
+# Estados en los que una novedad ocupa el calendario del empleado. Solo RECHAZADA y ANULADA
+# lo liberan: la rechazada nunca pasó y la anulada se borra de los hechos. Una CERRADA, en
+# cambio, ya transcurrió — sigue ocupando su período y nada puede pisarla.
+_OCUPAN_PERIODO = (
+    EstadoNovedad.REGISTRADA,
+    EstadoNovedad.EN_PROCESO,
+    EstadoNovedad.APROBADA,
+    EstadoNovedad.CERRADA,
+)
 
 
-def _ausencia_solapada(*, empleado, desde, hasta, excluir_id=None):
-    """Primera novedad de ausencia del empleado que se solapa con [desde, hasta], o None.
+def _se_solapan(a_desde, a_hasta, b_desde, b_hasta) -> bool:
+    """¿Se pisan los rangos [a_desde, a_hasta] y [b_desde, b_hasta], ambos inclusive?
 
-    "Ausencia" = tipo con `justifica_ausencia`; se miran solo las vigentes (REGISTRADA/
-    EN_PROCESO/APROBADA). Una novedad abierta (`fecha_hasta` null) corre sin fin: bloquea
-    todo lo que empiece en o después de su `fecha_desde`.
+    `hasta` en None = rango abierto (licencia sin alta médica): corre sin fin, así que pisa
+    todo lo que empiece en o después de su `desde`. Vale para los dos rangos.
     """
-    hasta = hasta or desde
-    candidatas = (
-        Novedad.objects.filter(
-            empleado=empleado,
-            estado__in=_VIGENTES,
-            tipo_novedad__justifica_ausencia=True,
-        )
-        .select_related("tipo_novedad")
-    )
-    if excluir_id:
-        candidatas = candidatas.exclude(pk=excluir_id)
+    if a_hasta is not None and b_desde > a_hasta:
+        return False
+    if b_hasta is not None and a_desde > b_hasta:
+        return False
+    return True
+
+
+def _ids_de_la_cadena(novedad: Novedad) -> set:
+    """Madre + prórrogas: una cadena es un solo período, nunca se solapa consigo misma."""
+    madre = selectors.novedad_madre(novedad)
+    return {madre.id, *madre.prorrogas.values_list("id", flat=True)}
+
+
+def _validar_sin_solapamiento(
+    *, empleado, tipo, desde, hasta, excluir_ids=(), campo="fecha_desde"
+):
+    """Regla: un empleado no puede tener dos novedades ocupando el mismo período.
+
+    Falta, licencia, accidente, vacaciones y permiso se excluyen entre sí (todos los tipos
+    con `ocupa_periodo`); las horas extra conviven con lo que haya. Solo cuentan las
+    novedades en `_OCUPAN_PERIODO`: rechazar o anular la anterior libera las fechas.
+    """
+    if not tipo.ocupa_periodo:
+        return
+    candidatas = Novedad.objects.filter(
+        empleado=empleado,
+        estado__in=_OCUPAN_PERIODO,
+        tipo_novedad__ocupa_periodo=True,
+    ).select_related("tipo_novedad")
+    if excluir_ids:
+        candidatas = candidatas.exclude(pk__in=excluir_ids)
     for otra in candidatas:
-        otra_hasta = otra.fecha_hasta  # None = abierta (corre sin fin)
-        if otra.fecha_desde <= hasta and (otra_hasta is None or desde <= otra_hasta):
-            return otra
-    return None
+        if not _se_solapan(desde, hasta, otra.fecha_desde, otra.fecha_hasta):
+            continue
+        fin = otra.fecha_hasta.isoformat() if otra.fecha_hasta else "sin fin"
+        raise ValidationError(
+            {
+                campo: (
+                    f"El empleado ya tiene una novedad en ese período: "
+                    f"{otra.tipo_novedad.nombre} "
+                    f"({otra.fecha_desde.isoformat()} → {fin}, {otra.get_estado_display()}). "
+                    f"Dos novedades no pueden convivir en las mismas fechas: corregí el "
+                    f"período, o rechazá/anulá la anterior."
+                )
+            }
+        )
 
 
 @transaction.atomic
@@ -70,25 +105,10 @@ def crear_novedad(*, actor, datos: dict) -> Novedad:
         raise ValidationError(
             {"fecha_hasta": "La fecha de fin no puede ser anterior al inicio."}
         )
-    if tipo.justifica_ausencia:
-        # RP4 extendida al alta: no se carga una ausencia sobre otra que ya corre
-        # (falta/licencia/accidente pendiente o aprobada que se solapa en el tiempo).
-        solapada = _ausencia_solapada(
-            empleado=empleado, desde=datos["fecha_desde"], hasta=fecha_hasta
-        )
-        if solapada:
-            rango = solapada.fecha_desde.isoformat()
-            if solapada.fecha_hasta:
-                rango += " → " + solapada.fecha_hasta.isoformat()
-            raise ValidationError(
-                {
-                    "fecha_desde": (
-                        f"El empleado ya tiene una ausencia corriendo "
-                        f"({solapada.tipo_novedad.nombre}, {rango}). "
-                        f"Cerrala o anulala antes de cargar otra."
-                    )
-                }
-            )
+    # RP4 extendida al alta: no se carga una novedad sobre otra que ya ocupa el período.
+    _validar_sin_solapamiento(
+        empleado=empleado, tipo=tipo, desde=datos["fecha_desde"], hasta=fecha_hasta
+    )
     if not datos.get("relacion_laboral"):
         datos["relacion_laboral"] = empleado.relacion_activa
     return Novedad.objects.create(creado_por=actor, **datos)
@@ -96,13 +116,28 @@ def crear_novedad(*, actor, datos: dict) -> Novedad:
 
 @transaction.atomic
 def actualizar_novedad(*, actor, novedad: Novedad, datos: dict) -> Novedad:
-    """Edición solo mientras está REGISTRADA (§8): una vez en proceso o resuelta, es inmutable."""
+    """Edición solo mientras está REGISTRADA (§8): una vez en proceso o resuelta, es inmutable.
+
+    Las fechas se revalidan con las mismas reglas del alta: editar no puede meter la novedad
+    encima de otra que ya ocupa el período. La propia cadena de prórrogas no cuenta.
+    """
     if novedad.estado != EstadoNovedad.REGISTRADA:
         raise ValidationError(
             {"estado": "Solo se puede editar una novedad en estado Registrada."}
         )
     for campo, valor in datos.items():
-        setattr(novedad, campo, valor)
+        setattr(novedad, campo, valor)  # mezcla lo editado con lo que ya tenía
+    if novedad.fecha_hasta and novedad.fecha_hasta < novedad.fecha_desde:
+        raise ValidationError(
+            {"fecha_hasta": "La fecha de fin no puede ser anterior al inicio."}
+        )
+    _validar_sin_solapamiento(
+        empleado=novedad.empleado,
+        tipo=novedad.tipo_novedad,
+        desde=novedad.fecha_desde,
+        hasta=novedad.fecha_hasta,
+        excluir_ids=_ids_de_la_cadena(novedad),
+    )
     novedad.save()
     return novedad
 
@@ -161,27 +196,6 @@ def anular_novedad(*, actor, novedad: Novedad, motivo: str = "") -> Novedad:
     return novedad
 
 
-def _hay_solapamiento_aprobado(*, empleado, desde, hasta, madre_id) -> bool:
-    """RP4: ¿el rango [desde, hasta] pisa OTRA novedad aprobada del empleado que justifique
-    ausencia? Se excluye la propia cadena (madre + sus prórrogas).
-    """
-    hasta = hasta or desde
-    candidatas = (
-        Novedad.objects.filter(
-            empleado=empleado,
-            estado=EstadoNovedad.APROBADA,
-            tipo_novedad__justifica_ausencia=True,
-        )
-        .exclude(pk=madre_id)
-        .exclude(novedad_origen_id=madre_id)
-    )
-    for otra in candidatas:
-        otra_hasta = otra.fecha_hasta or otra.fecha_desde
-        if otra.fecha_desde <= hasta and desde <= otra_hasta:
-            return True
-    return False
-
-
 @transaction.atomic
 def prorrogar_novedad(
     *, actor, novedad: Novedad, fecha_hasta_nueva, motivo: str = "", certificado_recibido_en=None
@@ -219,12 +233,14 @@ def prorrogar_novedad(
         )
 
     nueva_desde = hasta_actual + timedelta(days=1)  # RP3: contigua a la cadena
-    if _hay_solapamiento_aprobado(
-        empleado=madre.empleado, desde=nueva_desde, hasta=fecha_hasta_nueva, madre_id=madre.id
-    ):  # RP4
-        raise ValidationError(
-            {"fecha_hasta_nueva": "El período se solapa con otra novedad aprobada del empleado."}
-        )
+    _validar_sin_solapamiento(  # RP4
+        empleado=madre.empleado,
+        tipo=tipo,
+        desde=nueva_desde,
+        hasta=fecha_hasta_nueva,
+        excluir_ids=_ids_de_la_cadena(madre),
+        campo="fecha_hasta_nueva",
+    )
 
     return Novedad.objects.create(
         creado_por=actor,

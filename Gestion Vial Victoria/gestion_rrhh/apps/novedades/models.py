@@ -34,8 +34,13 @@ class TipoNovedad(ModeloBase):
     """Catálogo de tipos con sus flags de comportamiento (§5).
 
     Los flags gobiernan las reglas: `justifica_ausencia` (cubre una jornada AUSENTE en la
-    fase de asistencias), `requiere_certificado` (alerta si falta tras X días), `admite_prorroga`
+    fase de asistencias), `ocupa_periodo` (no puede convivir con otra novedad en las mismas
+    fechas), `requiere_certificado` (alerta si falta tras X días), `admite_prorroga`
     (habilita la cadena §6 bis) y `requiere_cantidad_horas` (HORAS_EXTRA, P4).
+
+    `justifica_ausencia` y `ocupa_periodo` son distintos y no hay que confundirlos: una FALTA
+    ocupa el día del empleado (no puede haber además una licencia ese día) pero NO justifica
+    la ausencia. Las horas extra son al revés: no ocupan el día, conviven con lo que haya.
     """
 
     codigo = models.SlugField(
@@ -43,6 +48,11 @@ class TipoNovedad(ModeloBase):
     )
     nombre = models.CharField(max_length=100)
     justifica_ausencia = models.BooleanField(default=False)
+    ocupa_periodo = models.BooleanField(
+        default=False,
+        help_text="El tipo toma el día del empleado: dos novedades con este flag no pueden "
+        "convivir en el mismo período (falta, licencia, accidente, vacaciones, permiso).",
+    )
     requiere_certificado = models.BooleanField(default=False)
     admite_prorroga = models.BooleanField(default=False)
     requiere_cantidad_horas = models.BooleanField(default=False)

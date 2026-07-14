@@ -51,8 +51,17 @@ def tipo_licencia():
         codigo="LICENCIA_MEDICA",
         nombre="Licencia médica",
         justifica_ausencia=True,
+        ocupa_periodo=True,
         requiere_certificado=True,
         admite_prorroga=True,
+    )
+
+
+@pytest.fixture
+def tipo_falta():
+    # Ojo: la falta ocupa el día pero NO justifica la ausencia (es injustificada).
+    return TipoNovedad.objects.create(
+        codigo="FALTA", nombre="Falta", justifica_ausencia=False, ocupa_periodo=True
     )
 
 
@@ -142,6 +151,124 @@ def test_ausencia_contigua_sin_solape_se_carga(cliente_supervisor, empleado, tip
     assert resp.status_code == 201, resp.data
 
 
+# ---------- Solapamiento entre tipos distintos ----------
+def test_no_se_carga_falta_sobre_licencia(
+    cliente_supervisor, empleado, tipo_licencia, tipo_falta
+):
+    """Una falta ocupa el día aunque no justifique la ausencia: no convive con una licencia."""
+    _alta(cliente_supervisor, empleado, tipo_licencia)  # 03-01 → 03-10
+    resp = _alta(
+        cliente_supervisor, empleado, tipo_falta,
+        fecha_desde="2025-03-05", fecha_hasta="2025-03-05",
+    )
+    assert resp.status_code == 400, resp.data
+    assert "fecha_desde" in resp.data["campos"]
+
+
+def test_no_se_carga_licencia_sobre_falta(
+    cliente_supervisor, empleado, tipo_licencia, tipo_falta
+):
+    """Y al revés: la falta preexistente también bloquea."""
+    _alta(
+        cliente_supervisor, empleado, tipo_falta,
+        fecha_desde="2025-03-05", fecha_hasta="2025-03-05",
+    )
+    resp = _alta(cliente_supervisor, empleado, tipo_licencia)  # 03-01 → 03-10, pisa el 03-05
+    assert resp.status_code == 400, resp.data
+
+
+def test_novedad_rechazada_libera_el_periodo(
+    cliente_supervisor, cliente_rrhh, empleado, tipo_licencia, tipo_falta
+):
+    """La excepción a la regla: una novedad RECHAZADA no ocupa nada."""
+    primera_id = _alta(cliente_supervisor, empleado, tipo_licencia).data["id"]
+    cliente_rrhh.post(f"/api/v1/novedades/{primera_id}/rechazar/", {"motivo": "sin cert"},
+                      format="json")
+    resp = _alta(
+        cliente_supervisor, empleado, tipo_falta,
+        fecha_desde="2025-03-05", fecha_hasta="2025-03-05",
+    )
+    assert resp.status_code == 201, resp.data
+
+
+def test_novedad_cerrada_sigue_ocupando_el_periodo(
+    cliente_supervisor, empleado, tipo_licencia, tipo_falta
+):
+    """Una licencia CERRADA ya transcurrió: nadie puede cargar una falta encima."""
+    novedad_id = _alta(cliente_supervisor, empleado, tipo_licencia).data["id"]
+    Novedad.objects.filter(pk=novedad_id).update(estado=EstadoNovedad.CERRADA)
+    resp = _alta(
+        cliente_supervisor, empleado, tipo_falta,
+        fecha_desde="2025-03-05", fecha_hasta="2025-03-05",
+    )
+    assert resp.status_code == 400, resp.data
+
+
+def test_licencia_abierta_bloquea_lo_que_venga_despues(
+    cliente_supervisor, empleado, tipo_licencia, tipo_falta
+):
+    """Una novedad sin fecha de fin corre sin fin: ocupa todo lo posterior a su inicio."""
+    abierta = _alta(cliente_supervisor, empleado, tipo_licencia, fecha_hasta=None)
+    assert abierta.status_code == 201, abierta.data
+    resp = _alta(
+        cliente_supervisor, empleado, tipo_falta,
+        fecha_desde="2025-06-01", fecha_hasta="2025-06-01",  # meses después, pero la abierta corre
+    )
+    assert resp.status_code == 400, resp.data
+
+
+def test_horas_extra_conviven_con_una_licencia(
+    cliente_supervisor, empleado, tipo_licencia, tipo_horas_extra
+):
+    """Las horas extra no ocupan el período: no las alcanza la regla."""
+    _alta(cliente_supervisor, empleado, tipo_licencia)  # 03-01 → 03-10
+    resp = _alta(
+        cliente_supervisor, empleado, tipo_horas_extra,
+        fecha_desde="2025-03-05", fecha_hasta=None, cantidad_horas="4.00",
+    )
+    assert resp.status_code == 201, resp.data
+
+
+# ---------- Edición ----------
+def test_editar_no_puede_solapar_otra_novedad(
+    cliente_supervisor, empleado, tipo_licencia, tipo_falta
+):
+    """El agujero grande: el alta validaba, pero el PATCH movía las fechas encima de otra."""
+    _alta(cliente_supervisor, empleado, tipo_licencia)  # 03-01 → 03-10
+    falta_id = _alta(
+        cliente_supervisor, empleado, tipo_falta,
+        fecha_desde="2025-06-01", fecha_hasta="2025-06-01",
+    ).data["id"]
+    resp = cliente_supervisor.patch(
+        f"/api/v1/novedades/{falta_id}/",
+        {"fecha_desde": "2025-03-05", "fecha_hasta": "2025-03-05"},  # se mete en la licencia
+        format="json",
+    )
+    assert resp.status_code == 400, resp.data
+    assert "fecha_desde" in resp.data["campos"]
+
+
+def test_editar_fechas_sin_solape_pasa(cliente_supervisor, empleado, tipo_licencia):
+    """Editar la propia novedad no se cuenta como solapamiento consigo misma."""
+    novedad_id = _alta(cliente_supervisor, empleado, tipo_licencia).data["id"]
+    resp = cliente_supervisor.patch(
+        f"/api/v1/novedades/{novedad_id}/",
+        {"fecha_hasta": "2025-03-12"},
+        format="json",
+    )
+    assert resp.status_code == 200, resp.data
+    assert resp.data["fecha_hasta"] == "2025-03-12"
+
+
+def test_editar_no_admite_fin_anterior_al_inicio(cliente_supervisor, empleado, tipo_licencia):
+    novedad_id = _alta(cliente_supervisor, empleado, tipo_licencia).data["id"]
+    resp = cliente_supervisor.patch(
+        f"/api/v1/novedades/{novedad_id}/", {"fecha_hasta": "2025-02-20"}, format="json"
+    )
+    assert resp.status_code == 400, resp.data
+    assert "fecha_hasta" in resp.data["campos"]
+
+
 # ---------- Transiciones ----------
 def test_supervisor_no_aprueba_solo_rrhh(cliente_supervisor, empleado, tipo_licencia):
     novedad_id = _alta(cliente_supervisor, empleado, tipo_licencia).data["id"]
@@ -227,6 +354,24 @@ def test_prorroga_debe_extender_de_verdad(
         format="json",
     )
     assert resp.status_code == 400  # RP3
+    assert "fecha_hasta_nueva" in resp.data["campos"]
+
+
+def test_prorroga_no_pisa_una_novedad_pendiente(
+    cliente_supervisor, cliente_rrhh, empleado, tipo_licencia, tipo_falta
+):
+    """RP4 miraba solo las aprobadas: una falta pendiente en el medio no frenaba la prórroga."""
+    madre_id = _crear_licencia_aprobada(cliente_supervisor, cliente_rrhh, empleado, tipo_licencia)
+    _alta(  # falta REGISTRADA después de la madre (03-10), sin solaparla
+        cliente_supervisor, empleado, tipo_falta,
+        fecha_desde="2025-03-15", fecha_hasta="2025-03-15",
+    )
+    resp = cliente_supervisor.post(
+        f"/api/v1/novedades/{madre_id}/prorrogar/",
+        {"fecha_hasta_nueva": "2025-03-20"},  # 03-11 → 03-20 pisa la falta del 03-15
+        format="json",
+    )
+    assert resp.status_code == 400, resp.data
     assert "fecha_hasta_nueva" in resp.data["campos"]
 
 

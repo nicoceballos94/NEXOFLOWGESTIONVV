@@ -20,6 +20,7 @@ class TipoNovedadSerializer(serializers.ModelSerializer):
             "codigo",
             "nombre",
             "justifica_ausencia",
+            "ocupa_periodo",
             "requiere_certificado",
             "admite_prorroga",
             "requiere_cantidad_horas",
