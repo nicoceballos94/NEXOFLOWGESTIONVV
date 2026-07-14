@@ -129,6 +129,23 @@ def test_ranking_faltas_resuelve_empresa_sin_relacion_en_la_falta(empresa, tipos
     assert fila["total"] == 1
 
 
+def test_ranking_faltas_cuenta_dias_no_faltas(empresa, tipos):
+    """Item 2: el total del ranking es la cantidad de DÍAS de falta (rango inclusive),
+    no la cantidad de faltas. Una única falta de 3 días suma 3."""
+    e = Empleado.objects.create(legajo="7100", dni="41200001", nombre="Multi", apellido="Dias")
+    RelacionLaboral.objects.create(
+        empleado=e, empresa=empresa, fecha_ingreso=date(2024, 1, 1), estado="ACTIVA",
+    )
+    Novedad.objects.create(
+        empleado=e, relacion_laboral=None, tipo_novedad=tipos["FALTA"],
+        fecha_desde=date(2026, 7, 6), fecha_hasta=date(2026, 7, 8),  # 6, 7 y 8 = 3 días
+        estado=EstadoNovedad.REGISTRADA,
+    )
+    m = selectors.metricas_dashboard(hoy=HOY)
+    fila = next(r for r in m["ranking_faltas"] if r["nombre"] == "Multi Dias")
+    assert fila["total"] == 3
+
+
 def test_rotacion_tiene_mensual_anual_y_serie(escenario):
     m = selectors.metricas_dashboard(hoy=HOY)
     rot = m["rotacion"]

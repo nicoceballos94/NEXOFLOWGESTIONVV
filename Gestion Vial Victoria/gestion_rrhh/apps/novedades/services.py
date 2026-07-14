@@ -19,6 +19,34 @@ from .models import EstadoNovedad, Novedad
 
 # Estados desde los que una novedad todavía puede editarse o resolverse.
 _ABIERTOS = (EstadoNovedad.REGISTRADA, EstadoNovedad.EN_PROCESO)
+# Estados en los que una novedad "corre" (ocupa el calendario del empleado): pendientes
+# y aprobadas. Las RECHAZADAS/ANULADAS/CERRADAS ya no bloquean nada.
+_VIGENTES = (EstadoNovedad.REGISTRADA, EstadoNovedad.EN_PROCESO, EstadoNovedad.APROBADA)
+
+
+def _ausencia_solapada(*, empleado, desde, hasta, excluir_id=None):
+    """Primera novedad de ausencia del empleado que se solapa con [desde, hasta], o None.
+
+    "Ausencia" = tipo con `justifica_ausencia`; se miran solo las vigentes (REGISTRADA/
+    EN_PROCESO/APROBADA). Una novedad abierta (`fecha_hasta` null) corre sin fin: bloquea
+    todo lo que empiece en o después de su `fecha_desde`.
+    """
+    hasta = hasta or desde
+    candidatas = (
+        Novedad.objects.filter(
+            empleado=empleado,
+            estado__in=_VIGENTES,
+            tipo_novedad__justifica_ausencia=True,
+        )
+        .select_related("tipo_novedad")
+    )
+    if excluir_id:
+        candidatas = candidatas.exclude(pk=excluir_id)
+    for otra in candidatas:
+        otra_hasta = otra.fecha_hasta  # None = abierta (corre sin fin)
+        if otra.fecha_desde <= hasta and (otra_hasta is None or desde <= otra_hasta):
+            return otra
+    return None
 
 
 @transaction.atomic
@@ -42,6 +70,25 @@ def crear_novedad(*, actor, datos: dict) -> Novedad:
         raise ValidationError(
             {"fecha_hasta": "La fecha de fin no puede ser anterior al inicio."}
         )
+    if tipo.justifica_ausencia:
+        # RP4 extendida al alta: no se carga una ausencia sobre otra que ya corre
+        # (falta/licencia/accidente pendiente o aprobada que se solapa en el tiempo).
+        solapada = _ausencia_solapada(
+            empleado=empleado, desde=datos["fecha_desde"], hasta=fecha_hasta
+        )
+        if solapada:
+            rango = solapada.fecha_desde.isoformat()
+            if solapada.fecha_hasta:
+                rango += " → " + solapada.fecha_hasta.isoformat()
+            raise ValidationError(
+                {
+                    "fecha_desde": (
+                        f"El empleado ya tiene una ausencia corriendo "
+                        f"({solapada.tipo_novedad.nombre}, {rango}). "
+                        f"Cerrala o anulala antes de cargar otra."
+                    )
+                }
+            )
     if not datos.get("relacion_laboral"):
         datos["relacion_laboral"] = empleado.relacion_activa
     return Novedad.objects.create(creado_por=actor, **datos)

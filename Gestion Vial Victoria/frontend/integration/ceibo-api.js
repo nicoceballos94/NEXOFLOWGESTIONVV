@@ -262,6 +262,14 @@
     });
     return String(max + 1).padStart(4, "0");
   }
+  // Busca una persona por DNI EXACTO (el `q` del backend es icontains, así que se filtra
+  // el match exacto acá). Devuelve el empleado crudo (con `relaciones`/`activo`) o null.
+  // Es la clave del alta: si el DNI ya existe, no es un alta nueva sino un reingreso.
+  async function findEmpleadoByDni(dni) {
+    if (!dni) return null;
+    var arr = await getAllPages("/empleados/?q=" + encodeURIComponent(dni) + "&page_size=50");
+    return arr.find(function (e) { return String(e.dni) === String(dni); }) || null;
+  }
 
   // ---------- form de alta: lectura/escritura por etiqueta ----------
   function altaModal() { return document.querySelector('[data-modal="alta"]'); }
@@ -298,6 +306,36 @@
     return map;
   }
   function readAltaForm() { return readModalForm('[data-modal="alta"]'); }
+
+  // ---------- empresa en la ficha: bloqueada al editar, obligatoria al dar de alta ----------
+  var EMPRESA_LOCK_MSG =
+    "La empresa no se edita desde la ficha. Para mover al empleado a otra empresa, " +
+    "registrá su salida (baja) y luego su reingreso.";
+  function lockEmpresa(el) {
+    if (!el) return;
+    el.disabled = true;
+    el.title = EMPRESA_LOCK_MSG;
+    el.style.opacity = "0.55";
+    el.style.cursor = "not-allowed";
+  }
+  function unlockEmpresa(el) {
+    if (!el) return;
+    el.disabled = false;
+    el.title = "";
+    el.style.opacity = "";
+    el.style.cursor = "";
+    // Antepone una opción vacía y la deja seleccionada, para forzar una elección consciente.
+    if (el.tagName === "SELECT") {
+      var first = el.options[0];
+      if (!first || first.value !== "") {
+        var opt = document.createElement("option");
+        opt.value = "";
+        opt.textContent = "Seleccionar empresa…";
+        el.insertBefore(opt, el.firstChild);
+      }
+      el.value = "";
+    }
+  }
 
   // ---------- helpers de novedad ----------
   // Resuelve el id de empleado por nombre escrito (autocompletado); null si no está en la base.
@@ -667,15 +705,37 @@
       }
       // Alta completa: empleado + relación ACTIVA.
       if (!nm.nombre || !g("dni")) throw new Error("Nombre y DNI son obligatorios");
+      var empresaId = _empresaByName[g("empresa")];
+      if (!empresaId) throw new Error("Seleccioná la empresa");   // define en qué empresa corre la jornada
       var fechaIng = parseFecha(g("fecha de ingreso"));
       if (!fechaIng) throw new Error("Fecha de ingreso obligatoria (dd/mm/aaaa)");
-      payload.dni = g("dni").replace(/\./g, "");
-      payload.legajo = nextLegajo();
+      var dni = g("dni").replace(/\./g, "");
       var puestoId = await getOrCreatePuesto(g("puesto"));
-      payload.relacion = {
-        empresa: _empresaByName[g("empresa")], sector: _sectorByName[g("sector")],
+      var relacion = {
+        empresa: empresaId, sector: _sectorByName[g("sector")],
         puesto: puestoId, fecha_ingreso: fechaIng, jornada_legal: JORNADA[g("jornada legal")] || "",
       };
+      // ¿Ya existe una persona con ese DNI? Entonces no es un alta nueva: es un REINGRESO.
+      // El DNI es único a nivel grupo; se valida contra la base para no chocar con el
+      // índice único y, sobre todo, para no duplicar la persona.
+      var existente = await findEmpleadoByDni(dni);
+      if (existente) {
+        if (existente.activo) {
+          throw new Error(
+            "Ya existe un empleado activo con DNI " + dni + " (" +
+            (existente.nombre + " " + existente.apellido).trim() +
+            "). No se puede dar de alta otra vez."
+          );
+        }
+        // Persona egresada: se reincorpora con una nueva relación ACTIVA en la empresa
+        // elegida. No se pisan sus datos personales (para eso está la edición de ficha).
+        await jsend("POST", "/empleados/" + existente.id + "/relaciones/", relacion);
+        showToast("Reingreso registrado (el DNI ya existía)", "ok");
+        return;
+      }
+      payload.dni = dni;
+      payload.legajo = nextLegajo();
+      payload.relacion = relacion;
       await jsend("POST", "/empleados/", payload);
       showToast("Empleado dado de alta", "ok");
     },
@@ -703,6 +763,18 @@
       if (f["empresa"] && emp.empresa !== "—") f["empresa"].value = emp.empresa;
       if (f["sector"] && emp.sector !== "—") f["sector"].value = emp.sector;
       if (f["puesto"]) f["puesto"].value = emp.puesto === "—" ? "" : emp.puesto;
+      // La empresa pertenece a la relación laboral y no se edita en la ficha: para mover
+      // al empleado a otra empresa hay que registrar su salida (baja) y reingreso. Se bloquea
+      // el campo para no mentir (el PATCH de edición solo toca datos de la persona).
+      lockEmpresa(f["empresa"]);
+    },
+
+    // Prepara el modal en modo ALTA: habilita empresa y fuerza una elección consciente
+    // (opción vacía "Seleccionar empresa…" por defecto), para que la jornada quede bien
+    // encuadrada en la empresa correcta y no caiga en la primera por descuido.
+    prepareAlta() {
+      var f = readAltaForm();
+      unlockEmpresa(f["empresa"]);
     },
 
     // Baja lógica: motivo del modal de baja, finaliza la relación ACTIVA (fecha = hoy).

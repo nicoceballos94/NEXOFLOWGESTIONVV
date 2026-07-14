@@ -125,7 +125,11 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
       await this.reloadNovedades();
     } catch (e) { console.error('[ceibo] prórroga', e); window.CeiboAPI.toast(e.message || String(e), 'error'); }
   };
-  openAlta = () => this.setState({ modal: 'alta', altaEditId: null });
+  openAlta = () => {
+    this.setState({ modal: 'alta', altaEditId: null });
+    // Tras montar el modal: habilita empresa y fuerza elección consciente (opción vacía).
+    setTimeout(() => window.CeiboAPI.prepareAlta(), 60);
+  };
   openEdit = (id) => {
     this.setState({ modal: 'alta', altaEditId: id });
     const emp = (this.state.empleados || []).find(e => e.id === id);
@@ -266,6 +270,49 @@ EDICIONES = [
     #  la cadena de novedad ahora vienen del canvas (export 2026-07-10). Ya no se inyectan;
     #  el cableado de esos botones al backend está en BLOQUE_INTEGRACION —overrides de
     #  aprobarProrroga/rechazarProrroga/anularProrroga/openEditProrroga—.)
+
+    # --- filtro por empleado en el grid de novedades (aún no está en el canvas; se inyecta
+    #     acá y se sube a Claude Design por DesignSync. Reusa el pipeline de filtros
+    #     client-side: novEmp + onNovEmp + condición en filteredNov. Las opciones se
+    #     generan desde los empleados que tienen novedades cargadas —novEmpOptions—). ---
+    (
+        '            <option value="Anulada">Anulada</option>\n          </select>\n          <div style="flex:1"></div>',
+        '            <option value="Anulada">Anulada</option>\n          </select>\n'
+        '          <select value="{{ novEmp }}" onChange="{{ onNovEmp }}" style="{{ selStyle }}">\n'
+        '            <option value="todos">Todos los empleados</option>\n'
+        '            <sc-for list="{{ novEmpOptions }}" as="o" hint-placeholder-count="3"><option value="{{ o.name }}">{{ o.name }}</option></sc-for>\n'
+        '          </select>\n          <div style="flex:1"></div>',
+        "novedades: select filtro por empleado",
+    ),
+    (
+        "    novTipo: 'todos', novEstado: 'todos',",
+        "    novTipo: 'todos', novEstado: 'todos', novEmp: 'todos',",
+        "novedades: state novEmp",
+    ),
+    (
+        "  onNovEstado = (e)=> this.setState({novEstado:e.target.value});",
+        "  onNovEstado = (e)=> this.setState({novEstado:e.target.value});\n"
+        "  onNovEmp = (e)=> this.setState({novEmp:e.target.value});",
+        "novedades: handler onNovEmp",
+    ),
+    (
+        "      if(S.novEstado!=='todos' && n.estado!==S.novEstado) return false;\n      return true;",
+        "      if(S.novEstado!=='todos' && n.estado!==S.novEstado) return false;\n"
+        "      if(S.novEmp!=='todos' && n.emp!==S.novEmp) return false;\n      return true;",
+        "novedades: condición de filtro por empleado",
+    ),
+    (
+        "      novTipo:S.novTipo, novEstado:S.novEstado, onNovTipo:this.onNovTipo, onNovEstado:this.onNovEstado, openAltaNov:this.openAltaNov,",
+        "      novTipo:S.novTipo, novEstado:S.novEstado, onNovTipo:this.onNovTipo, onNovEstado:this.onNovEstado, openAltaNov:this.openAltaNov,\n"
+        "      novEmp:S.novEmp, onNovEmp:this.onNovEmp, novEmpOptions:[...new Set(this.novList().map(n=>n.emp))].sort().map(name=>({name})),",
+        "novedades: renderVals novEmp + opciones",
+    ),
+    # --- dashboard: el ranking mide DÍAS (no cantidad de faltas); se aclara en el título ---
+    (
+        '<div style="font-weight:600;font-size:15px;color:var(--text)">Ranking de faltas</div>',
+        '<div style="font-weight:600;font-size:15px;color:var(--text)">Ranking de faltas · días</div>',
+        "dashboard: ranking título · días",
+    ),
 ]
 
 

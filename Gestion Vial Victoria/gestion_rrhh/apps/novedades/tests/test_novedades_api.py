@@ -119,6 +119,29 @@ def test_no_se_carga_novedad_a_empleado_egresado(cliente_supervisor, empresa, ti
     assert "empleado" in resp.data["campos"]
 
 
+def test_no_se_carga_ausencia_sobre_otra_corriendo(cliente_supervisor, empleado, tipo_licencia):
+    """Item 4: al alta se bloquea una ausencia que se solapa con otra ya vigente,
+    aunque la anterior esté sólo REGISTRADA (pendiente)."""
+    primera = _alta(cliente_supervisor, empleado, tipo_licencia)  # 03-01 → 03-10
+    assert primera.status_code == 201, primera.data
+    resp = _alta(
+        cliente_supervisor, empleado, tipo_licencia,
+        fecha_desde="2025-03-05", fecha_hasta="2025-03-15",  # se solapa con la anterior
+    )
+    assert resp.status_code == 400, resp.data
+    assert "fecha_desde" in resp.data["campos"]
+
+
+def test_ausencia_contigua_sin_solape_se_carga(cliente_supervisor, empleado, tipo_licencia):
+    """Sin solapamiento (arranca al día siguiente) el alta pasa."""
+    _alta(cliente_supervisor, empleado, tipo_licencia)  # 03-01 → 03-10
+    resp = _alta(
+        cliente_supervisor, empleado, tipo_licencia,
+        fecha_desde="2025-03-11", fecha_hasta="2025-03-15",
+    )
+    assert resp.status_code == 201, resp.data
+
+
 # ---------- Transiciones ----------
 def test_supervisor_no_aprueba_solo_rrhh(cliente_supervisor, empleado, tipo_licencia):
     novedad_id = _alta(cliente_supervisor, empleado, tipo_licencia).data["id"]

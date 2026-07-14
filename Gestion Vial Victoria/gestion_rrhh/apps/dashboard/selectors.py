@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-from django.db.models import Count, Q
+from django.db.models import Q
 
 from apps.empleados.models import EstadoRelacion, RelacionLaboral
 from apps.novedades.models import EstadoNovedad, Novedad
@@ -150,11 +150,14 @@ def metricas_dashboard(*, hoy: date | None = None) -> dict:
             "valor": _rotacion_periodo(m_ini, m_fin, activos_m_fin),
         })
 
-    # --- Ranking de faltas del mes (top 5), por EMPLEADO ---
-    # Se agrupa por empleado (no por relación): una falta cuya relación quedó sin
-    # asociar (p. ej. datos importados fuera del alta) no debe partir al empleado en
-    # dos filas ni perder la empresa. La empresa se resuelve aparte, por su relación.
-    ranking = (
+    # --- Ranking de faltas del mes (top 5), por EMPLEADO, medido en DÍAS ---
+    # `total` = cantidad de DÍAS de falta (no cantidad de faltas): una falta que abarca
+    # un rango cuenta todos sus días, ambos extremos inclusive. Se agrupa por empleado (no
+    # por relación): una falta cuya relación quedó sin asociar (p. ej. datos importados
+    # fuera del alta) no debe partir al empleado en dos filas ni perder la empresa. La
+    # empresa se resuelve aparte, por su relación. La suma se hace en Python para tratar
+    # bien las faltas abiertas (fecha_hasta null cuenta como 1 día).
+    faltas = (
         Novedad.objects.filter(
             novedad_origen__isnull=True,
             tipo_novedad__codigo="FALTA",
@@ -162,13 +165,22 @@ def metricas_dashboard(*, hoy: date | None = None) -> dict:
             fecha_desde__lt=ini_mes_sig,
         )
         .exclude(estado__in=ESTADOS_NOVEDAD_EXCLUIDOS)
-        .values("empleado_id", "empleado__nombre", "empleado__apellido")
-        .annotate(total=Count("id"))
-        .order_by("-total", "empleado__apellido")[:5]
+        .values("empleado_id", "empleado__nombre", "empleado__apellido", "fecha_desde", "fecha_hasta")
     )
+    acc: dict[int, dict] = {}
+    for f in faltas:
+        fin = f["fecha_hasta"] or f["fecha_desde"]
+        dias = (fin - f["fecha_desde"]).days + 1
+        e = acc.setdefault(
+            f["empleado_id"],
+            {"nombre": f["empleado__nombre"], "apellido": f["empleado__apellido"], "dias": 0},
+        )
+        e["dias"] += dias
+    # Top 5 por días (desc), desempate por apellido.
+    top = sorted(acc.items(), key=lambda kv: (-kv[1]["dias"], kv[1]["apellido"]))[:5]
     # Empresa de cada empleado del ranking: la de su relación ACTIVA; si no tiene,
     # la de la más reciente. Evita el "—" cuando la falta no trae relación asociada.
-    ids = [r["empleado_id"] for r in ranking]
+    ids = [empleado_id for empleado_id, _ in top]
     empresa_por_empleado: dict[int, str] = {}
     for rel in (
         RelacionLaboral.objects.filter(empleado_id__in=ids)
@@ -178,11 +190,11 @@ def metricas_dashboard(*, hoy: date | None = None) -> dict:
         empresa_por_empleado.setdefault(rel.empleado_id, rel.empresa.nombre)
     ranking_faltas = [
         {
-            "nombre": f"{r['empleado__nombre']} {r['empleado__apellido']}".strip(),
-            "empresa": empresa_por_empleado.get(r["empleado_id"], "—"),
-            "total": r["total"],
+            "nombre": f"{datos['nombre']} {datos['apellido']}".strip(),
+            "empresa": empresa_por_empleado.get(empleado_id, "—"),
+            "total": datos["dias"],
         }
-        for r in ranking
+        for empleado_id, datos in top
     ]
 
     return {
