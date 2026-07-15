@@ -7,6 +7,7 @@ una empresa se da por `RelacionLaboral`. Baja lógica solo donde el dominio lo p
 from django.conf import settings
 from django.db import models
 
+from common import archivos
 from common.models import ModeloBase
 
 
@@ -191,17 +192,7 @@ class TipoDocumento(ModeloBase):
 
 
 def ruta_archivo_documento(instance: "DocumentoEmpleado", filename: str) -> str:
-    """Ruta del respaldo dentro de MEDIA_ROOT: documentos/<empleado_id>/<uuid>.<ext>.
-
-    El nombre original se descarta a propósito y se reemplaza por un UUID. Dos razones:
-    el nombre que trae el archivo del escáner ("apto medico juan perez.pdf") filtraría PII
-    en la ruta, y un nombre adivinable invita a probar URLs. La extensión se conserva
-    (ya validada en el serializer) porque de ella sale el Content-Type de la descarga.
-    """
-    import uuid
-
-    extension = filename.rsplit(".", 1)[-1].lower() if "." in filename else "bin"
-    return f"documentos/{instance.empleado_id}/{uuid.uuid4().hex}.{extension}"
+    return archivos.ruta_con_uuid("documentos", instance.empleado_id, filename)
 
 
 class DocumentoEmpleado(ModeloBase):

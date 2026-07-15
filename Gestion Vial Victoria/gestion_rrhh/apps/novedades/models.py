@@ -12,6 +12,7 @@ from django.contrib.postgres.fields import DateRangeField, RangeBoundary, RangeO
 from django.db import models
 from django.db.models import Func, Q
 
+from common import archivos
 from common.models import ModeloBase
 
 
@@ -209,3 +210,47 @@ class Novedad(ModeloBase):
     @property
     def es_prorroga(self) -> bool:
         return self.novedad_origen_id is not None
+
+
+def ruta_archivo_adjunto(instance: "AdjuntoNovedad", filename: str) -> str:
+    return archivos.ruta_con_uuid("novedades", instance.novedad_id, filename)
+
+
+class AdjuntoNovedad(ModeloBase):
+    """Respaldo de un hecho: el certificado de la licencia, los estudios del accidente.
+
+    Cuelga de la NOVEDAD y no del empleado, a propósito: el certificado de la licencia de
+    marzo no es "un documento de la persona", es de esa licencia. De ahí sale la bitácora
+    sin inventar nada — cada novedad conserva lo suyo, y las novedades no se borran nunca
+    (se anulan). Por eso acá, al revés que en `empleados.DocumentoEmpleado`:
+
+    - No hay UNIQUE ni "uno vigente por tipo": una licencia puede juntar el certificado, la
+      prórroga del médico y tres estudios. Todos conviven.
+    - Nada se pisa al agregar: el apto médico viejo es basura, un certificado viejo es
+      historia.
+    - No hay vencimiento: un certificado no vence, describe algo que ya pasó.
+
+    Cada prórroga es una Novedad, así que los adjuntos caen en el eslabón que corresponde y
+    la cadena queda con la cronología real de la licencia.
+    """
+
+    novedad = models.ForeignKey(
+        Novedad, on_delete=models.PROTECT, related_name="adjuntos", db_index=True
+    )
+    archivo = models.FileField(upload_to=ruta_archivo_adjunto)
+    nombre_original = models.CharField(
+        max_length=255,
+        help_text="El nombre con el que se subió. En disco el archivo es un UUID, pero en "
+        "una bitácora saber que un adjunto era 'radiografia.jpg' y otro 'certificado.pdf' "
+        "es justamente el dato: acá no hay un tipo que lo diga, como sí lo hay en los "
+        "documentos del empleado.",
+    )
+    descripcion = models.CharField(max_length=200, blank=True)
+
+    class Meta:
+        verbose_name = "adjunto de novedad"
+        verbose_name_plural = "adjuntos de novedades"
+        ordering = ["creado_en", "id"]  # bitácora: en orden de llegada
+
+    def __str__(self):
+        return f"{self.nombre_original} ({self.novedad})"

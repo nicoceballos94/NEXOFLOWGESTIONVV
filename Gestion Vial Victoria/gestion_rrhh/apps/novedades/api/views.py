@@ -4,6 +4,8 @@ Lectura scopeada por selector. Carga y prórroga: rol operativo (Supervisor+). L
 transiciones que deciden si una novedad justifica jornadas (aprobar/rechazar/anular)
 exigen RRHH/Admin (R11). Las transiciones NO son PATCH: son acciones explícitas (§8).
 """
+from django.http import FileResponse
+from django.shortcuts import get_object_or_404
 from rest_framework import mixins, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -16,7 +18,9 @@ from .. import selectors, services
 from ..models import TipoNovedad
 from .serializers import (
     ActualizarNovedadSerializer,
+    AdjuntoNovedadSerializer,
     CadenaSerializer,
+    CrearAdjuntoSerializer,
     CrearNovedadSerializer,
     NovedadSerializer,
     ProrrogarSerializer,
@@ -36,11 +40,16 @@ class NovedadViewSet(
     serializer_class = NovedadSerializer
 
     def get_permissions(self):
-        if self.action in ("list", "retrieve", "cadena"):
+        if self.action in ("list", "retrieve", "cadena", "archivo_adjunto"):
             return [IsAuthenticated()]  # el selector recorta el scope
+        # Leer la bitácora es lectura; subir un adjunto no. El empleado puede ver el
+        # certificado de SU licencia (y solo la suya: lo recorta el selector), pero no
+        # cargar respaldos: en MVP1 el empleado no escribe nada (CU §2).
+        if self.action == "adjuntos":
+            return [IsAuthenticated()] if self.request.method == "GET" else [_Operativos()]
         if self.action in ("aprobar", "rechazar", "anular"):
             return [_SoloRRHH()]
-        return [_Operativos()]  # create, partial_update, prorrogar
+        return [_Operativos()]  # create, partial_update, prorrogar, adjunto (DELETE)
 
     def get_queryset(self):
         # Sin colapsar: retrieve y las acciones deben poder resolver una prórroga por su id.
@@ -106,6 +115,43 @@ class NovedadViewSet(
     def cadena(self, request, pk=None):
         data = selectors.cadena_de(novedad=self.get_object())
         return Response(CadenaSerializer(data).data)
+
+    @action(detail=True, methods=["get", "post"])
+    def adjuntos(self, request, pk=None):
+        """Bitácora de la novedad: el certificado, los estudios, lo que respalde el hecho.
+
+        `get_object()` pasa por el selector, así que el empleado solo llega a los adjuntos
+        de sus propias novedades y el resto de los pedidos muere en 404.
+        """
+        novedad = self.get_object()
+        if request.method == "GET":
+            qs = novedad.adjuntos.select_related("creado_por")
+            return Response(AdjuntoNovedadSerializer(qs, many=True).data)
+        entrada = CrearAdjuntoSerializer(data=request.data)
+        entrada.is_valid(raise_exception=True)
+        adjunto = services.adjuntar_a_novedad(
+            actor=request.user, novedad=novedad, **entrada.validated_data
+        )
+        return Response(AdjuntoNovedadSerializer(adjunto).data, status=201)
+
+    @action(detail=True, methods=["delete"], url_path=r"adjuntos/(?P<adjunto_id>[^/.]+)")
+    def adjunto(self, request, pk=None, adjunto_id=None):
+        adjunto = get_object_or_404(self.get_object().adjuntos, pk=adjunto_id)
+        services.quitar_adjunto(actor=request.user, adjunto=adjunto)
+        return Response(status=204)
+
+    @action(detail=True, methods=["get"], url_path=r"adjuntos/(?P<adjunto_id>[^/.]+)/archivo")
+    def archivo_adjunto(self, request, pk=None, adjunto_id=None):
+        """Descarga del respaldo. La única puerta al binario, igual que en documentos:
+        `media/` no se sirve como estático, así que acá está el login, el rol y el scope."""
+        adjunto = get_object_or_404(self.get_object().adjuntos, pk=adjunto_id)
+        # `as_attachment` fuerza la descarga en vez de que el navegador renderice: un SVG o
+        # un HTML disfrazado de imagen no se ejecuta en el origen de la app.
+        return FileResponse(
+            adjunto.archivo.open("rb"),
+            as_attachment=True,
+            filename=adjunto.nombre_original,
+        )
 
 
 class TipoNovedadViewSet(viewsets.ModelViewSet):

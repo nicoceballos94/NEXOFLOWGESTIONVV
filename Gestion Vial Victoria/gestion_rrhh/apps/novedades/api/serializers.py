@@ -7,8 +7,10 @@ from datetime import timedelta
 
 from rest_framework import serializers
 
+from common import archivos
+
 from .. import selectors
-from ..models import Novedad, TipoNovedad
+from ..models import AdjuntoNovedad, Novedad, TipoNovedad
 
 
 # ---------- Catálogo ----------
@@ -145,6 +147,34 @@ class ProrrogarSerializer(serializers.Serializer):
 
 class RechazarAnularSerializer(serializers.Serializer):
     motivo = serializers.CharField(required=False, allow_blank=True, default="")
+
+
+class AdjuntoNovedadSerializer(serializers.ModelSerializer):
+    """Salida de la bitácora. El `archivo` no se expone crudo: la ruta de MEDIA_ROOT no le
+    sirve a nadie desde afuera (no hay URL pública que la resuelva) y filtra la
+    organización del disco. Se expone el endpoint protegido."""
+
+    archivo_url = serializers.SerializerMethodField()
+    subido_por = serializers.CharField(source="creado_por.username", read_only=True, default=None)
+
+    class Meta:
+        model = AdjuntoNovedad
+        fields = ("id", "novedad", "nombre_original", "descripcion", "archivo_url",
+                  "subido_por", "creado_en")
+
+    def get_archivo_url(self, obj) -> str:
+        return f"/api/v1/novedades/{obj.novedad_id}/adjuntos/{obj.id}/archivo/"
+
+
+class CrearAdjuntoSerializer(serializers.Serializer):
+    archivo = serializers.FileField()
+    descripcion = serializers.CharField(required=False, allow_blank=True, default="")
+
+    def validate_archivo(self, archivo):
+        error = archivos.errores_de_archivo(archivo)
+        if error:
+            raise serializers.ValidationError(error)
+        return archivo
 
 
 class _VigenciaSerializer(serializers.Serializer):

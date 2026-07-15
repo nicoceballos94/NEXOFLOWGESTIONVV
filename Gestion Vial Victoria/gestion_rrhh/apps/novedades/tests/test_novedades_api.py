@@ -621,3 +621,169 @@ def test_lista_colapsa_cadenas_por_defecto(
     # expandidas: madre + prórroga
     resp2 = cliente_rrhh.get("/api/v1/novedades/?expandir_cadenas=true")
     assert resp2.data["count"] == 2
+
+
+# ---------- Adjuntos: la bitácora del hecho ----------
+@pytest.fixture
+def media_temporal(settings, tmp_path):
+    """MEDIA_ROOT propio por test: los archivos subidos no ensucian el repo ni se pisan."""
+    settings.MEDIA_ROOT = str(tmp_path)
+    return tmp_path
+
+
+def _archivo(nombre="certificado.pdf", contenido=b"%PDF-1.4 certificado"):
+    from django.core.files.uploadedfile import SimpleUploadedFile
+
+    return SimpleUploadedFile(nombre, contenido, content_type="application/pdf")
+
+
+def test_la_novedad_junta_varios_adjuntos_sin_pisar_ninguno(
+    cliente_rrhh, empleado, tipo_licencia, media_temporal
+):
+    """La diferencia con el documento del empleado: acá NADA se pisa. Una licencia junta el
+    certificado, los estudios y la radiografía, y todos conviven — eso es la bitácora."""
+    nov = _alta(cliente_rrhh, empleado, tipo_licencia).data["id"]
+    for nombre in ("certificado.pdf", "estudio.pdf", "radiografia.png"):
+        resp = cliente_rrhh.post(
+            f"/api/v1/novedades/{nov}/adjuntos/",
+            {"archivo": _archivo(nombre), "descripcion": f"desc de {nombre}"},
+            format="multipart",
+        )
+        assert resp.status_code == 201, resp.data
+
+    resp = cliente_rrhh.get(f"/api/v1/novedades/{nov}/adjuntos/")
+    assert resp.status_code == 200
+    # Los tres siguen ahí, en orden de llegada, con su nombre real: en una bitácora saber
+    # cuál era la radiografía y cuál el certificado ES el dato (no hay tipo que lo diga).
+    assert [a["nombre_original"] for a in resp.data] == [
+        "certificado.pdf", "estudio.pdf", "radiografia.png"
+    ]
+    assert resp.data[0]["subido_por"] == "rrhh"
+
+
+def test_el_adjunto_se_descarga_con_su_nombre(
+    cliente_rrhh, empleado, tipo_licencia, media_temporal
+):
+    from apps.novedades.models import AdjuntoNovedad
+
+    nov = _alta(cliente_rrhh, empleado, tipo_licencia).data["id"]
+    creado = cliente_rrhh.post(
+        f"/api/v1/novedades/{nov}/adjuntos/",
+        {"archivo": _archivo("alta-medica.pdf", b"%PDF-1.4 alta")},
+        format="multipart",
+    )
+    adj = AdjuntoNovedad.objects.get(pk=creado.data["id"])
+    # En disco es un UUID bajo novedades/<id>/: sin PII y no adivinable.
+    assert adj.archivo.name.startswith(f"novedades/{nov}/")
+    assert "alta-medica" not in adj.archivo.name
+
+    resp = cliente_rrhh.get(creado.data["archivo_url"])
+    assert resp.status_code == 200
+    assert b"".join(resp.streaming_content) == b"%PDF-1.4 alta"
+    assert 'filename="alta-medica.pdf"' in resp["Content-Disposition"]
+
+
+def test_el_certificado_se_puede_adjuntar_despues_de_cerrada(
+    cliente_rrhh, empleado, tipo_licencia, media_temporal
+):
+    """El papel llega tarde: el certificado suele aparecer días después del hecho. Si el
+    estado bloqueara el adjunto, habría que pelearle al sistema justo cuando aparece."""
+    nov = _alta(cliente_rrhh, empleado, tipo_licencia).data["id"]
+    cliente_rrhh.post(f"/api/v1/novedades/{nov}/aprobar/")
+    Novedad.objects.filter(pk=nov).update(estado=EstadoNovedad.CERRADA)
+    resp = cliente_rrhh.post(
+        f"/api/v1/novedades/{nov}/adjuntos/", {"archivo": _archivo()}, format="multipart"
+    )
+    assert resp.status_code == 201, resp.data
+
+
+def test_quitar_adjunto_se_lleva_el_archivo(
+    cliente_rrhh, empleado, tipo_licencia, media_temporal, django_capture_on_commit_callbacks
+):
+    from apps.novedades.models import AdjuntoNovedad
+
+    nov = _alta(cliente_rrhh, empleado, tipo_licencia).data["id"]
+    adj_id = cliente_rrhh.post(
+        f"/api/v1/novedades/{nov}/adjuntos/", {"archivo": _archivo()}, format="multipart"
+    ).data["id"]
+    ruta = media_temporal / AdjuntoNovedad.objects.get(pk=adj_id).archivo.name
+    assert ruta.exists()
+
+    with django_capture_on_commit_callbacks(execute=True):
+        resp = cliente_rrhh.delete(f"/api/v1/novedades/{nov}/adjuntos/{adj_id}/")
+    assert resp.status_code == 204
+    assert not ruta.exists(), "el binario quedó huérfano en MEDIA_ROOT"
+
+
+def test_cada_prorroga_guarda_su_propio_respaldo(
+    cliente_rrhh, empleado, tipo_licencia, media_temporal
+):
+    """El adjunto cae en el eslabón que corresponde: el certificado inicial en la madre, el
+    de la extensión en la prórroga. Así la cadena queda con la cronología real."""
+    madre = _alta(cliente_rrhh, empleado, tipo_licencia).data["id"]
+    cliente_rrhh.post(f"/api/v1/novedades/{madre}/aprobar/")
+    prorroga = cliente_rrhh.post(
+        f"/api/v1/novedades/{madre}/prorrogar/",
+        {"fecha_hasta_nueva": "2025-03-20"},
+        format="json",
+    ).data["id"]
+
+    cliente_rrhh.post(
+        f"/api/v1/novedades/{madre}/adjuntos/",
+        {"archivo": _archivo("cert-inicial.pdf")}, format="multipart",
+    )
+    cliente_rrhh.post(
+        f"/api/v1/novedades/{prorroga}/adjuntos/",
+        {"archivo": _archivo("cert-extension.pdf")}, format="multipart",
+    )
+
+    de_madre = cliente_rrhh.get(f"/api/v1/novedades/{madre}/adjuntos/").data
+    de_prorroga = cliente_rrhh.get(f"/api/v1/novedades/{prorroga}/adjuntos/").data
+    assert [a["nombre_original"] for a in de_madre] == ["cert-inicial.pdf"]
+    assert [a["nombre_original"] for a in de_prorroga] == ["cert-extension.pdf"]
+
+
+def test_el_empleado_ve_su_certificado_pero_no_sube_ni_toca_ajenos(
+    cliente_rrhh, empleado, tipo_licencia, crear_usuario, media_temporal
+):
+    """El empleado consulta lo suyo (CU §2: en MVP1 no carga nada) y las novedades de otros
+    no existen para él: el selector las recorta y el pedido muere en 404, no en 403."""
+    nov = _alta(cliente_rrhh, empleado, tipo_licencia).data["id"]
+    creado = cliente_rrhh.post(
+        f"/api/v1/novedades/{nov}/adjuntos/", {"archivo": _archivo()}, format="multipart"
+    )
+    assert creado.status_code == 201, creado.data
+
+    # Usuario vinculado a ESE empleado: ve el adjunto de su licencia.
+    usuario = crear_usuario(username="juanp", rol=roles.EMPLEADO)
+    empleado.usuario = usuario
+    empleado.save()
+    propio = APIClient()
+    propio.force_authenticate(usuario)
+    assert propio.get(f"/api/v1/novedades/{nov}/adjuntos/").status_code == 200
+    assert propio.get(creado.data["archivo_url"]).status_code == 200
+    # Pero no carga respaldos ni borra.
+    assert propio.post(
+        f"/api/v1/novedades/{nov}/adjuntos/", {"archivo": _archivo()}, format="multipart"
+    ).status_code == 403
+    assert propio.delete(
+        f"/api/v1/novedades/{nov}/adjuntos/{creado.data['id']}/"
+    ).status_code == 403
+
+    # Otro empleado, sin relación con esta novedad: para él no existe.
+    ajeno = crear_usuario(username="curioso", rol=roles.EMPLEADO)
+    otro = APIClient()
+    otro.force_authenticate(ajeno)
+    assert otro.get(f"/api/v1/novedades/{nov}/adjuntos/").status_code == 404
+    assert otro.get(creado.data["archivo_url"]).status_code == 404
+
+
+def test_no_se_adjunta_cualquier_cosa(cliente_rrhh, empleado, tipo_licencia, media_temporal):
+    nov = _alta(cliente_rrhh, empleado, tipo_licencia).data["id"]
+    resp = cliente_rrhh.post(
+        f"/api/v1/novedades/{nov}/adjuntos/",
+        {"archivo": _archivo("virus.exe", b"MZ")},
+        format="multipart",
+    )
+    assert resp.status_code == 400
+    assert "exe" in str(resp.data)

@@ -1,8 +1,9 @@
 """Contrato I/O de empleados (§11). Serializers de entrada y salida separados:
 la entrada valida forma (R12); la escritura y las reglas viven en services.py.
 """
-from django.conf import settings
 from rest_framework import serializers
+
+from common import archivos
 
 from ..models import (
     DocumentoEmpleado,
@@ -181,29 +182,10 @@ class FinalizarRelacionSerializer(serializers.Serializer):
 
 
 def _validar_archivo(archivo):
-    """Extensión y peso del respaldo (R12: la forma se valida acá, no en el service).
-
-    La extensión se mira, no el contenido: para saber de verdad si un PDF es un PDF hace
-    falta leer los magic bytes (python-magic/libmagic, dependencia binaria). Es una
-    concesión consciente — el archivo nunca se ejecuta ni se sirve como HTML, se descarga
-    como adjunto, así que el peor caso es un archivo inútil cargado por RRHH, no un XSS.
-    """
-    if archivo in (None, ""):
-        return archivo
-    nombre = getattr(archivo, "name", "") or ""
-    extension = nombre.rsplit(".", 1)[-1].lower() if "." in nombre else ""
-    if extension not in settings.DOCUMENTO_EXTENSIONES:
-        raise serializers.ValidationError(
-            f"Formato no admitido ('{extension or 'sin extensión'}'). "
-            f"Se aceptan: {', '.join(settings.DOCUMENTO_EXTENSIONES)}."
-        )
-    if archivo.size > settings.DOCUMENTO_MAX_BYTES:
-        tope_mb = settings.DOCUMENTO_MAX_BYTES / (1024 * 1024)
-        real_mb = archivo.size / (1024 * 1024)
-        raise serializers.ValidationError(
-            f"El archivo pesa {real_mb:.1f} MB y el máximo es {tope_mb:.0f} MB. "
-            f"Si es una foto, sacala con menos resolución o escaneala como PDF."
-        )
+    """Forma del respaldo (R12: la forma acá, las reglas en services). Regla en common."""
+    error = archivos.errores_de_archivo(archivo)
+    if error:
+        raise serializers.ValidationError(error)
     return archivo
 
 

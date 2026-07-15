@@ -8,6 +8,8 @@ El legajo lo asigna el backend: es un número de la organización, no un dato de
 from django.db import connection, transaction
 from rest_framework.exceptions import ValidationError
 
+from common.storage import borrar_archivo_al_confirmar
+
 from .models import DocumentoEmpleado, Empleado, EstadoRelacion, RelacionLaboral
 
 # Clave del advisory lock que serializa la asignación de legajo (arbitraria pero fija).
@@ -100,22 +102,6 @@ def crear_documento(*, actor, empleado: Empleado, **datos) -> DocumentoEmpleado:
     return DocumentoEmpleado.objects.create(creado_por=actor, empleado=empleado, **datos)
 
 
-def _borrar_archivo_al_confirmar(archivo) -> None:
-    """Programa el borrado del binario para cuando la transacción confirme.
-
-    Django NO borra el archivo del disco al borrar la fila (desde 1.3). Sin esto, cada
-    renovación deja el scan viejo tirado en MEDIA_ROOT para siempre: invisible (ninguna
-    fila lo referencia), imposible de encontrar (el nombre es un UUID) e imposible de
-    borrar sin un script. Y son datos de salud acumulándose sin dueño.
-
-    Va en `on_commit` y no en línea porque **el disco no tiene rollback**: si se borrara
-    el archivo acá y la transacción fallara después, la fila volvería apuntando a un
-    binario que ya no existe y la descarga quedaría rota para siempre. Al revés se
-    recupera: un archivo huérfano se limpia, una fila rota no se arregla sola. Por eso el
-    borrado ocurre solo cuando la fila ya está confirmada.
-    """
-    if archivo:
-        transaction.on_commit(lambda: archivo.delete(save=False))
 
 
 @transaction.atomic
@@ -141,7 +127,7 @@ def actualizar_documento(*, actor, documento: DocumentoEmpleado, **datos) -> Doc
     for campo, valor in datos.items():
         setattr(documento, campo, valor)
     documento.save()
-    _borrar_archivo_al_confirmar(archivo_viejo)
+    borrar_archivo_al_confirmar(archivo_viejo)
     return documento
 
 
@@ -155,4 +141,4 @@ def eliminar_documento(*, actor, documento: DocumentoEmpleado) -> None:
     """
     archivo = documento.archivo  # la referencia sobrevive al DELETE; el binario, no
     documento.delete()
-    _borrar_archivo_al_confirmar(archivo)
+    borrar_archivo_al_confirmar(archivo)

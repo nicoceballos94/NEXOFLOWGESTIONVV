@@ -15,9 +15,10 @@ from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
 from apps.empleados.models import Empleado
+from common.storage import borrar_archivo_al_confirmar
 
 from . import selectors
-from .models import OCUPAN_PERIODO, EstadoNovedad, Novedad
+from .models import OCUPAN_PERIODO, AdjuntoNovedad, EstadoNovedad, Novedad
 
 # Estados desde los que una novedad todavía puede editarse o resolverse.
 _ABIERTOS = (EstadoNovedad.REGISTRADA, EstadoNovedad.EN_PROCESO)
@@ -302,3 +303,41 @@ def prorrogar_novedad(
         novedad_origen=madre,  # apunta SIEMPRE a la madre
         estado=EstadoNovedad.REGISTRADA,  # RP5: nace pendiente
     )
+
+
+@transaction.atomic
+def adjuntar_a_novedad(
+    *, actor, novedad: Novedad, archivo, descripcion: str = ""
+) -> AdjuntoNovedad:
+    """Suma un respaldo a la bitácora de la novedad (certificado, estudio, radiografía).
+
+    Se puede adjuntar en cualquier estado, incluso sobre una novedad ya cerrada o anulada:
+    el certificado suele llegar días después del hecho, y una novedad anulada por error de
+    carga puede necesitar el respaldo que prueba por qué se anuló. Restringirlo por estado
+    obligaría a pelearle al sistema justo cuando aparece el papel que faltaba.
+
+    Nada se pisa: cada adjunto se suma. Esa es la diferencia con el documento del empleado.
+    """
+    adjunto = AdjuntoNovedad.objects.create(
+        creado_por=actor,
+        novedad=novedad,
+        archivo=archivo,
+        # `archivo.name` queda pisado por el upload_to (pasa a ser el UUID), así que el
+        # nombre con el que se subió se captura ACÁ, antes de guardar.
+        nombre_original=getattr(archivo, "name", "") or "archivo",
+        descripcion=descripcion,
+    )
+    return adjunto
+
+
+@transaction.atomic
+def quitar_adjunto(*, actor, adjunto: AdjuntoNovedad) -> None:
+    """Un adjunto cargado por error no es historia: se va, con binario y todo.
+
+    Es un DELETE físico y está bien que lo sea — a diferencia de la novedad (que se anula
+    para dejar rastro), un PDF subido a la novedad equivocada no documenta nada. Lo que la
+    bitácora conserva son los adjuntos correctos.
+    """
+    archivo = adjunto.archivo  # la referencia sobrevive al DELETE; el binario, no
+    adjunto.delete()
+    borrar_archivo_al_confirmar(archivo)
