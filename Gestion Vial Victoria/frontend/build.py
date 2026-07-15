@@ -271,13 +271,19 @@ EDICIONES = [
     #  el cableado de esos botones al backend está en BLOQUE_INTEGRACION —overrides de
     #  aprobarProrroga/rechazarProrroga/anularProrroga/openEditProrroga—.)
 
-    # --- filtro por empleado en el grid de novedades (aún no está en el canvas; se inyecta
-    #     acá y se sube a Claude Design por DesignSync. Reusa el pipeline de filtros
+    # --- filtro por empleado en el grid de novedades. Reusa el pipeline de filtros
     #     client-side: novEmp + onNovEmp + condición en filteredNov. Es una caja de texto
     #     con autocompletado (input + datalist), no un select: con ~100 empleados un
     #     dropdown es inmanejable. Mismo patrón que el alta de novedad (populateNovForm).
     #     Las sugerencias salen de los empleados que tienen novedades cargadas
-    #     —novEmpOptions—; el filtro matchea por substring, así que sirve tipear parcial. ---
+    #     —novEmpOptions—; el filtro matchea por substring, así que sirve tipear parcial.
+    #
+    #     OJO — estas 6 ediciones (markup, state novEmp, handler onNovEmp, condición en
+    #     filteredNov, helper normEmp y renderVals) YA SE SUBIERON AL CANVAS el 2026-07-15
+    #     por DesignSync. Siguen acá solo porque `design/` es el export del 2026-07-13 y
+    #     todavía no las tiene. Cuando se baje el próximo export del canvas, van a cortar
+    #     con "ancla no encontrada": la respuesta correcta es BORRARLAS de acá (el diseño ya
+    #     las trae), no reparar el ancla. ---
     (
         '            <option value="Anulada">Anulada</option>\n          </select>\n          <div style="flex:1"></div>',
         '            <option value="Anulada">Anulada</option>\n          </select>\n'
