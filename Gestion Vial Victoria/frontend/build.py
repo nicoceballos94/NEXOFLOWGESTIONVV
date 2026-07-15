@@ -273,20 +273,24 @@ EDICIONES = [
 
     # --- filtro por empleado en el grid de novedades (aún no está en el canvas; se inyecta
     #     acá y se sube a Claude Design por DesignSync. Reusa el pipeline de filtros
-    #     client-side: novEmp + onNovEmp + condición en filteredNov. Las opciones se
-    #     generan desde los empleados que tienen novedades cargadas —novEmpOptions—). ---
+    #     client-side: novEmp + onNovEmp + condición en filteredNov. Es una caja de texto
+    #     con autocompletado (input + datalist), no un select: con ~100 empleados un
+    #     dropdown es inmanejable. Mismo patrón que el alta de novedad (populateNovForm).
+    #     Las sugerencias salen de los empleados que tienen novedades cargadas
+    #     —novEmpOptions—; el filtro matchea por substring, así que sirve tipear parcial. ---
     (
         '            <option value="Anulada">Anulada</option>\n          </select>\n          <div style="flex:1"></div>',
         '            <option value="Anulada">Anulada</option>\n          </select>\n'
-        '          <select value="{{ novEmp }}" onChange="{{ onNovEmp }}" style="{{ selStyle }}">\n'
-        '            <option value="todos">Todos los empleados</option>\n'
-        '            <sc-for list="{{ novEmpOptions }}" as="o" hint-placeholder-count="3"><option value="{{ o.name }}">{{ o.name }}</option></sc-for>\n'
-        '          </select>\n          <div style="flex:1"></div>',
-        "novedades: select filtro por empleado",
+        '          <div style="display:flex;align-items:center;gap:9px;height:38px;width:220px;border:1px solid var(--border);background:var(--surface);border-radius:10px;padding:0 12px">\n'
+        '            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="2" stroke-linecap="round" style="flex:none"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.2-3.2"/></svg>\n'
+        '            <input value="{{ novEmp }}" onInput="{{ onNovEmp }}" list="nov-emp-list" autocomplete="off" placeholder="Filtrar por empleado…" style="border:none;background:transparent;outline:none;color:var(--text);font-size:13px;width:100%"/>\n'
+        '            <datalist id="nov-emp-list"><sc-for list="{{ novEmpOptions }}" as="o" hint-placeholder-count="3"><option value="{{ o.name }}"></option></sc-for></datalist>\n'
+        '          </div>\n          <div style="flex:1"></div>',
+        "novedades: filtro por empleado (input + datalist)",
     ),
     (
         "    novTipo: 'todos', novEstado: 'todos',",
-        "    novTipo: 'todos', novEstado: 'todos', novEmp: 'todos',",
+        "    novTipo: 'todos', novEstado: 'todos', novEmp: '',",
         "novedades: state novEmp",
     ),
     (
@@ -298,8 +302,17 @@ EDICIONES = [
     (
         "      if(S.novEstado!=='todos' && n.estado!==S.novEstado) return false;\n      return true;",
         "      if(S.novEstado!=='todos' && n.estado!==S.novEstado) return false;\n"
-        "      if(S.novEmp!=='todos' && n.emp!==S.novEmp) return false;\n      return true;",
+        "      // Se compara sin tildes: nadie tipea \"Benítez\" con acento al filtrar.\n"
+        "      const q=this.normEmp(S.novEmp);\n"
+        "      if(q && !this.normEmp(n.emp).includes(q)) return false;\n      return true;",
         "novedades: condición de filtro por empleado",
+    ),
+    # normEmp: minúsculas + sin diacríticos (NFD y descarte de marcas de acento).
+    (
+        "  novList(){",
+        "  normEmp(s){ return String(s||'').normalize('NFD').replace(/[\\u0300-\\u036f]/g,'').trim().toLowerCase(); }\n"
+        "  novList(){",
+        "novedades: helper normEmp (sin tildes)",
     ),
     (
         "      novTipo:S.novTipo, novEstado:S.novEstado, onNovTipo:this.onNovTipo, onNovEstado:this.onNovEstado, openAltaNov:this.openAltaNov,",
