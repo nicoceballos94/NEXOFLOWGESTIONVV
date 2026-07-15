@@ -153,3 +153,9 @@ SPECTACULAR_SETTINGS = {
 }
 
 CORS_ALLOWED_ORIGINS = env.list("CORS_ALLOWED_ORIGINS", default=[])
+# El front corre en otro origen y descarga los respaldos con fetch (necesita mandar el
+# header Authorization, cosa que un <a href> no hace). De una respuesta cross-origin, el
+# navegador solo deja leer a JS un puñado de headers: Content-Disposition no está entre
+# ellos salvo que el servidor lo exponga. Sin esto, el nombre que arma la vista no llega
+# y el apto médico se descarga como "documento", sin extensión ni con qué abrirlo.
+CORS_EXPOSE_HEADERS = ["Content-Disposition"]

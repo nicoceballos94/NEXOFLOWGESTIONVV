@@ -41,8 +41,9 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
       await this.reloadEmpleados();
       await this.reloadNovedades();
       await this.reloadDashboard();
+      this.setState({ tiposDoc: await window.CeiboAPI.listTiposDoc() });
       const e = this.state.empleados;
-      if (e && e.length) this.setState({ selEmp: e[0].id });
+      if (e && e.length) { this.setState({ selEmp: e[0].id }); this.recargarDocs(e[0].id); }
     } catch (err) {
       console.error('[ceibo] init', err);
       this.setState({ apiErr: String(err) });
@@ -55,6 +56,10 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
     if (v.ficha) v.ficha.openEdit = () => this.openEdit(this.state.selEmp);
     v.submitNov = this.submitNov;
     v.submitProrroga = this.submitProrroga;
+    v.submitDoc = this.submitDoc;
+    // El catálogo real reemplaza a los 4 tipos hardcodeados del canvas: RRHH puede dar de
+    // alta tipos nuevos y el desplegable tiene que mostrarlos.
+    if (this.state.tiposDoc) v.docTipos = this.state.tiposDoc;
     // Dashboard con datos reales: reemplaza las métricas mock del canvas.
     if (this.state.dashboard) {
       Object.assign(v, window.CeiboAPI.dashboardVals(this.state.dashboard, this.state.rot, v.metrics));
@@ -160,12 +165,45 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
   };
   selectEmp = (id) => {
     this.setState({ selEmp: id, view: 'ficha' });
+    this.recargarDocs(id);
+  };
+  // ===== documentos de la ficha (el canvas los deja en mock; acá van al backend) =====
+  recargarDocs = (id) => {
     const self = this;
-    window.CeiboAPI.loadDocs(id).then(function (docs) {
+    return window.CeiboAPI.loadDocs(id).then(function (docs) {
       self.setState(function (s) {
         return { empleados: (s.empleados || []).map(function (e) { return e.id === id ? Object.assign({}, e, { docs: docs }) : e; }) };
       });
     }).catch(function () {});
+  };
+  openDocNuevo = () => {
+    this.setState({ modal: 'doc', docEditId: null, docArchivoNombre: '' });
+    // Tras montar el modal: deja el select en el primer tipo libre (los ya cargados no
+    // se pueden repetir: hay uno vigente por tipo y el POST fallaría con 400).
+    setTimeout(() => window.CeiboAPI.prepareDoc(this.state.selEmp, null), 60);
+  };
+  openDocEdit = (id) => {
+    this.setState({ modal: 'doc', docEditId: id, docArchivoNombre: '' });
+    setTimeout(() => window.CeiboAPI.prepareDoc(this.state.selEmp, id), 60);
+  };
+  submitDoc = async () => {
+    try {
+      await window.CeiboAPI.submitDoc(this.state.selEmp, this.state.docEditId);
+      this.setState({ modal: null, docEditId: null, docArchivoNombre: '' });
+      await this.recargarDocs(this.state.selEmp);
+    } catch (e) { console.error('[ceibo] documento', e); window.CeiboAPI.toast(e.message || String(e), 'error'); }
+  };
+  descargarDoc = async (id) => {
+    // No es un <a href>: el endpoint pide el header Authorization y un link plano no lo
+    // manda. Se baja con fetch autenticado y se entrega como blob.
+    try { await window.CeiboAPI.descargarDoc(this.state.selEmp, id); }
+    catch (e) { console.error('[ceibo] descarga', e); window.CeiboAPI.toast(e.message || String(e), 'error'); }
+  };
+  quitarDoc = async (id) => {
+    try {
+      await window.CeiboAPI.quitarDoc(this.state.selEmp, id);
+      await this.recargarDocs(this.state.selEmp);
+    } catch (e) { console.error('[ceibo] quitar documento', e); window.CeiboAPI.toast(e.message || String(e), 'error'); }
   };
 }
 """
@@ -181,7 +219,7 @@ EDICIONES = [
     # --- state: campos nuevos ---
     (
         "theme: 'dark', view: 'dashboard', selEmp: 1,",
-        "theme: 'dark', view: 'dashboard', selEmp: 1,\n    empleados: null, novedades: null, dashboard: null, apiErr: null, altaEditId: null,",
+        "theme: 'dark', view: 'dashboard', selEmp: 1,\n    empleados: null, novedades: null, dashboard: null, apiErr: null, altaEditId: null, tiposDoc: null,",
         "state: campos de integración",
     ),
     # --- novBase(): usar datos reales si están cargados ---
@@ -236,6 +274,11 @@ EDICIONES = [
         "data-modal=\"prorroga\" style=\"background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:460px;max-width:100%",
         "modal prórroga: data-modal",
     ),
+    (
+        "style=\"background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:520px;max-width:100%",
+        "data-modal=\"doc\" style=\"background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:520px;max-width:100%",
+        "modal documento: data-modal",
+    ),
     # --- template: botón Guardar empleado → submitAlta ---
     (
         '<button onClick="{{ closeModal }}" style="background:var(--accent);border:none;color:#04201C;font-weight:600;font-size:13px;border-radius:10px;padding:0 20px;height:40px;cursor:pointer;box-shadow:0 4px 14px rgba(45,212,191,.28)">Guardar empleado</button>',
@@ -271,60 +314,16 @@ EDICIONES = [
     #  el cableado de esos botones al backend está en BLOQUE_INTEGRACION —overrides de
     #  aprobarProrroga/rechazarProrroga/anularProrroga/openEditProrroga—.)
 
-    # --- filtro por empleado en el grid de novedades. Reusa el pipeline de filtros
-    #     client-side: novEmp + onNovEmp + condición en filteredNov. Es una caja de texto
-    #     con autocompletado (input + datalist), no un select: con ~100 empleados un
-    #     dropdown es inmanejable. Mismo patrón que el alta de novedad (populateNovForm).
-    #     Las sugerencias salen de los empleados que tienen novedades cargadas
-    #     —novEmpOptions—; el filtro matchea por substring, así que sirve tipear parcial.
-    #
-    #     OJO — estas 6 ediciones (markup, state novEmp, handler onNovEmp, condición en
-    #     filteredNov, helper normEmp y renderVals) YA SE SUBIERON AL CANVAS el 2026-07-15
-    #     por DesignSync. Siguen acá solo porque `design/` es el export del 2026-07-13 y
-    #     todavía no las tiene. Cuando se baje el próximo export del canvas, van a cortar
-    #     con "ancla no encontrada": la respuesta correcta es BORRARLAS de acá (el diseño ya
-    #     las trae), no reparar el ancla. ---
+    # (El filtro por empleado del grid de novedades —input + datalist, state novEmp,
+    #  handler, condición en filteredNov y helper normEmp— ya no se inyecta: se subió al
+    #  canvas el 2026-07-15 y el export del 2026-07-15 lo trae de fábrica. Sus 6 ediciones
+    #  se borraron de acá al promoverlo, que era justo lo que su comentario indicaba hacer.)
+
+    # --- template: botón Guardar documento → submitDoc (el canvas lo deja en closeModal) ---
     (
-        '            <option value="Anulada">Anulada</option>\n          </select>\n          <div style="flex:1"></div>',
-        '            <option value="Anulada">Anulada</option>\n          </select>\n'
-        '          <div style="display:flex;align-items:center;gap:9px;height:38px;width:220px;border:1px solid var(--border);background:var(--surface);border-radius:10px;padding:0 12px">\n'
-        '            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="2" stroke-linecap="round" style="flex:none"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.2-3.2"/></svg>\n'
-        '            <input value="{{ novEmp }}" onInput="{{ onNovEmp }}" list="nov-emp-list" autocomplete="off" placeholder="Filtrar por empleado…" style="border:none;background:transparent;outline:none;color:var(--text);font-size:13px;width:100%"/>\n'
-        '            <datalist id="nov-emp-list"><sc-for list="{{ novEmpOptions }}" as="o" hint-placeholder-count="3"><option value="{{ o.name }}"></option></sc-for></datalist>\n'
-        '          </div>\n          <div style="flex:1"></div>',
-        "novedades: filtro por empleado (input + datalist)",
-    ),
-    (
-        "    novTipo: 'todos', novEstado: 'todos',",
-        "    novTipo: 'todos', novEstado: 'todos', novEmp: '',",
-        "novedades: state novEmp",
-    ),
-    (
-        "  onNovEstado = (e)=> this.setState({novEstado:e.target.value});",
-        "  onNovEstado = (e)=> this.setState({novEstado:e.target.value});\n"
-        "  onNovEmp = (e)=> this.setState({novEmp:e.target.value});",
-        "novedades: handler onNovEmp",
-    ),
-    (
-        "      if(S.novEstado!=='todos' && n.estado!==S.novEstado) return false;\n      return true;",
-        "      if(S.novEstado!=='todos' && n.estado!==S.novEstado) return false;\n"
-        "      // Se compara sin tildes: nadie tipea \"Benítez\" con acento al filtrar.\n"
-        "      const q=this.normEmp(S.novEmp);\n"
-        "      if(q && !this.normEmp(n.emp).includes(q)) return false;\n      return true;",
-        "novedades: condición de filtro por empleado",
-    ),
-    # normEmp: minúsculas + sin diacríticos (NFD y descarte de marcas de acento).
-    (
-        "  novList(){",
-        "  normEmp(s){ return String(s||'').normalize('NFD').replace(/[\\u0300-\\u036f]/g,'').trim().toLowerCase(); }\n"
-        "  novList(){",
-        "novedades: helper normEmp (sin tildes)",
-    ),
-    (
-        "      novTipo:S.novTipo, novEstado:S.novEstado, onNovTipo:this.onNovTipo, onNovEstado:this.onNovEstado, openAltaNov:this.openAltaNov,",
-        "      novTipo:S.novTipo, novEstado:S.novEstado, onNovTipo:this.onNovTipo, onNovEstado:this.onNovEstado, openAltaNov:this.openAltaNov,\n"
-        "      novEmp:S.novEmp, onNovEmp:this.onNovEmp, novEmpOptions:[...new Set(this.novList().map(n=>n.emp))].sort().map(name=>({name})),",
-        "novedades: renderVals novEmp + opciones",
+        '<button onClick="{{ closeModal }}" style="background:var(--accent);border:none;color:#04201C;font-weight:600;font-size:13px;border-radius:10px;padding:0 20px;height:40px;cursor:pointer;box-shadow:0 4px 14px rgba(45,212,191,.28)">Guardar documento</button>',
+        '<button onClick="{{ submitDoc }}" style="background:var(--accent);border:none;color:#04201C;font-weight:600;font-size:13px;border-radius:10px;padding:0 20px;height:40px;cursor:pointer;box-shadow:0 4px 14px rgba(45,212,191,.28)">Guardar documento</button>',
+        "botón Guardar documento → submitDoc",
     ),
     # --- dashboard: el ranking mide DÍAS (no cantidad de faltas); se aclara en el título ---
     (

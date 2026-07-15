@@ -25,6 +25,8 @@
   var _empById = {};              // id → { name, empresa } (para adaptar novedades)
   var _tipoNovByCodigo = {};      // codigo → tipo de novedad (con flags)
   var _novRawById = {};           // id → novedad cruda del backend (para precargar edición)
+  var _tipoDocByNombre = {};      // nombre → tipo de documento (el select del modal da el nombre)
+  var _docsByEmp = {};            // empleado id → documentos crudos (para precargar la edición)
 
   // ---------- HTTP ----------
   function auth() { return { Authorization: "Bearer " + _token }; }
@@ -811,13 +813,117 @@
     // Documentos de un empleado (lectura) → shape del diseño.
     async loadDocs(id) {
       var docs = await jget("/empleados/" + id + "/documentos/");
+      _docsByEmp[id] = docs || [];
       return (docs || []).map(function (d) {
         return {
+          id: d.id,
           tipo: d.tipo_documento_nombre || ("Documento #" + d.tipo_documento),
           fecha: d.fecha_vencimiento ? "Vence " + fmtISOtoDMY(d.fecha_vencimiento) : "Sin vencimiento",
           estado: docEstado(d.fecha_vencimiento),
+          tieneArchivo: !!d.tiene_archivo,
         };
       });
+    },
+
+    // Catálogo de tipos (reemplaza los 4 hardcodeados del canvas: RRHH puede agregar más).
+    async listTiposDoc() {
+      var rows = await getAllPages("/tipos-documento/?activo=true");
+      rows.forEach(function (t) { _tipoDocByNombre[t.nombre] = t; });
+      return rows.map(function (t) { return { nombre: t.nombre }; });
+    },
+
+    // Prepara el modal. En alta: deja elegido el primer tipo que el empleado NO tenga
+    // (hay uno vigente por tipo; ofrecer uno repetido garantiza un 400 al guardar).
+    // En edición: precarga los valores y bloquea el tipo (cambiarlo sería otro documento).
+    prepareDoc(empId, docId) {
+      var m = document.querySelector('[data-modal="doc"]');
+      if (!m) return;
+      var f = function (k) { return m.querySelector('[data-doc="' + k + '"]'); };
+      var cargados = (_docsByEmp[empId] || []).map(function (d) { return d.tipo_documento_nombre; });
+      var sel = f("tipo");
+      if (sel && !docId) {
+        var libre = Array.prototype.find.call(sel.options, function (o) {
+          return cargados.indexOf(o.value) < 0;
+        });
+        if (libre) sel.value = libre.value;
+      }
+      // El cartel del archivo elegido lo maneja el diseño ({{ docArchivoLabel }}): es
+      // estado de UI, no cableado. Acá solo se llenan los campos que salen del backend.
+      if (!docId) {
+        ["numero", "vencimiento", "observaciones"].forEach(function (k) { if (f(k)) f(k).value = ""; });
+        if (f("archivo")) f("archivo").value = "";
+        return;
+      }
+      var doc = (_docsByEmp[empId] || []).find(function (d) { return d.id === docId; });
+      if (!doc) return;
+      if (sel) sel.value = doc.tipo_documento_nombre;
+      if (f("numero")) f("numero").value = doc.numero || "";
+      if (f("vencimiento")) f("vencimiento").value = fmtISOtoDMY(doc.fecha_vencimiento);
+      if (f("observaciones")) f("observaciones").value = doc.observaciones || "";
+      if (f("archivo")) f("archivo").value = "";
+    },
+
+    // Alta/edición. Va como multipart (no JSON) porque puede llevar el archivo.
+    async submitDoc(empId, docId) {
+      var m = document.querySelector('[data-modal="doc"]');
+      if (!m) throw new Error("modal de documento no encontrado");
+      var f = function (k) { return m.querySelector('[data-doc="' + k + '"]'); };
+      var g = function (k) { return f(k) ? f(k).value.trim() : ""; };
+
+      var fd = new FormData();
+      if (!docId) {
+        var tipo = _tipoDocByNombre[g("tipo")];
+        if (!tipo) throw new Error("Elegí un tipo de documento.");
+        fd.append("tipo_documento", tipo.id);   // en edición el tipo no se manda: no se edita
+      }
+      fd.append("numero", g("numero"));
+      fd.append("observaciones", g("observaciones"));
+      var venc = parseFecha(g("vencimiento"));
+      if (venc) fd.append("fecha_vencimiento", venc);
+      var input = f("archivo");
+      var file = input && input.files && input.files[0];
+      // Sin archivo nuevo, el campo NO se manda: mandarlo vacío borraría el respaldo actual.
+      if (file) fd.append("archivo", file);
+
+      var path = docId
+        ? "/empleados/" + empId + "/documentos/" + docId + "/"
+        : "/empleados/" + empId + "/documentos/";
+      // Sin content-type a mano: el browser arma el boundary del multipart él solo.
+      var r = await authedFetch(CONFIG.API + path, { method: docId ? "PATCH" : "POST", body: fd });
+      var data = await r.json().catch(function () { return {}; });
+      if (!r.ok) {
+        var msg = (data.campos && Object.keys(data.campos).length)
+          ? flattenErrs(data.campos).join(" · ")
+          : (data.detalle || ("Error " + r.status));
+        throw new Error(msg);
+      }
+      showToast(docId ? "Documento actualizado" : "Documento cargado", "ok");
+      return data;
+    },
+
+    // Descarga del respaldo. No alcanza un <a href>: el endpoint exige el header
+    // Authorization y un link plano no lo manda (por eso media/ no es público).
+    async descargarDoc(empId, docId) {
+      var r = await authedFetch(CONFIG.API + "/empleados/" + empId + "/documentos/" + docId + "/archivo/", {});
+      if (!r.ok) throw new Error(r.status === 404 ? "El documento no tiene respaldo cargado." : "Error " + r.status);
+      var blob = await r.blob();
+      // El nombre legible lo arma el backend en Content-Disposition; se respeta.
+      var cd = r.headers.get("content-disposition") || "";
+      var m = /filename="([^"]+)"/.exec(cd);
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement("a");
+      a.href = url;
+      a.download = m ? m[1] : "documento";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);   // sin esto el blob queda retenido en memoria
+    },
+
+    async quitarDoc(empId, docId) {
+      var r = await authedFetch(CONFIG.API + "/empleados/" + empId + "/documentos/" + docId + "/", { method: "DELETE" });
+      if (!r.ok) throw new Error("No se pudo quitar el documento (" + r.status + ")");
+      showToast("Documento quitado", "ok");
     },
   };
 })();

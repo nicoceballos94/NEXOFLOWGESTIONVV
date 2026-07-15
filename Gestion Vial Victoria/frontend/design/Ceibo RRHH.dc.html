@@ -387,18 +387,44 @@
 
           <div style="display:flex;flex-direction:column;gap:16px">
             <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:20px 22px;box-shadow:var(--shadow)">
-              <div style="font-weight:600;font-size:14px;color:var(--text);margin-bottom:14px">Documentación y vencimientos</div>
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+                <div style="font-weight:600;font-size:14px;color:var(--text)">Documentación y vencimientos</div>
+                <button onClick="{{ openDocNuevo }}" title="Agregar documento" style="display:flex;align-items:center;gap:5px;background:var(--accent-dim);color:var(--accent);border:1px solid var(--accent-line);border-radius:8px;font-size:11.5px;font-weight:600;padding:0 9px;height:28px;cursor:pointer" style-hover="filter:brightness(1.15)">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Agregar
+                </button>
+              </div>
               <div style="display:flex;flex-direction:column;gap:10px">
                 <sc-for list="{{ ficha.docs }}" as="d" hint-placeholder-count="4">
-                  <div style="display:flex;align-items:center;gap:11px">
+                  <div style="display:flex;align-items:center;gap:11px" style-hover="background:var(--surface2)">
                     <div style="{{ d.dot }}"></div>
                     <div style="flex:1;min-width:0">
-                      <div style="font-size:12.5px;font-weight:500;color:var(--text)">{{ d.tipo }}</div>
+                      <div style="display:flex;align-items:center;gap:6px">
+                        <span style="font-size:12.5px;font-weight:500;color:var(--text)">{{ d.tipo }}</span>
+                        <sc-if value="{{ d.tieneArchivo }}" hint-placeholder-val="{{ true }}">
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="2" stroke-linecap="round" style="flex:none"><path d="M21.4 11.05 12.25 20.2a6 6 0 0 1-8.49-8.49l9.2-9.19a4 4 0 0 1 5.65 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+                        </sc-if>
+                      </div>
                       <div style="font-size:11px;color:var(--text3)">{{ d.fecha }}</div>
                     </div>
                     <span style="{{ d.badge }}">{{ d.label }}</span>
+                    <div style="display:flex;align-items:center;gap:3px;flex:none">
+                      <sc-if value="{{ d.tieneArchivo }}" hint-placeholder-val="{{ true }}">
+                        <button onClick="{{ d.doDescargar }}" title="Descargar respaldo" style="{{ d.iconBtn }}">
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 11l5 5 5-5M4 20h16"/></svg>
+                        </button>
+                      </sc-if>
+                      <button onClick="{{ d.doEditar }}" title="Editar documento" style="{{ d.iconBtn }}">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+                      </button>
+                      <button onClick="{{ d.doQuitar }}" title="Quitar documento" style="{{ d.iconBtnBad }}">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>
+                      </button>
+                    </div>
                   </div>
                 </sc-for>
+                <sc-if value="{{ ficha.sinDocs }}" hint-placeholder-val="{{ false }}">
+                  <div style="font-size:12px;color:var(--text3);padding:6px 0">Sin documentos cargados.</div>
+                </sc-if>
               </div>
             </div>
             <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:20px 22px;box-shadow:var(--shadow)">
@@ -445,6 +471,11 @@
             <option value="Cerrada">Cerrada</option>
             <option value="Anulada">Anulada</option>
           </select>
+          <div style="display:flex;align-items:center;gap:9px;height:38px;width:220px;border:1px solid var(--border);background:var(--surface);border-radius:10px;padding:0 12px">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="2" stroke-linecap="round" style="flex:none"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.2-3.2"/></svg>
+            <input value="{{ novEmp }}" onInput="{{ onNovEmp }}" list="nov-emp-list" autocomplete="off" placeholder="Filtrar por empleado…" style="border:none;background:transparent;outline:none;color:var(--text);font-size:13px;width:100%"/>
+            <datalist id="nov-emp-list"><sc-for list="{{ novEmpOptions }}" as="o" hint-placeholder-count="3"><option value="{{ o.name }}"></option></sc-for></datalist>
+          </div>
           <div style="flex:1"></div>
           <button onClick="{{ openAltaNov }}" style="display:flex;align-items:center;gap:7px;background:var(--accent);color:#04201C;font-weight:600;font-size:13px;border:none;border-radius:10px;padding:0 15px;height:38px;cursor:pointer;box-shadow:0 4px 14px rgba(45,212,191,.28)" style-hover="filter:brightness(1.06)">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
@@ -794,6 +825,59 @@
     </div>
   </sc-if>
 
+  <sc-if value="{{ showDoc }}" hint-placeholder-val="{{ false }}">
+    <div onClick="{{ closeModal }}" style="position:fixed;inset:0;background:rgba(4,8,16,.6);backdrop-filter:blur(3px);display:flex;align-items:center;justify-content:center;padding:20px;z-index:50;animation:ov .2s ease both">
+      <div onClick="{{ stop }}" style="background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:520px;max-width:100%;box-shadow:0 30px 80px rgba(0,0,0,.5);animation:pop .28s cubic-bezier(.2,.9,.3,1) both;padding:26px">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:18px">
+          <div style="width:40px;height:40px;border-radius:11px;background:var(--accent-dim);color:var(--accent);display:flex;align-items:center;justify-content:center;flex:none">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/></svg>
+          </div>
+          <div>
+            <div style="font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:17px;color:var(--text)">{{ docTitle }}</div>
+            <div style="font-size:12px;color:var(--text2);margin-top:2px">{{ docSubtitle }}</div>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+          <div>
+            <div style="{{ lblStyle }}">Tipo de documento</div>
+            <select data-doc="tipo" style="{{ inputStyle }};cursor:pointer" disabled="{{ docTipoLocked }}">
+              <sc-for list="{{ docTipos }}" as="t" hint-placeholder-count="4"><option value="{{ t.nombre }}">{{ t.nombre }}</option></sc-for>
+            </select>
+          </div>
+          <div>
+            <div style="{{ lblStyle }}">Número <span style="color:var(--text3);font-weight:400">(opcional)</span></div>
+            <input data-doc="numero" placeholder="Ej. AM-2026-114" style="{{ inputStyle }}"/>
+          </div>
+          <div>
+            <div style="{{ lblStyle }}">Fecha de vencimiento</div>
+            <div style="position:relative">
+              <input data-doc="vencimiento" placeholder="dd/mm/aaaa" maxlength="10" onInput="{{ maskDate }}" style="{{ inputStyle }};padding-right:36px"/>
+              <input type="date" onChange="{{ pickDate }}" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);width:22px;height:22px;opacity:0;cursor:pointer;border:none;background:transparent"/>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="1.8" style="position:absolute;right:11px;top:50%;transform:translateY(-50%);pointer-events:none"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 11h18"/></svg>
+            </div>
+          </div>
+          <div>
+            <div style="{{ lblStyle }}">Archivo de respaldo <span style="color:var(--text3);font-weight:400">(opcional)</span></div>
+            <label style="display:flex;align-items:center;gap:8px;height:40px;border:1px dashed var(--border2);background:var(--surface);border-radius:10px;padding:0 13px;cursor:pointer;overflow:hidden" style-hover="border-color:var(--accent-line)">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="1.9" stroke-linecap="round" style="flex:none"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>
+              <span data-doc="archivo-nombre" style="font-size:12.5px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ docArchivoLabel }}</span>
+              <input data-doc="archivo" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp,.heic" onChange="{{ onDocArchivo }}" style="display:none"/>
+            </label>
+          </div>
+        </div>
+        <div style="margin-top:14px">
+          <div style="{{ lblStyle }}">Observaciones <span style="color:var(--text3);font-weight:400">(opcional)</span></div>
+          <input data-doc="observaciones" placeholder="Notas sobre el documento" style="{{ inputStyle }}"/>
+        </div>
+        <div style="font-size:11.5px;color:var(--text3);margin-top:14px;line-height:1.5">PDF o imagen, hasta 10 MB. El respaldo es opcional: el aviso de vencimiento funciona con la fecha sola. Al renovar, el archivo anterior se reemplaza.</div>
+        <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:18px">
+          <button onClick="{{ closeModal }}" style="background:transparent;border:1px solid var(--border2);color:var(--text2);font-weight:600;font-size:13px;border-radius:10px;padding:0 18px;height:40px;cursor:pointer">Cancelar</button>
+          <button onClick="{{ closeModal }}" style="background:var(--accent);border:none;color:#04201C;font-weight:600;font-size:13px;border-radius:10px;padding:0 20px;height:40px;cursor:pointer;box-shadow:0 4px 14px rgba(45,212,191,.28)">Guardar documento</button>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
   <sc-if value="{{ showBaja }}" hint-placeholder-val="{{ false }}">
     <div onClick="{{ closeModal }}" style="position:fixed;inset:0;background:rgba(4,8,16,.6);backdrop-filter:blur(3px);display:flex;align-items:center;justify-content:center;padding:20px;z-index:50;animation:ov .2s ease both">
       <div onClick="{{ stop }}" style="background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:440px;max-width:100%;box-shadow:0 30px 80px rgba(0,0,0,.5);animation:pop .28s cubic-bezier(.2,.9,.3,1) both;padding:26px">
@@ -953,9 +1037,10 @@ class Component extends DCLogic {
   state = {
     theme: 'dark', view: 'dashboard', selEmp: 1,
     empEstado: 'todos', empEmpresa: 'todas', empSector: 'todos', empSearch: '',
-    novTipo: 'todos', novEstado: 'todos',
+    novTipo: 'todos', novEstado: 'todos', novEmp: '',
     rot: 'm',
     modal: null, bajaId: null, reingresoId: null, bajaSet: [],
+    docEditId: null, docArchivoNombre: '',
     cfg: { carnet: 30, apto: 15, cnrt: 30, contrato: 45 },
     roles: { rrhh: true, admin: true, jefe: false },
     canales: { email: true, sistema: true, whatsapp: false },
@@ -1034,10 +1119,15 @@ class Component extends DCLogic {
     return `display:inline-flex;align-items:center;gap:5px;background:${m.bg};color:${m.c};font-size:11px;font-weight:600;padding:3px 9px;border-radius:20px;white-space:nowrap`;
   }
   dot(color){ return `width:9px;height:9px;border-radius:50%;background:${color};flex:none;box-shadow:0 0 0 4px ${color}22`; }
+  iconBtn(color){ return `display:flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:7px;border:1px solid var(--border2);background:var(--surface);color:${color};cursor:pointer;flex:none`; }
+  // Mocks del canvas: el cableado real (descarga con token, DELETE a la API) lo inyecta build.py.
+  descargarDoc = (id)=> this.setState({});
+  quitarDoc = (id)=> this.setState({});
   semColor(s){ return s==='ok'?'var(--ok)':s==='warn'?'var(--warn)':'var(--bad)'; }
   semKind(s){ return s; }
   semLabel(s){ return s==='ok'?'Al día':s==='warn'?'Próximo a vencer':'Vencido'; }
 
+  normEmp(s){ return String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim().toLowerCase(); }
   novList(){
     const ov=this.state.novOverrides;
     return this.novBase().map(n=> ov[n.id] ? {...n, ...ov[n.id]} : n);
@@ -1089,13 +1179,26 @@ class Component extends DCLogic {
   onSector = (e)=> this.setState({empSector:e.target.value});
   onNovTipo = (e)=> this.setState({novTipo:e.target.value});
   onNovEstado = (e)=> this.setState({novEstado:e.target.value});
+  onNovEmp = (e)=> this.setState({novEmp:e.target.value});
 
   selectEmp = (id)=> this.setState({selEmp:id, view:'ficha'});
   openAlta = ()=> this.setState({modal:'alta'});
   openAltaNov = ()=> this.setState({modal:'altanov', editNovId:null, novFormTipo:'Falta'});
   openBaja = (id)=> this.setState({modal:'baja', bajaId:id});
   openReingreso = (id)=> this.setState({modal:'reingreso', reingresoId:id});
-  closeModal = ()=> this.setState({modal:null, editNovId:null, editProrrogaIdx:null});
+  docEnEdicionTieneArchivo(){
+    const S=this.state; if(!S.docEditId) return false;
+    const emp=this.base().find(e=>e.id===S.selEmp);
+    const d=emp && (emp.docs||[]).find(x=>x.id===S.docEditId);
+    return !!(d && d.tieneArchivo);
+  }
+  openDocNuevo = ()=> this.setState({modal:'doc', docEditId:null, docArchivoNombre:''});
+  openDocEdit = (id)=> this.setState({modal:'doc', docEditId:id, docArchivoNombre:''});
+  // El input file no se puede prellenar por seguridad del navegador: se muestra el
+  // nombre elegido para que el usuario vea que el archivo quedó tomado.
+  onDocArchivo = (e)=>{ const f=e.target.files&&e.target.files[0];
+    this.setState({docArchivoNombre: f?f.name:''}); };
+  closeModal = ()=> this.setState({modal:null, editNovId:null, editProrrogaIdx:null, docEditId:null, docArchivoNombre:''});
   stop = (e)=> e.stopPropagation();
   togglePraxis = ()=> this.setState(s=>({praxis:!s.praxis}));
   maskDate = (e)=>{
@@ -1243,7 +1346,10 @@ class Component extends DCLogic {
         motivo:h.motivo,
         motivoShow: h.motivo ? 'font-size:12px;color:var(--text2);margin-top:4px;font-style:italic' : 'display:none'
       })),
-      docs: raw.docs.map(d=>({tipo:d.tipo, fecha:d.fecha, dot:this.dot(this.semColor(d.estado)), badge:this.badge(d.estado), label:this.semLabel(d.estado)}))
+      docs: raw.docs.map(d=>({tipo:d.tipo, fecha:d.fecha, dot:this.dot(this.semColor(d.estado)), badge:this.badge(d.estado), label:this.semLabel(d.estado),
+        tieneArchivo:!!d.tieneArchivo, iconBtn:this.iconBtn('var(--text2)'), iconBtnBad:this.iconBtn('var(--bad)'),
+        doDescargar:()=>this.descargarDoc(d.id), doEditar:()=>this.openDocEdit(d.id), doQuitar:()=>this.quitarDoc(d.id)})),
+      sinDocs: raw.docs.length===0
     };
     const fnov = this.novList().filter(n=>n.emp===raw.name).map(n=>{
       const col=this.novIconColor(n.tipo);
@@ -1263,6 +1369,9 @@ class Component extends DCLogic {
     const filteredNov = this.novList().filter(n=>{
       if(S.novTipo!=='todos' && n.tipo.indexOf(S.novTipo)<0) return false;
       if(S.novEstado!=='todos' && n.estado!==S.novEstado) return false;
+      // Se compara sin tildes: nadie tipea "Benítez" con acento al filtrar.
+      const q=this.normEmp(S.novEmp);
+      if(q && !this.normEmp(n.emp).includes(q)) return false;
       return true;
     }).map(n=>{
       const col=this.novIconColor(n.tipo);
@@ -1435,11 +1544,23 @@ class Component extends DCLogic {
       empCountLbl:`Mostrando ${filteredEmployees.length} de ${totalActivos} activos · 2 empresas`,
       ficha,
       novTipo:S.novTipo, novEstado:S.novEstado, onNovTipo:this.onNovTipo, onNovEstado:this.onNovEstado, openAltaNov:this.openAltaNov,
+      novEmp:S.novEmp, onNovEmp:this.onNovEmp, novEmpOptions:[...new Set(this.novList().map(n=>n.emp))].sort().map(name=>({name})),
       filteredNov, noNovList:filteredNov.length===0,
       vencGroups, vencResumen,
       ausentismo, egresos,
       cfgRows, roles, canales,
       showAlta:S.modal==='alta', showAltaNov:S.modal==='altanov', showBaja:S.modal==='baja', showReingreso:S.modal==='reingreso',
+      showDoc:S.modal==='doc', openDocNuevo:this.openDocNuevo, onDocArchivo:this.onDocArchivo,
+      docTitle:S.docEditId?'Editar documento':'Agregar documento',
+      docSubtitle:S.docEditId?'Renovar reemplaza el archivo anterior':'Se guarda en la ficha de '+((this.base().find(e=>e.id===S.selEmp)||{}).name||'—'),
+      // El tipo no se edita: cambiarlo sería otro documento, no este (lo mismo hace el backend).
+      docTipoLocked:!!S.docEditId,
+      // El input file no se puede prellenar (seguridad del navegador): en edición se
+      // avisa que ya hay respaldo y que subir otro lo reemplaza; dejarlo vacío conserva
+      // el actual.
+      docArchivoLabel: S.docArchivoNombre
+        || (this.docEnEdicionTieneArchivo() ? 'Ya tiene respaldo · elegir otro lo reemplaza' : 'Elegir archivo…'),
+      docTipos:[{nombre:'Carnet de conducir'},{nombre:'Apto médico'},{nombre:'CNRT'},{nombre:'Contrato'}],
       showDetNov:S.modal==='detnov', showProrroga:S.modal==='prorroga', detNov, prorrogaInicio,
       editSeed, novFormTitle,
       aprobarNov:this.aprobarNov, rechazarNov:this.rechazarNov, anularNov:this.anularNov,
