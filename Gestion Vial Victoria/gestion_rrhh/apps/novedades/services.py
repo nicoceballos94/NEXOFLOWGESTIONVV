@@ -14,20 +14,25 @@ from django.db import transaction
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
+from apps.empleados.models import Empleado
+
 from . import selectors
-from .models import EstadoNovedad, Novedad
+from .models import OCUPAN_PERIODO, EstadoNovedad, Novedad
 
 # Estados desde los que una novedad todavía puede editarse o resolverse.
 _ABIERTOS = (EstadoNovedad.REGISTRADA, EstadoNovedad.EN_PROCESO)
-# Estados en los que una novedad ocupa el calendario del empleado. Solo RECHAZADA y ANULADA
-# lo liberan: la rechazada nunca pasó y la anulada se borra de los hechos. Una CERRADA, en
-# cambio, ya transcurrió — sigue ocupando su período y nada puede pisarla.
-_OCUPAN_PERIODO = (
-    EstadoNovedad.REGISTRADA,
-    EstadoNovedad.EN_PROCESO,
-    EstadoNovedad.APROBADA,
-    EstadoNovedad.CERRADA,
-)
+
+
+def _tomar_calendario(empleado) -> None:
+    """Serializa las escrituras de novedades del mismo empleado dentro de la transacción.
+
+    `_validar_sin_solapamiento` es un SELECT seguido de un INSERT: sin esto, dos requests
+    concurrentes pasan ambas la validación y crean novedades solapadas. El lock sobre la
+    fila del empleado los pone en fila y hace que la segunda vea a la primera ya escrita,
+    de modo que la carrera muera con el mensaje amigable del service y no con el
+    IntegrityError del ExclusionConstraint (que es la red de seguridad, no la puerta).
+    """
+    Empleado.objects.select_for_update().filter(pk=empleado.pk).first()
 
 
 def _se_solapan(a_desde, a_hasta, b_desde, b_hasta) -> bool:
@@ -56,14 +61,17 @@ def _validar_sin_solapamiento(
 
     Falta, licencia, accidente, vacaciones y permiso se excluyen entre sí (todos los tipos
     con `ocupa_periodo`); las horas extra conviven con lo que haya. Solo cuentan las
-    novedades en `_OCUPAN_PERIODO`: rechazar o anular la anterior libera las fechas.
+    novedades en `OCUPAN_PERIODO`: rechazar o anular la anterior libera las fechas.
+
+    Esta es la puerta (mensaje amigable); el ExclusionConstraint del modelo es la red de
+    seguridad. Las dos miran las mismas columnas y los mismos estados a propósito.
     """
     if not tipo.ocupa_periodo:
         return
     candidatas = Novedad.objects.filter(
         empleado=empleado,
-        estado__in=_OCUPAN_PERIODO,
-        tipo_novedad__ocupa_periodo=True,
+        estado__in=OCUPAN_PERIODO,
+        ocupa_periodo=True,  # la columna propia, la misma que mira el ExclusionConstraint
     ).select_related("tipo_novedad")
     if excluir_ids:
         candidatas = candidatas.exclude(pk__in=excluir_ids)
@@ -91,6 +99,7 @@ def crear_novedad(*, actor, datos: dict) -> Novedad:
     empleado = datos["empleado"]
     fecha_hasta = datos.get("fecha_hasta")
 
+    _tomar_calendario(empleado)
     if not empleado.activo:
         # No se cargan novedades nuevas sobre un empleado dado de baja (sin relación ACTIVA).
         # Las novedades históricas (cargadas cuando estaba activo) se conservan.
@@ -114,17 +123,44 @@ def crear_novedad(*, actor, datos: dict) -> Novedad:
     return Novedad.objects.create(creado_por=actor, **datos)
 
 
+def _rechazar_campos_de_la_cadena(novedad: Novedad, datos: dict) -> None:
+    """Campos que una prórroga hereda por construcción y el cliente no puede tocar."""
+    errores = {}
+    entrante = datos.get("fecha_desde")
+    if entrante is not None and entrante != novedad.fecha_desde:
+        errores["fecha_desde"] = (
+            "El inicio de una prórroga lo fija la cadena (arranca al día siguiente del fin "
+            "de la vigencia anterior) y no se edita. Para correr el período, anulá la "
+            "prórroga y volvé a prorrogar con las fechas correctas."
+        )
+    tipo_entrante = datos.get("tipo_novedad")
+    if tipo_entrante is not None and tipo_entrante.pk != novedad.tipo_novedad_id:
+        errores["tipo_novedad"] = (
+            "Una prórroga hereda el tipo de la novedad madre y no se cambia (RP7)."
+        )
+    if errores:
+        raise ValidationError(errores)
+
+
 @transaction.atomic
 def actualizar_novedad(*, actor, novedad: Novedad, datos: dict) -> Novedad:
     """Edición solo mientras está REGISTRADA (§8): una vez en proceso o resuelta, es inmutable.
 
     Las fechas se revalidan con las mismas reglas del alta: editar no puede meter la novedad
     encima de otra que ya ocupa el período. La propia cadena de prórrogas no cuenta.
+
+    En una prórroga, `fecha_desde` y `tipo_novedad` no son datos de carga: los construye
+    `prorrogar_novedad` (RP3 contigua a la cadena, RP7 heredando el tipo de la madre) y
+    editarlos rompería la cadena — con el agravante de que la validación de solapamiento
+    excluye a propósito los eslabones de la propia cadena y no lo detectaría.
     """
     if novedad.estado != EstadoNovedad.REGISTRADA:
         raise ValidationError(
             {"estado": "Solo se puede editar una novedad en estado Registrada."}
         )
+    if novedad.es_prorroga:
+        _rechazar_campos_de_la_cadena(novedad, datos)
+    _tomar_calendario(novedad.empleado)
     for campo, valor in datos.items():
         setattr(novedad, campo, valor)  # mezcla lo editado con lo que ya tenía
     if novedad.fecha_hasta and novedad.fecha_hasta < novedad.fecha_desde:
@@ -209,6 +245,7 @@ def prorrogar_novedad(
     madre = selectors.novedad_madre(novedad)  # redirección a la madre
     tipo = madre.tipo_novedad
 
+    _tomar_calendario(madre.empleado)
     if not tipo.admite_prorroga:  # RP2
         raise ValidationError(
             {"tipo_novedad": f"El tipo '{tipo.nombre}' no admite prórrogas."}
@@ -216,6 +253,17 @@ def prorrogar_novedad(
     if madre.estado != EstadoNovedad.APROBADA:  # RP2 (no se prorroga algo no aprobado)
         raise ValidationError(
             {"estado": "Solo se prorroga una novedad aprobada."}
+        )
+    if madre.prorrogas.filter(estado__in=_ABIERTOS).exists():
+        # `vigencia_efectiva` solo avanza con las prórrogas APROBADAS: prorrogar de nuevo
+        # con una pendiente calcularía el mismo `nueva_desde` que la pendiente y crearía
+        # dos eslabones pisados (la validación de solapamiento no lo ve, porque excluye la
+        # cadena entera). La cadena avanza de a un eslabón resuelto por vez.
+        raise ValidationError(
+            {
+                "estado": "La cadena ya tiene una prórroga pendiente de aprobación. "
+                "Aprobala o rechazala antes de volver a prorrogar."
+            }
         )
 
     vig = selectors.vigencia_efectiva(madre)

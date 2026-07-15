@@ -7,7 +7,10 @@ es un dato calculado (selector `vigencia_efectiva`), nunca un campo editable: as
 fecha "total" y la cadena no pueden contradecirse.
 """
 from django.conf import settings
+from django.contrib.postgres.constraints import ExclusionConstraint
+from django.contrib.postgres.fields import DateRangeField, RangeBoundary, RangeOperators
 from django.db import models
+from django.db.models import Func, Q
 
 from common.models import ModeloBase
 
@@ -21,6 +24,29 @@ class EstadoNovedad(models.TextChoices):
     RECHAZADA = "RECHAZADA", "Rechazada"
     CERRADA = "CERRADA", "Cerrada"
     ANULADA = "ANULADA", "Anulada"
+
+
+# Estados en los que una novedad ocupa el calendario del empleado. Solo RECHAZADA y ANULADA
+# lo liberan: la rechazada nunca pasó y la anulada se borra de los hechos. Una CERRADA, en
+# cambio, ya transcurrió — sigue ocupando su período y nada puede pisarla.
+# Vive acá (y no en services) porque el ExclusionConstraint de abajo lo necesita.
+OCUPAN_PERIODO = (
+    EstadoNovedad.REGISTRADA,
+    EstadoNovedad.EN_PROCESO,
+    EstadoNovedad.APROBADA,
+    EstadoNovedad.CERRADA,
+)
+
+
+class _RangoDeFechas(Func):
+    """daterange(fecha_desde, fecha_hasta, '[]') para el ExclusionConstraint.
+
+    Con `fecha_hasta` NULL, Postgres arma un rango sin límite superior — exactamente la
+    semántica de la novedad abierta (licencia sin alta médica: corre sin fin).
+    """
+
+    function = "DATERANGE"
+    output_field = DateRangeField()
 
 
 class ClasificacionNovedad(models.TextChoices):
@@ -135,14 +161,50 @@ class Novedad(ModeloBase):
         related_name="novedades_aprobadas",
     )
     aprobada_en = models.DateTimeField(null=True, blank=True)
+    ocupa_periodo = models.BooleanField(
+        default=False,
+        editable=False,
+        help_text="Copia de tipo_novedad.ocupa_periodo, mantenida en save(). Existe solo "
+        "porque un ExclusionConstraint no puede hacer JOIN a TipoNovedad: la regla de "
+        "no-solapamiento necesita el flag como columna propia. No editar a mano.",
+    )
 
     class Meta:
         verbose_name = "novedad"
         verbose_name_plural = "novedades"
         ordering = ["-fecha_desde", "-id"]
+        constraints = [
+            # Respaldo en la base de la regla que services._validar_sin_solapamiento valida
+            # con un mensaje amigable: dos novedades que ocupan período no conviven. La
+            # validación en Python puede perder una carrera entre requests concurrentes;
+            # esto no. Requiere btree_gist (empleado_id WITH = dentro de un índice GiST).
+            ExclusionConstraint(
+                name="excl_novedades_solapadas_por_empleado",
+                expressions=[
+                    ("empleado", RangeOperators.EQUAL),
+                    (
+                        _RangoDeFechas(
+                            "fecha_desde",
+                            "fecha_hasta",
+                            RangeBoundary(inclusive_lower=True, inclusive_upper=True),
+                        ),
+                        RangeOperators.OVERLAPS,
+                    ),
+                ],
+                condition=Q(ocupa_periodo=True, estado__in=OCUPAN_PERIODO),
+            )
+        ]
 
     def __str__(self):
         return f"{self.tipo_novedad} de {self.empleado} ({self.fecha_desde})"
+
+    def save(self, *args, **kwargs):
+        # El flag se recalcula solo cuando el tipo puede haber cambiado: las transiciones de
+        # estado guardan con update_fields acotado y no deben pagar un query extra por el tipo.
+        campos = kwargs.get("update_fields")
+        if campos is None or "tipo_novedad" in campos:
+            self.ocupa_periodo = self.tipo_novedad.ocupa_periodo
+        super().save(*args, **kwargs)
 
     @property
     def es_prorroga(self) -> bool:

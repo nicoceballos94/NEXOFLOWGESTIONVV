@@ -32,12 +32,19 @@ def _aplicar_filtros(qs: QuerySet[Empleado], filtros) -> QuerySet[Empleado]:
     estado = filtros.get("estado")
     busqueda = filtros.get("q")
 
+    # empresa/sector/estado describen la MISMA relación laboral, así que van en un solo
+    # .filter(): cada llamada separada genera su propio JOIN y las condiciones podrían
+    # satisfacerse con relaciones distintas (activo en la empresa A + finalizado en la B
+    # matchearía "empresa=B & estado=ACTIVA").
+    de_la_relacion = {}
     if empresa:
-        qs = qs.filter(relaciones__empresa_id=empresa)
+        de_la_relacion["relaciones__empresa_id"] = empresa
     if sector:
-        qs = qs.filter(relaciones__sector_id=sector)
+        de_la_relacion["relaciones__sector_id"] = sector
     if estado:
-        qs = qs.filter(relaciones__estado=estado)
+        de_la_relacion["relaciones__estado"] = estado
+    if de_la_relacion:
+        qs = qs.filter(**de_la_relacion)
     if busqueda:
         from django.db.models import Q
 

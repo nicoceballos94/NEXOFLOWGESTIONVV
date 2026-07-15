@@ -14,6 +14,7 @@ from common.permissions import LecturaAutenticadaEscrituraPorRol, RolRequerido
 from .. import selectors, services
 from ..models import Empleado, TipoDocumento
 from .serializers import (
+    ActualizarDocumentoSerializer,
     ActualizarEmpleadoSerializer,
     CrearDocumentoSerializer,
     CrearEmpleadoSerializer,
@@ -82,6 +83,25 @@ class EmpleadoViewSet(
             actor=request.user, empleado=empleado, **entrada.validated_data
         )
         return Response(DocumentoEmpleadoSerializer(documento).data, status=201)
+
+    @action(
+        detail=True,
+        methods=["patch", "delete"],
+        url_path=r"documentos/(?P<documento_id>[^/.]+)",
+    )
+    def documento(self, request, pk=None, documento_id=None):
+        """Corregir/renovar (PATCH) o quitar (DELETE) un documento ya cargado."""
+        empleado = get_object_or_404(Empleado, pk=pk)
+        documento = get_object_or_404(empleado.documentos, pk=documento_id)
+        if request.method == "DELETE":
+            services.eliminar_documento(actor=request.user, documento=documento)
+            return Response(status=204)
+        entrada = ActualizarDocumentoSerializer(documento, data=request.data, partial=True)
+        entrada.is_valid(raise_exception=True)
+        documento = services.actualizar_documento(
+            actor=request.user, documento=documento, **entrada.validated_data
+        )
+        return Response(DocumentoEmpleadoSerializer(documento).data)
 
     @action(
         detail=True,

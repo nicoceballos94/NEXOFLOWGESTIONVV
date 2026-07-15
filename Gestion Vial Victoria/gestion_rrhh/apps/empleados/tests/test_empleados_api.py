@@ -13,8 +13,8 @@ def empresa():
 
 
 def _payload_alta(empresa, **over):
+    # Sin `legajo`: lo asigna el backend (ver test_el_legajo_lo_asigna_el_backend).
     datos = {
-        "legajo": "0001",
         "dni": "30111222",
         "nombre": "Juan",
         "apellido": "Pérez",
@@ -35,7 +35,6 @@ def test_rrhh_da_alta_empleado_con_relacion_activa(cliente_rrhh, empresa):
 def test_alta_es_atomica_si_falla_la_relacion(cliente_rrhh):
     # empresa inexistente -> falla la relación -> no debe quedar el empleado (transacción).
     payload = {
-        "legajo": "0009",
         "dni": "30999888",
         "nombre": "Ana",
         "apellido": "Gómez",
@@ -43,7 +42,7 @@ def test_alta_es_atomica_si_falla_la_relacion(cliente_rrhh):
     }
     resp = cliente_rrhh.post("/api/v1/empleados/", payload, format="json")
     assert resp.status_code == 400
-    assert not Empleado.objects.filter(legajo="0009").exists()
+    assert not Empleado.objects.filter(dni="30999888").exists()
 
 
 def test_no_dos_relaciones_activas_misma_empresa(cliente_rrhh, empresa):
@@ -111,7 +110,7 @@ def test_empleado_solo_ve_su_propia_ficha(cliente_rrhh, empresa, crear_usuario, 
     cliente_rrhh.post("/api/v1/empleados/", _payload_alta(empresa), format="json")
     cliente_rrhh.post(
         "/api/v1/empleados/",
-        _payload_alta(empresa, legajo="0002", dni="30222333"),
+        _payload_alta(empresa, dni="30222333"),  # el backend le da el "0002"
         format="json",
     )
     # un usuario Empleado vinculado a la primera ficha solo debe verse a sí mismo
@@ -128,11 +127,124 @@ def test_empleado_solo_ve_su_propia_ficha(cliente_rrhh, empresa, crear_usuario, 
     assert resp.data["results"][0]["legajo"] == "0001"
 
 
-def test_legajo_duplicado_error_uniforme(cliente_rrhh, empresa):
+# ---------- Filtros ----------
+def test_filtro_empresa_y_estado_miran_la_misma_relacion(cliente_rrhh, empresa):
+    """B1: con los filtros en .filter() separados, cada uno generaba su propio JOIN y podían
+    satisfacerse con relaciones DISTINTAS: quien se fue de la empresa B y hoy está activo en
+    la A aparecía como "activo de la empresa B"."""
+    otra = Empresa.objects.create(nombre="VICTORIA SUR")
+    empleado = Empleado.objects.create(
+        legajo="0100", dni="30777888", nombre="Mudó", apellido="DeEmpresa"
+    )
+    RelacionLaboral.objects.create(  # finalizada en `otra`
+        empleado=empleado, empresa=otra, fecha_ingreso="2020-01-01",
+        fecha_egreso="2023-12-31", estado=EstadoRelacion.FINALIZADA,
+    )
+    RelacionLaboral.objects.create(  # activa en `empresa`
+        empleado=empleado, empresa=empresa, fecha_ingreso="2024-01-01",
+        estado=EstadoRelacion.ACTIVA,
+    )
+
+    # No es un activo de `otra`: ahí está finalizado.
+    resp = cliente_rrhh.get(f"/api/v1/empleados/?empresa={otra.id}&estado=ACTIVA")
+    assert resp.data["count"] == 0, resp.data
+
+    # Sí es un activo de `empresa`.
+    resp = cliente_rrhh.get(f"/api/v1/empleados/?empresa={empresa.id}&estado=ACTIVA")
+    assert [e["id"] for e in resp.data["results"]] == [empleado.id]
+
+    # Y sigue siendo un finalizado de `otra`.
+    resp = cliente_rrhh.get(f"/api/v1/empleados/?empresa={otra.id}&estado=FINALIZADA")
+    assert [e["id"] for e in resp.data["results"]] == [empleado.id]
+
+
+# ---------- Documentos ----------
+def test_documento_se_corrige_y_se_elimina(cliente_rrhh, empresa):
+    """B4: con solo GET/POST y el UNIQUE (empleado, tipo), un documento mal cargado era un
+    callejón sin salida: no se podía ni corregir el vencimiento ni recargarlo."""
+    from apps.empleados.models import TipoDocumento
+
     cliente_rrhh.post("/api/v1/empleados/", _payload_alta(empresa), format="json")
+    empleado = Empleado.objects.get(dni="30111222")
+    tipo = TipoDocumento.objects.create(nombre="Apto médico")
+
+    creado = cliente_rrhh.post(
+        f"/api/v1/empleados/{empleado.id}/documentos/",
+        {"tipo_documento": tipo.id, "numero": "AM-1", "fecha_vencimiento": "2026-01-01"},
+        format="json",
+    )
+    assert creado.status_code == 201, creado.data
+    doc_id = creado.data["id"]
+
+    # Renovar = mover el vencimiento.
+    resp = cliente_rrhh.patch(
+        f"/api/v1/empleados/{empleado.id}/documentos/{doc_id}/",
+        {"fecha_vencimiento": "2027-01-01"},
+        format="json",
+    )
+    assert resp.status_code == 200, resp.data
+    assert resp.data["fecha_vencimiento"] == "2027-01-01"
+
+    # Eliminar libera el UNIQUE para volver a cargarlo.
+    resp = cliente_rrhh.delete(f"/api/v1/empleados/{empleado.id}/documentos/{doc_id}/")
+    assert resp.status_code == 204
     resp = cliente_rrhh.post(
+        f"/api/v1/empleados/{empleado.id}/documentos/",
+        {"tipo_documento": tipo.id, "numero": "AM-2"},
+        format="json",
+    )
+    assert resp.status_code == 201, resp.data
+
+
+def test_empleado_no_puede_editar_documentos(cliente_rrhh, empresa, crear_usuario):
+    from rest_framework.test import APIClient
+
+    from apps.empleados.models import TipoDocumento
+    from common import roles
+
+    cliente_rrhh.post("/api/v1/empleados/", _payload_alta(empresa), format="json")
+    empleado = Empleado.objects.get(dni="30111222")
+    tipo = TipoDocumento.objects.create(nombre="Apto médico")
+    doc_id = cliente_rrhh.post(
+        f"/api/v1/empleados/{empleado.id}/documentos/",
+        {"tipo_documento": tipo.id, "numero": "AM-1"},
+        format="json",
+    ).data["id"]
+    # Cliente propio: los `cliente_*` del conftest comparten una única instancia de
+    # APIClient, así que pedir dos roles en el mismo test haría que el segundo pise al primero.
+    cliente_empleado = APIClient()
+    cliente_empleado.force_authenticate(crear_usuario(username="pepe", rol=roles.EMPLEADO))
+    resp = cliente_empleado.patch(
+        f"/api/v1/empleados/{empleado.id}/documentos/{doc_id}/",
+        {"numero": "HACKEADO"},
+        format="json",
+    )
+    assert resp.status_code == 403
+
+
+# ---------- Legajo (lo asigna el backend, no el cliente) ----------
+def test_el_legajo_lo_asigna_el_backend_ignorando_al_cliente(cliente_rrhh, empresa):
+    """Antes lo calculaba el navegador con max+1 sobre lo que tenía cargado: dos altas
+    simultáneas generaban el mismo número. Ahora el cliente no opina."""
+    resp = cliente_rrhh.post(
+        "/api/v1/empleados/", _payload_alta(empresa, legajo="9999"), format="json"
+    )
+    assert resp.status_code == 201, resp.data
+    assert resp.data["legajo"] == "0001"  # el "9999" del cliente se ignora
+
+
+def test_los_legajos_siguen_la_serie(cliente_rrhh, empresa):
+    primero = cliente_rrhh.post("/api/v1/empleados/", _payload_alta(empresa), format="json")
+    segundo = cliente_rrhh.post(
         "/api/v1/empleados/", _payload_alta(empresa, dni="30333444"), format="json"
     )
-    assert resp.status_code == 400
-    assert resp.data["codigo"] == "validacion"
-    assert "legajo" in resp.data["campos"]
+    assert primero.data["legajo"] == "0001"
+    assert segundo.data["legajo"] == "0002"
+
+
+def test_la_serie_ignora_los_legajos_no_numericos(cliente_rrhh, empresa):
+    """Un legajo importado con formato propio no rompe ni secuestra la numeración."""
+    Empleado.objects.create(legajo="IMPORT-A", dni="20000001", nombre="Vieja", apellido="Data")
+    resp = cliente_rrhh.post("/api/v1/empleados/", _payload_alta(empresa), format="json")
+    assert resp.status_code == 201, resp.data
+    assert resp.data["legajo"] == "0001"

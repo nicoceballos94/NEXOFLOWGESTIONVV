@@ -106,12 +106,13 @@ class CrearRelacionSerializer(serializers.ModelSerializer):
 
 
 class CrearEmpleadoSerializer(serializers.ModelSerializer):
+    """El `legajo` no se acepta del cliente: lo asigna el service (ver `_asignar_legajo`)."""
+
     relacion = CrearRelacionSerializer(write_only=True)
 
     class Meta:
         model = Empleado
         fields = (
-            "legajo",
             "dni",
             "cuil",
             "nombre",
@@ -167,3 +168,11 @@ class CrearDocumentoSerializer(serializers.ModelSerializer):
     class Meta:
         model = DocumentoEmpleado
         fields = ("tipo_documento", "numero", "fecha_vencimiento", "observaciones")
+
+
+class ActualizarDocumentoSerializer(serializers.ModelSerializer):
+    """Corrección/renovación. El tipo no se edita (sería otro documento, no este)."""
+
+    class Meta:
+        model = DocumentoEmpleado
+        fields = ("numero", "fecha_vencimiento", "observaciones")

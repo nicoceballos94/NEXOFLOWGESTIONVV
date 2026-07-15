@@ -109,7 +109,13 @@
     if (y.length !== 4) return null;
     return y + "-" + m + "-" + d;                            // dd/mm/aaaa → ISO
   }
-  function todayISO() { return new Date().toISOString().slice(0, 10); }
+  // Hora LOCAL, no UTC: toISOString() devuelve el día UTC y en Argentina (UTC-3) de 21:00 a
+  // 23:59 eso es "mañana" — una baja cargada a la noche quedaba fechada al día siguiente.
+  function todayISO() {
+    var d = new Date();
+    var mm = String(d.getMonth() + 1).padStart(2, "0"), dd = String(d.getDate()).padStart(2, "0");
+    return d.getFullYear() + "-" + mm + "-" + dd;
+  }
   function splitName(full) {
     var parts = (full || "").trim().split(/\s+/);
     if (parts.length <= 1) return { nombre: parts[0] || "", apellido: "" };
@@ -253,14 +259,6 @@
     var p = await jsend("POST", "/puestos/", { nombre: nombre });
     _puestoByName[key] = p.id; _puestoById[p.id] = p.nombre;
     return p.id;
-  }
-  function nextLegajo() {
-    var max = 0;
-    _rawEmpleados.forEach(function (e) {
-      var n = parseInt(String(e.legajo).replace(/\D/g, ""), 10);
-      if (!isNaN(n) && n > max) max = n;
-    });
-    return String(max + 1).padStart(4, "0");
   }
   // Busca una persona por DNI EXACTO (el `q` del backend es icontains, así que se filtra
   // el match exacto acá). Devuelve el empleado crudo (con `relaciones`/`activo`) o null.
@@ -734,8 +732,7 @@
         return;
       }
       payload.dni = dni;
-      payload.legajo = nextLegajo();
-      payload.relacion = relacion;
+      payload.relacion = relacion;   // el legajo lo asigna el backend (no se manda)
       await jsend("POST", "/empleados/", payload);
       showToast("Empleado dado de alta", "ok");
     },

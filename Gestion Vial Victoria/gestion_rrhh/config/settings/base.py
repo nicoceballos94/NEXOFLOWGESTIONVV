@@ -25,6 +25,7 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    "django.contrib.postgres",  # ExclusionConstraint + btree_gist (novedades)
     # terceros
     "rest_framework",
     "rest_framework_simplejwt.token_blacklist",
@@ -69,10 +70,10 @@ TEMPLATES = [
     },
 ]
 
-# Postgres en docker/CI/prod; sqlite como fallback local mientras no haya
-# features específicas de Postgres (a partir de Fase 1/MVP1 es Postgres sí o sí:
-# índices parciales y constraints de exclusión no existen en sqlite).
-DATABASES = {"default": env.db("DATABASE_URL", default=f"sqlite:///{BASE_DIR / 'db.sqlite3'}")}
+# Postgres y solo Postgres: el fallback a sqlite murió cuando `novedades` incorporó el
+# ExclusionConstraint de solapamiento (btree_gist). Las migraciones no corren en sqlite.
+# Levantar la base con `docker compose up` antes de migrar o correr los tests.
+DATABASES = {"default": env.db("DATABASE_URL")}
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 

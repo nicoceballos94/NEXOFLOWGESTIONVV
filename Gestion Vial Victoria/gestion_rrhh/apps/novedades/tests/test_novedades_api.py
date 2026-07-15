@@ -411,6 +411,198 @@ def test_no_anular_madre_con_prorrogas_activas(
     assert "estado" in resp.data["campos"]
 
 
+def test_no_se_edita_el_inicio_de_una_prorroga(
+    cliente_supervisor, cliente_rrhh, empleado, tipo_licencia
+):
+    """B2: la prórroga nace contigua a la cadena (RP3). El front deshabilita el campo, pero
+    el contrato es la API: por PATCH se podía abrir un agujero o pisar la madre, y la
+    validación de solapamiento no lo veía (excluye la propia cadena a propósito)."""
+    madre_id = _crear_licencia_aprobada(cliente_supervisor, cliente_rrhh, empleado, tipo_licencia)
+    prorroga_id = cliente_supervisor.post(
+        f"/api/v1/novedades/{madre_id}/prorrogar/",
+        {"fecha_hasta_nueva": "2025-03-20"},
+        format="json",
+    ).data["id"]
+    resp = cliente_supervisor.patch(
+        f"/api/v1/novedades/{prorroga_id}/",
+        {"fecha_desde": "2025-03-05"},  # se metería adentro de la madre (03-01 → 03-10)
+        format="json",
+    )
+    assert resp.status_code == 400, resp.data
+    assert "fecha_desde" in resp.data["campos"]
+    assert Novedad.objects.get(pk=prorroga_id).fecha_desde.isoformat() == "2025-03-11"
+
+
+def test_no_se_cambia_el_tipo_de_una_prorroga(
+    cliente_supervisor, cliente_rrhh, empleado, tipo_licencia, tipo_falta
+):
+    """RP7: la prórroga hereda el tipo de la madre; el PATCH no puede romper la herencia."""
+    madre_id = _crear_licencia_aprobada(cliente_supervisor, cliente_rrhh, empleado, tipo_licencia)
+    prorroga_id = cliente_supervisor.post(
+        f"/api/v1/novedades/{madre_id}/prorrogar/",
+        {"fecha_hasta_nueva": "2025-03-20"},
+        format="json",
+    ).data["id"]
+    resp = cliente_supervisor.patch(
+        f"/api/v1/novedades/{prorroga_id}/", {"tipo_novedad": tipo_falta.id}, format="json"
+    )
+    assert resp.status_code == 400, resp.data
+    assert "tipo_novedad" in resp.data["campos"]
+
+
+def test_la_prorroga_sigue_editando_su_fin_y_su_motivo(
+    cliente_supervisor, cliente_rrhh, empleado, tipo_licencia
+):
+    """El blindaje es quirúrgico: lo que la cadena no fija se sigue editando."""
+    madre_id = _crear_licencia_aprobada(cliente_supervisor, cliente_rrhh, empleado, tipo_licencia)
+    prorroga_id = cliente_supervisor.post(
+        f"/api/v1/novedades/{madre_id}/prorrogar/",
+        {"fecha_hasta_nueva": "2025-03-20"},
+        format="json",
+    ).data["id"]
+    resp = cliente_supervisor.patch(
+        f"/api/v1/novedades/{prorroga_id}/",
+        {"fecha_hasta": "2025-03-25", "motivo": "Sigue sin alta"},
+        format="json",
+    )
+    assert resp.status_code == 200, resp.data
+    assert resp.data["fecha_hasta"] == "2025-03-25"
+
+
+def test_reenviar_la_misma_fecha_desde_no_es_una_edicion(
+    cliente_supervisor, cliente_rrhh, empleado, tipo_licencia
+):
+    """Un PATCH que repite el valor actual no cambia nada: no hay por qué rechazarlo."""
+    madre_id = _crear_licencia_aprobada(cliente_supervisor, cliente_rrhh, empleado, tipo_licencia)
+    prorroga_id = cliente_supervisor.post(
+        f"/api/v1/novedades/{madre_id}/prorrogar/",
+        {"fecha_hasta_nueva": "2025-03-20"},
+        format="json",
+    ).data["id"]
+    resp = cliente_supervisor.patch(
+        f"/api/v1/novedades/{prorroga_id}/",
+        {"fecha_desde": "2025-03-11", "motivo": "Con parte médico"},
+        format="json",
+    )
+    assert resp.status_code == 200, resp.data
+
+
+def test_no_se_prorroga_con_una_prorroga_pendiente(
+    cliente_supervisor, cliente_rrhh, empleado, tipo_licencia
+):
+    """`vigencia_efectiva` solo avanza con las prórrogas APROBADAS: prorrogar de nuevo con una
+    pendiente calculaba el mismo `fecha_desde` y creaba dos eslabones pisados."""
+    madre_id = _crear_licencia_aprobada(cliente_supervisor, cliente_rrhh, empleado, tipo_licencia)
+    cliente_supervisor.post(
+        f"/api/v1/novedades/{madre_id}/prorrogar/",
+        {"fecha_hasta_nueva": "2025-03-20"},
+        format="json",
+    )
+    resp = cliente_supervisor.post(  # sin aprobar la anterior
+        f"/api/v1/novedades/{madre_id}/prorrogar/",
+        {"fecha_hasta_nueva": "2025-03-30"},
+        format="json",
+    )
+    assert resp.status_code == 400, resp.data
+    assert "estado" in resp.data["campos"]
+    assert Novedad.objects.filter(novedad_origen_id=madre_id).count() == 1
+
+
+def test_la_cadena_avanza_aprobando_cada_eslabon(
+    cliente_supervisor, cliente_rrhh, empleado, tipo_licencia
+):
+    """Y con la prórroga aprobada, la siguiente arranca contigua a la nueva vigencia."""
+    madre_id = _crear_licencia_aprobada(cliente_supervisor, cliente_rrhh, empleado, tipo_licencia)
+    primera_id = cliente_supervisor.post(
+        f"/api/v1/novedades/{madre_id}/prorrogar/",
+        {"fecha_hasta_nueva": "2025-03-20"},
+        format="json",
+    ).data["id"]
+    cliente_rrhh.post(f"/api/v1/novedades/{primera_id}/aprobar/")
+    resp = cliente_supervisor.post(
+        f"/api/v1/novedades/{madre_id}/prorrogar/",
+        {"fecha_hasta_nueva": "2025-03-30"},
+        format="json",
+    )
+    assert resp.status_code == 201, resp.data
+    assert resp.data["fecha_desde"] == "2025-03-21"  # contigua a la prórroga aprobada
+
+
+# ---------- Respaldo en la base (B3) ----------
+def test_la_base_rechaza_novedades_solapadas_aunque_se_saltee_el_service(
+    empleado, tipo_licencia
+):
+    """El ExclusionConstraint es la red de seguridad de `_validar_sin_solapamiento`: una
+    escritura que no pase por el service (bulk, shell, admin, SQL) tampoco puede solapar."""
+    from django.db import IntegrityError
+
+    Novedad.objects.create(
+        empleado=empleado, tipo_novedad=tipo_licencia,
+        fecha_desde="2025-03-01", fecha_hasta="2025-03-10",
+    )
+    with pytest.raises(IntegrityError):
+        Novedad.objects.create(
+            empleado=empleado, tipo_novedad=tipo_licencia,
+            fecha_desde="2025-03-05", fecha_hasta="2025-03-15",
+        )
+
+
+def test_la_base_deja_convivir_lo_que_no_ocupa_periodo(empleado, tipo_licencia, tipo_horas_extra):
+    """El constraint respeta el flag: las horas extra conviven con la licencia."""
+    Novedad.objects.create(
+        empleado=empleado, tipo_novedad=tipo_licencia,
+        fecha_desde="2025-03-01", fecha_hasta="2025-03-10",
+    )
+    extra = Novedad.objects.create(
+        empleado=empleado, tipo_novedad=tipo_horas_extra,
+        fecha_desde="2025-03-05", cantidad_horas="4.00",
+    )
+    assert extra.pk is not None
+    assert extra.ocupa_periodo is False  # copiado del tipo por save()
+
+
+def test_la_base_libera_el_periodo_de_una_anulada(empleado, tipo_licencia):
+    """RECHAZADA/ANULADA quedan fuera de la condición del constraint, como en el service."""
+    primera = Novedad.objects.create(
+        empleado=empleado, tipo_novedad=tipo_licencia,
+        fecha_desde="2025-03-01", fecha_hasta="2025-03-10",
+    )
+    primera.estado = EstadoNovedad.ANULADA
+    primera.save(update_fields=["estado"])
+    segunda = Novedad.objects.create(
+        empleado=empleado, tipo_novedad=tipo_licencia,
+        fecha_desde="2025-03-05", fecha_hasta="2025-03-15",
+    )
+    assert segunda.pk is not None
+
+
+def test_la_base_ve_la_novedad_abierta_como_rango_sin_fin(empleado, tipo_licencia, tipo_falta):
+    """fecha_hasta NULL = daterange sin límite superior: pisa todo lo posterior."""
+    from django.db import IntegrityError
+
+    Novedad.objects.create(
+        empleado=empleado, tipo_novedad=tipo_licencia, fecha_desde="2025-03-01", fecha_hasta=None
+    )
+    with pytest.raises(IntegrityError):
+        Novedad.objects.create(
+            empleado=empleado, tipo_novedad=tipo_falta,
+            fecha_desde="2025-09-01", fecha_hasta="2025-09-01",
+        )
+
+
+def test_la_cadena_de_prorrogas_no_choca_con_el_constraint(
+    cliente_supervisor, cliente_rrhh, empleado, tipo_licencia
+):
+    """La cadena es contigua, no solapada: el flujo normal nunca toca el constraint."""
+    madre_id = _crear_licencia_aprobada(cliente_supervisor, cliente_rrhh, empleado, tipo_licencia)
+    resp = cliente_supervisor.post(
+        f"/api/v1/novedades/{madre_id}/prorrogar/",
+        {"fecha_hasta_nueva": "2025-03-20"},
+        format="json",
+    )
+    assert resp.status_code == 201, resp.data
+
+
 # ---------- Listado ----------
 def test_lista_colapsa_cadenas_por_defecto(
     cliente_supervisor, cliente_rrhh, empleado, tipo_licencia
