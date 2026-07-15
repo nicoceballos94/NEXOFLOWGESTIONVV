@@ -205,6 +205,39 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
       await this.recargarDocs(this.state.selEmp);
     } catch (e) { console.error('[ceibo] quitar documento', e); window.CeiboAPI.toast(e.message || String(e), 'error'); }
   };
+  // ===== respaldos de la novedad (el canvas los deja en mock; acá van al backend) =====
+  // `detNovId` es la novedad ABIERTA: si es una prórroga, sus respaldos son de ese eslabón.
+  recargarAdjuntos = (novId) => {
+    const self = this;
+    return window.CeiboAPI.loadAdjuntos(novId)
+      .then(function (as) { self.setState({ adjuntosDet: as }); })
+      .catch(function () { self.setState({ adjuntosDet: [] }); });
+  };
+  openDetNov = (id) => {
+    // adjuntosDet en null mientras carga: el canvas mostraría su ejemplo, así que se
+    // arranca en [] para que se vea el estado vacío y no un respaldo que no existe.
+    this.setState({ modal: 'detnov', detNovId: id, adjuntosDet: [] });
+    this.recargarAdjuntos(id);
+  };
+  onAdjuntar = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';   // permite volver a elegir el mismo archivo si falló
+    if (!file) return;
+    try {
+      await window.CeiboAPI.subirAdjunto(this.state.detNovId, file);
+      await this.recargarAdjuntos(this.state.detNovId);
+    } catch (err) { console.error('[ceibo] adjuntar', err); window.CeiboAPI.toast(err.message || String(err), 'error'); }
+  };
+  descargarAdjunto = async (id) => {
+    try { await window.CeiboAPI.descargarAdjunto(this.state.detNovId, id); }
+    catch (e) { console.error('[ceibo] descargar respaldo', e); window.CeiboAPI.toast(e.message || String(e), 'error'); }
+  };
+  quitarAdjunto = async (id) => {
+    try {
+      await window.CeiboAPI.quitarAdjunto(this.state.detNovId, id);
+      await this.recargarAdjuntos(this.state.detNovId);
+    } catch (e) { console.error('[ceibo] quitar respaldo', e); window.CeiboAPI.toast(e.message || String(e), 'error'); }
+  };
 }
 """
 

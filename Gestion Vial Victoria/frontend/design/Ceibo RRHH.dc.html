@@ -984,6 +984,43 @@
             </div>
           </div>
 
+          <div style="border-top:1px solid var(--border);padding-top:16px;margin-top:4px">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+              <div>
+                <div style="font-weight:600;font-size:13px;color:var(--text)">Respaldos</div>
+                <div style="font-size:11px;color:var(--text3);margin-top:2px">Certificado, estudios: se suman, no se reemplazan</div>
+              </div>
+              <sc-if value="{{ detNov.puedeAdjuntar }}" hint-placeholder-val="{{ true }}">
+                <label style="display:flex;align-items:center;gap:5px;background:var(--accent-dim);color:var(--accent);border:1px solid var(--accent-line);border-radius:8px;font-size:11.5px;font-weight:600;padding:0 9px;height:28px;cursor:pointer" style-hover="filter:brightness(1.15)">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Adjuntar
+                  <input data-adj="archivo" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp,.heic" onChange="{{ onAdjuntar }}" style="display:none"/>
+                </label>
+              </sc-if>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:8px">
+              <sc-for list="{{ detNov.adjuntos }}" as="a" hint-placeholder-count="2">
+                <div style="display:flex;align-items:center;gap:10px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:8px 11px">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/></svg>
+                  <div style="flex:1;min-width:0">
+                    <div style="font-size:12.5px;font-weight:500;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ a.nombre }}</div>
+                    <div style="font-size:11px;color:var(--text3)">{{ a.meta }}</div>
+                  </div>
+                  <button onClick="{{ a.doDescargar }}" title="Descargar" style="{{ a.iconBtn }}">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 11l5 5 5-5M4 20h16"/></svg>
+                  </button>
+                  <sc-if value="{{ detNov.puedeAdjuntar }}" hint-placeholder-val="{{ true }}">
+                    <button onClick="{{ a.doQuitar }}" title="Quitar respaldo" style="{{ a.iconBtnBad }}">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>
+                    </button>
+                  </sc-if>
+                </div>
+              </sc-for>
+              <sc-if value="{{ detNov.sinAdjuntos }}" hint-placeholder-val="{{ false }}">
+                <div style="font-size:12px;color:var(--text3);padding:2px 0">Sin respaldos cargados.</div>
+              </sc-if>
+            </div>
+          </div>
+
         </div>
         <div style="display:flex;justify-content:flex-end;gap:10px;padding:16px 24px;border-top:1px solid var(--border);flex:none;flex-wrap:wrap">
           <sc-if value="{{ detNov.canAnular }}" hint-placeholder-val="{{ false }}">
@@ -1041,6 +1078,7 @@ class Component extends DCLogic {
     rot: 'm',
     modal: null, bajaId: null, reingresoId: null, bajaSet: [],
     docEditId: null, docArchivoNombre: '',
+    adjuntosDet: null,
     cfg: { carnet: 30, apto: 15, cnrt: 30, contrato: 45 },
     roles: { rrhh: true, admin: true, jefe: false },
     canales: { email: true, sistema: true, whatsapp: false },
@@ -1123,10 +1161,30 @@ class Component extends DCLogic {
   // Mocks del canvas: el cableado real (descarga con token, DELETE a la API) lo inyecta build.py.
   descargarDoc = (id)=> this.setState({});
   quitarDoc = (id)=> this.setState({});
+  descargarAdjunto = (id)=> this.setState({});
+  quitarAdjunto = (id)=> this.setState({});
+  onAdjuntar = (e)=> this.setState({});
   semColor(s){ return s==='ok'?'var(--ok)':s==='warn'?'var(--warn)':'var(--bad)'; }
   semKind(s){ return s; }
   semLabel(s){ return s==='ok'?'Al día':s==='warn'?'Próximo a vencer':'Vencido'; }
 
+  // Bitácora del hecho. `adjuntosDet` en null = canvas sin backend: se muestra un
+  // ejemplo. Una lista vacía de verdad ([]) muestra el estado vacío.
+  adjuntosDe(detNov){
+    const S=this.state;
+    const raw = S.adjuntosDet || [{id:0, nombre:'certificado-dr-perez.pdf', meta:'RRHH · 03/03/2025'}];
+    return {
+      adjuntos: raw.map(a=>({
+        nombre:a.nombre, meta:a.meta,
+        iconBtn:this.iconBtn('var(--text2)'), iconBtnBad:this.iconBtn('var(--bad)'),
+        doDescargar:()=>this.descargarAdjunto(a.id), doQuitar:()=>this.quitarAdjunto(a.id),
+      })),
+      sinAdjuntos: raw.length===0,
+      // Quién puede cargar respaldos lo decide el rol; el canvas no lo sabe (no hay
+      // sesión) y asume que sí. El cableado lo corrige con el rol real.
+      puedeAdjuntar: true,
+    };
+  }
   normEmp(s){ return String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim().toLowerCase(); }
   novList(){
     const ov=this.state.novOverrides;
@@ -1561,7 +1619,10 @@ class Component extends DCLogic {
       docArchivoLabel: S.docArchivoNombre
         || (this.docEnEdicionTieneArchivo() ? 'Ya tiene respaldo · elegir otro lo reemplaza' : 'Elegir archivo…'),
       docTipos:[{nombre:'Carnet de conducir'},{nombre:'Apto médico'},{nombre:'CNRT'},{nombre:'Contrato'}],
-      showDetNov:S.modal==='detnov', showProrroga:S.modal==='prorroga', detNov, prorrogaInicio,
+      showDetNov:S.modal==='detnov', showProrroga:S.modal==='prorroga',
+      detNov: detNov && Object.assign(detNov, this.adjuntosDe(detNov)),
+      prorrogaInicio,
+      onAdjuntar:this.onAdjuntar,
       editSeed, novFormTitle,
       aprobarNov:this.aprobarNov, rechazarNov:this.rechazarNov, anularNov:this.anularNov,
       openProrroga:this.openProrroga, backToDet:this.backToDet,

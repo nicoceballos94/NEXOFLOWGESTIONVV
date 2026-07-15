@@ -925,5 +925,62 @@
       if (!r.ok) throw new Error("No se pudo quitar el documento (" + r.status + ")");
       showToast("Documento quitado", "ok");
     },
+
+    // ---------- Adjuntos de novedad (la bitácora del hecho) ----------
+    // El id que ve el front es el de la novedad abierta: si es una prórroga, sus respaldos
+    // son de ESE eslabón, no de la madre. Por eso no se redirige a la madre como en
+    // `prorrogar`: el certificado de la extensión pertenece a la extensión.
+    async loadAdjuntos(novId) {
+      var rows = await jget("/novedades/" + novId + "/adjuntos/");
+      return (rows || []).map(function (a) {
+        var quien = a.subido_por || "sistema";
+        return {
+          id: a.id,
+          nombre: a.nombre_original,
+          // La descripción es opcional; si está, dice más que la fecha sola.
+          meta: (a.descripcion ? a.descripcion + " · " : "") + quien + " · " + fmtISOtoDMY((a.creado_en || "").slice(0, 10)),
+        };
+      });
+    },
+
+    async subirAdjunto(novId, file) {
+      var fd = new FormData();
+      fd.append("archivo", file);
+      // Sin content-type a mano: el browser arma el boundary del multipart él solo.
+      var r = await authedFetch(CONFIG.API + "/novedades/" + novId + "/adjuntos/", {
+        method: "POST", body: fd,
+      });
+      var data = await r.json().catch(function () { return {}; });
+      if (!r.ok) {
+        var msg = (data.campos && Object.keys(data.campos).length)
+          ? flattenErrs(data.campos).join(" · ")
+          : (data.detalle || ("Error " + r.status));
+        throw new Error(msg);
+      }
+      showToast("Respaldo adjuntado", "ok");
+      return data;
+    },
+
+    async descargarAdjunto(novId, adjId) {
+      var r = await authedFetch(CONFIG.API + "/novedades/" + novId + "/adjuntos/" + adjId + "/archivo/", {});
+      if (!r.ok) throw new Error("No se pudo descargar el respaldo (" + r.status + ")");
+      var blob = await r.blob();
+      var cd = r.headers.get("content-disposition") || "";
+      var m = /filename="([^"]+)"/.exec(cd);
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement("a");
+      a.href = url;
+      a.download = m ? m[1] : "adjunto";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);   // sin esto el blob queda retenido en memoria
+    },
+
+    async quitarAdjunto(novId, adjId) {
+      var r = await authedFetch(CONFIG.API + "/novedades/" + novId + "/adjuntos/" + adjId + "/", { method: "DELETE" });
+      if (!r.ok) throw new Error("No se pudo quitar el respaldo (" + r.status + ")");
+      showToast("Respaldo quitado", "ok");
+    },
   };
 })();
