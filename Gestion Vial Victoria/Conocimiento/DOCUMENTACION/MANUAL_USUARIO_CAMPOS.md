@@ -2,6 +2,8 @@
 
 **Sistema de Gestión RRHH · Grupo Vial Victoria / Premocor**
 **Versión:** MVP 1 · **Fecha:** 15 de julio de 2026 · rama `fase-0-verificada`
+**Última actualización:** 15/07/2026 — se sumaron el archivo de respaldo del documento
+(§3.6) y los respaldos de la novedad (§5.3), que antes no existían.
 
 ---
 
@@ -151,15 +153,30 @@ etapas tiene tres juegos de estos datos.
 
 | Campo | Qué es | Estado | Reglas y detalles |
 |---|---|---|---|
-| **Tipo de documento** | Carnet, apto médico, CNRT, contrato… | **Obligatorio** | Catálogo administrable. **Un solo documento vigente por tipo y por persona**: renovar el apto médico es mover su fecha de vencimiento, no cargar otro. |
+| **Tipo de documento** | Carnet, apto médico, CNRT, contrato… | **Obligatorio** | Catálogo administrable. **Un solo documento vigente por tipo y por persona**: renovar el apto médico es mover su fecha de vencimiento, no cargar otro. En la edición el tipo no se cambia: sería otro documento, no este. |
 | **Número** | Número o identificación. | Opcional | 💤 |
 | **Fecha de vencimiento** | Cuándo caduca. | Opcional | 💤 **Ver §8.1 — el hueco más caro del sistema.** La ficha del empleado pinta el documento en rojo (vencido) o amarillo (vence en ≤30 días), **pero solo si alguien abre esa ficha**. No existe el listado "quién tiene documentación por vencer". |
+| **Archivo de respaldo** | El scan (PDF o imagen). | Opcional | Hasta 10 MB. **Opcional a propósito**: el control de vencimientos funciona con la fecha sola y el scan puede llegar después. Se descarga solo desde la ficha: nunca por una URL que cualquiera con el link pueda abrir. |
 | **Observaciones** | Notas. | Opcional | 💤 |
+
+> **Dónde vive el archivo.** Nunca en la base: ahí va solo la ruta (~80 caracteres). El
+> archivo va a una carpeta del servidor (hoy, un volumen de Docker; cuando haya deploy, un
+> object storage tipo S3/R2 — cambia la configuración, no el sistema). Un apto médico es un
+> dato de salud, así que la carpeta **no se publica**: el único camino al archivo es la
+> ficha, con login y permisos.
+
+> **Al renovar, el archivo anterior se reemplaza y no queda historial.** Es una decisión
+> acordada: un carnet o un CNRT vencido es basura, no historia. **El respaldo de un hecho
+> puntual no vive acá** — el certificado de una licencia o los estudios de un accidente
+> cuelgan de su novedad (§5.3), que sí los conserva todos.
+>
+> La excepción a discutir es el **apto médico**: hoy se pisa como el resto, pero es el
+> único de la lista con valor probatorio. Si hay un accidente y la ART pregunta "¿estaba
+> apto en esa fecha?", el apto viejo es la prueba.
 
 > **Nota:** un documento cargado por error **sí se puede borrar** (a diferencia de la
 > relación laboral). Un error de carga no es un hecho de la historia laboral que valga la
-> pena preservar. Al renovar un vencimiento no queda historial de la versión anterior:
-> es una decisión consciente del MVP, a revisar cuando se suban archivos adjuntos.
+> pena preservar. Al borrarlo, el archivo se va del disco con él.
 
 ---
 
@@ -287,14 +304,48 @@ decoración: gobiernan las reglas.
 | **Fecha de turno de praxis** | Turno médico. | Opcional | 💤 |
 | **Fecha de fin estimada** | Cuándo se preveía el alta. | Opcional | 💤 Contra la fecha de fin real mide **cuánto se desvían las licencias de lo previsto** (§8.2). |
 | **Fecha de reintegro** | Vuelta efectiva. | Opcional | 💤 |
-| **Certificado recibido el** | Cuándo se presentó. | Opcional | 💤 **Se carga y no se usa.** Los tipos con "pide certificado" deberían disparar una alerta si pasa el plazo; esa alerta **no existe** (§8.1). |
+| **Certificado recibido el** | Cuándo se presentó. | Opcional | 💤 **Se carga y no se usa** para alertas. Los tipos con "pide certificado" deberían avisar si pasa el plazo; ese aviso **no existe** (§8.1). Es la *fecha*: el certificado en sí va como respaldo (§5.3). |
 | **Cantidad de horas** | Horas extra. | Condicional | 💤 **Obligatorio** solo para Horas extra; el sistema lo exige. Y no hay ninguna métrica de horas extra (§8.1). |
 | **Novedad origen** | A qué licencia madre pertenece. | Automático | 📊 Lo pone el sistema al prorrogar. Apunta **siempre a la madre**, nunca a la prórroga anterior: la cadena es plana. Evita el doble conteo en las métricas. |
 | **Relación laboral** | Contexto de empresa/contrato. | Automático | 📊 Por defecto, la relación activa del empleado. Es lo que le da empresa a la novedad. |
 | **Generada automáticamente** | Si la creó un proceso. | Automático | 🔒 Hoy siempre "no": distingue la carga manual del cruce automático con el reloj de fichaje, que todavía no existe. |
 | **Aprobada por / Aprobada el** | Quién y cuándo aprobó. | Automático | 💤 Se registra en cada aprobación y **no se usa**. Es el insumo del tiempo de aprobación (§8.2). |
 
-### 5.3 Los estados y qué significan
+### 5.3 Respaldos de la novedad (la bitácora del hecho)
+
+El certificado de la licencia, los estudios del accidente, el alta médica. Se cargan desde
+el detalle de la novedad, en el panel **Respaldos**.
+
+| Campo | Qué es | Estado | Reglas y detalles |
+|---|---|---|---|
+| **Archivo** | El PDF o la foto. | **Obligatorio** | Hasta 10 MB, igual que los documentos del empleado. Se descarga solo desde el detalle, con login y permisos. |
+| **Nombre** | Con el que se subió. | Automático | Se conserva y se muestra. Acá no hay un "tipo" que diga qué es cada archivo, así que saber que uno era `radiografia.jpg` y otro `certificado.pdf` **es el dato**. |
+| **Quién y cuándo** | Quién lo subió. | Automático | Es lo que convierte la lista en una bitácora. |
+
+**Por qué esto no vive en la ficha del empleado.** El certificado de la licencia de marzo
+no es "un documento de la persona": es **de esa licencia**. Al colgarlo de la novedad, la
+bitácora sale sola — cada novedad conserva lo suyo y las novedades no se borran nunca (se
+anulan). Es la diferencia de fondo con los documentos del empleado, y es deliberada:
+
+| | Documento del empleado | Respaldo de la novedad |
+|---|---|---|
+| **Cuántos** | Uno vigente por tipo | Los que hagan falta |
+| **Al agregar otro** | Reemplaza al anterior | **Se suma; nada se pisa** |
+| **Vence** | Sí, es su razón de ser | No: describe algo que ya pasó |
+| **Para qué** | Que nadie maneje con el carnet vencido | Probar qué pasó y cuándo |
+
+**Cada prórroga guarda lo suyo.** Como cada prórroga es una novedad, el certificado
+inicial queda en la licencia madre y el de la extensión en la prórroga. La cadena termina
+contando la cronología real.
+
+**Se puede adjuntar en cualquier estado**, incluso sobre una novedad ya cerrada o anulada:
+el certificado suele llegar días después del hecho, y una novedad anulada por error puede
+necesitar justo el papel que prueba por qué se anuló.
+
+**Quién puede.** RRHH, Administrador y Supervisor cargan y quitan respaldos. El empleado
+**ve** los de sus propias novedades y no toca nada (en MVP1 el empleado no carga).
+
+### 5.4 Los estados y qué significan
 
 | Estado | Qué significa | ¿Ocupa el calendario? | ¿Cuenta en métricas? |
 |---|---|:---:|:---:|
