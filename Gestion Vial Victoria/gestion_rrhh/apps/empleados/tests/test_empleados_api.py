@@ -222,6 +222,173 @@ def test_empleado_no_puede_editar_documentos(cliente_rrhh, empresa, crear_usuari
     assert resp.status_code == 403
 
 
+# ---------- Documentos: archivo de respaldo (CU-06) ----------
+@pytest.fixture
+def media_temporal(settings, tmp_path):
+    """MEDIA_ROOT propio por test: los archivos subidos no ensucian el repo ni se pisan."""
+    settings.MEDIA_ROOT = str(tmp_path)
+    return tmp_path
+
+
+def _archivo(nombre="apto.pdf", contenido=b"%PDF-1.4 escaneo", tipo="application/pdf"):
+    from django.core.files.uploadedfile import SimpleUploadedFile
+
+    return SimpleUploadedFile(nombre, contenido, content_type=tipo)
+
+
+def _empleado_con_tipo(cliente_rrhh, empresa):
+    from apps.empleados.models import TipoDocumento
+
+    cliente_rrhh.post("/api/v1/empleados/", _payload_alta(empresa), format="json")
+    return Empleado.objects.get(dni="30111222"), TipoDocumento.objects.create(nombre="Apto médico")
+
+
+def test_documento_con_archivo_se_sube_y_se_descarga(cliente_rrhh, empresa, media_temporal):
+    from apps.empleados.models import DocumentoEmpleado
+
+    empleado, tipo = _empleado_con_tipo(cliente_rrhh, empresa)
+    creado = cliente_rrhh.post(
+        f"/api/v1/empleados/{empleado.id}/documentos/",
+        {"tipo_documento": tipo.id, "numero": "AM-1", "archivo": _archivo()},
+        format="multipart",
+    )
+    assert creado.status_code == 201, creado.data
+    assert creado.data["tiene_archivo"] is True
+
+    doc = DocumentoEmpleado.objects.get(pk=creado.data["id"])
+    # El nombre original se descarta: en la ruta no puede quedar PII ni nada adivinable.
+    assert "apto" not in doc.archivo.name
+    assert doc.archivo.name.startswith(f"documentos/{empleado.id}/")
+
+    resp = cliente_rrhh.get(creado.data["archivo_url"])
+    assert resp.status_code == 200
+    assert b"".join(resp.streaming_content) == b"%PDF-1.4 escaneo"
+    # Se baja como adjunto y con nombre legible, no como el UUID del disco.
+    assert "attachment" in resp["Content-Disposition"]
+    assert "apto-medico-perez-0001.pdf" in resp["Content-Disposition"]
+
+
+def test_el_vencimiento_se_carga_sin_archivo(cliente_rrhh, empresa, media_temporal):
+    """El archivo es opcional a propósito: el control de vencimientos (el objetivo de CU-06)
+    funciona con la fecha sola, y el scan puede llegar después."""
+    empleado, tipo = _empleado_con_tipo(cliente_rrhh, empresa)
+    resp = cliente_rrhh.post(
+        f"/api/v1/empleados/{empleado.id}/documentos/",
+        {"tipo_documento": tipo.id, "fecha_vencimiento": "2027-01-01"},
+        format="json",
+    )
+    assert resp.status_code == 201, resp.data
+    assert resp.data["tiene_archivo"] is False
+    assert resp.data["archivo_url"] is None
+
+
+def test_renovar_borra_el_scan_viejo_del_disco(
+    cliente_rrhh, empresa, media_temporal, django_capture_on_commit_callbacks
+):
+    """"No generar basura": el archivo reemplazado sale del disco. Django no lo hace solo, y
+    el huérfano sería invisible (ninguna fila lo nombra) e imborrable a mano (se llama UUID)."""
+    from apps.empleados.models import DocumentoEmpleado
+
+    empleado, tipo = _empleado_con_tipo(cliente_rrhh, empresa)
+    doc_id = cliente_rrhh.post(
+        f"/api/v1/empleados/{empleado.id}/documentos/",
+        {"tipo_documento": tipo.id, "archivo": _archivo("viejo.pdf", b"apto 2025")},
+        format="multipart",
+    ).data["id"]
+    ruta_vieja = media_temporal / DocumentoEmpleado.objects.get(pk=doc_id).archivo.name
+    assert ruta_vieja.exists()
+
+    with django_capture_on_commit_callbacks(execute=True):
+        resp = cliente_rrhh.patch(
+            f"/api/v1/empleados/{empleado.id}/documentos/{doc_id}/",
+            {"archivo": _archivo("nuevo.pdf", b"apto 2026"), "fecha_vencimiento": "2027-06-01"},
+            format="multipart",
+        )
+    assert resp.status_code == 200, resp.data
+
+    doc = DocumentoEmpleado.objects.get(pk=doc_id)
+    assert not ruta_vieja.exists(), "el scan viejo quedó huérfano en MEDIA_ROOT"
+    assert (media_temporal / doc.archivo.name).read_bytes() == b"apto 2026"
+
+
+def test_eliminar_documento_se_lleva_el_archivo(
+    cliente_rrhh, empresa, media_temporal, django_capture_on_commit_callbacks
+):
+    """Borrar la fila y dejar el binario sería peor que no borrar: un dato de salud en el
+    disco sin ninguna fila que diga de quién es."""
+    from apps.empleados.models import DocumentoEmpleado
+
+    empleado, tipo = _empleado_con_tipo(cliente_rrhh, empresa)
+    doc_id = cliente_rrhh.post(
+        f"/api/v1/empleados/{empleado.id}/documentos/",
+        {"tipo_documento": tipo.id, "archivo": _archivo()},
+        format="multipart",
+    ).data["id"]
+    ruta = media_temporal / DocumentoEmpleado.objects.get(pk=doc_id).archivo.name
+
+    with django_capture_on_commit_callbacks(execute=True):
+        resp = cliente_rrhh.delete(f"/api/v1/empleados/{empleado.id}/documentos/{doc_id}/")
+    assert resp.status_code == 204
+    assert not ruta.exists()
+
+
+def test_no_se_aceptan_formatos_ni_pesos_cualquiera(
+    cliente_rrhh, empresa, media_temporal, settings
+):
+    empleado, tipo = _empleado_con_tipo(cliente_rrhh, empresa)
+    url = f"/api/v1/empleados/{empleado.id}/documentos/"
+
+    ejecutable = _archivo("virus.exe", b"MZ", "application/x-msdownload")
+    resp = cliente_rrhh.post(
+        url,
+        {"tipo_documento": tipo.id, "archivo": ejecutable},
+        format="multipart",
+    )
+    assert resp.status_code == 400
+    assert "exe" in str(resp.data)
+
+    settings.DOCUMENTO_MAX_BYTES = 1024
+    resp = cliente_rrhh.post(
+        url,
+        {"tipo_documento": tipo.id, "archivo": _archivo("enorme.pdf", b"x" * 2048)},
+        format="multipart",
+    )
+    assert resp.status_code == 400
+    assert "MB" in str(resp.data)
+
+
+def test_el_empleado_no_descarga_documentos_ajenos(
+    cliente_rrhh, empresa, crear_usuario, media_temporal
+):
+    """A2: `documentos` resolvía el empleado sin pasar por el selector, así que cualquier
+    autenticado leía los de cualquiera. Con archivos adjuntos eso era descargar el apto
+    médico ajeno, no solo ver metadatos."""
+    from rest_framework.test import APIClient
+
+    from common import roles
+
+    ajeno, tipo = _empleado_con_tipo(cliente_rrhh, empresa)
+    creado = cliente_rrhh.post(
+        f"/api/v1/empleados/{ajeno.id}/documentos/",
+        {"tipo_documento": tipo.id, "archivo": _archivo()},
+        format="multipart",
+    )
+    assert creado.status_code == 201, creado.data
+
+    # Otro empleado, con su propia ficha y su propio usuario.
+    propio = Empleado.objects.create(legajo="0500", dni="33444555", nombre="Otro", apellido="Tipo")
+    usuario = crear_usuario(username="curioso", rol=roles.EMPLEADO)
+    propio.usuario = usuario
+    propio.save()
+    cliente = APIClient()
+    cliente.force_authenticate(usuario)
+
+    assert cliente.get(f"/api/v1/empleados/{ajeno.id}/documentos/").status_code == 404
+    assert cliente.get(creado.data["archivo_url"]).status_code == 404
+    # Y sí ve lo suyo: el scope recorta, no bloquea.
+    assert cliente.get(f"/api/v1/empleados/{propio.id}/documentos/").status_code == 200
+
+
 # ---------- Legajo (lo asigna el backend, no el cliente) ----------
 def test_el_legajo_lo_asigna_el_backend_ignorando_al_cliente(cliente_rrhh, empresa):
     """Antes lo calculaba el navegador con max+1 sobre lo que tenía cargado: dos altas

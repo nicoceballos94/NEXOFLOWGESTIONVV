@@ -190,8 +190,27 @@ class TipoDocumento(ModeloBase):
         return self.nombre
 
 
+def ruta_archivo_documento(instance: "DocumentoEmpleado", filename: str) -> str:
+    """Ruta del respaldo dentro de MEDIA_ROOT: documentos/<empleado_id>/<uuid>.<ext>.
+
+    El nombre original se descarta a propósito y se reemplaza por un UUID. Dos razones:
+    el nombre que trae el archivo del escáner ("apto medico juan perez.pdf") filtraría PII
+    en la ruta, y un nombre adivinable invita a probar URLs. La extensión se conserva
+    (ya validada en el serializer) porque de ella sale el Content-Type de la descarga.
+    """
+    import uuid
+
+    extension = filename.rsplit(".", 1)[-1].lower() if "." in filename else "bin"
+    return f"documentos/{instance.empleado_id}/{uuid.uuid4().hex}.{extension}"
+
+
 class DocumentoEmpleado(ModeloBase):
-    """Documento del empleado con vencimiento. Un vigente por tipo (UNIQUE)."""
+    """Documento del empleado con vencimiento. Un vigente por tipo (UNIQUE).
+
+    Son los documentos de la PERSONA (carnet, apto médico, CNRT, contrato): vencen y se
+    renuevan pisando al anterior. Los certificados de una licencia o accidente no van acá
+    — pertenecen a su novedad, que los conserva sola porque las novedades no se borran.
+    """
 
     empleado = models.ForeignKey(
         Empleado, on_delete=models.PROTECT, related_name="documentos"
@@ -202,6 +221,13 @@ class DocumentoEmpleado(ModeloBase):
     numero = models.CharField(max_length=50, blank=True)
     fecha_vencimiento = models.DateField(
         null=True, blank=True, db_index=True, help_text="La query de alertas filtra por acá."
+    )
+    archivo = models.FileField(
+        upload_to=ruta_archivo_documento,
+        blank=True,
+        help_text="Respaldo escaneado (PDF/imagen). Opcional: el control de vencimientos "
+        "funciona con la fecha sola, y RRHH puede cargar el vencimiento antes de tener el "
+        "scan. Se descarga solo por el endpoint protegido, nunca por URL directa.",
     )
     observaciones = models.TextField(blank=True)
 

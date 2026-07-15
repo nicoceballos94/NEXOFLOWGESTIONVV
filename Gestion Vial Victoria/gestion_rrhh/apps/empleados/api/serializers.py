@@ -1,6 +1,7 @@
 """Contrato I/O de empleados (§11). Serializers de entrada y salida separados:
 la entrada valida forma (R12); la escritura y las reglas viven en services.py.
 """
+from django.conf import settings
 from rest_framework import serializers
 
 from ..models import (
@@ -67,6 +68,8 @@ class EmpleadoSerializer(serializers.ModelSerializer):
 
 class DocumentoEmpleadoSerializer(serializers.ModelSerializer):
     tipo_documento_nombre = serializers.CharField(source="tipo_documento.nombre", read_only=True)
+    tiene_archivo = serializers.SerializerMethodField()
+    archivo_url = serializers.SerializerMethodField()
 
     class Meta:
         model = DocumentoEmpleado
@@ -77,9 +80,22 @@ class DocumentoEmpleadoSerializer(serializers.ModelSerializer):
             "tipo_documento_nombre",
             "numero",
             "fecha_vencimiento",
+            "tiene_archivo",
+            "archivo_url",
             "observaciones",
         )
+        # `archivo` no se expone crudo: la ruta de MEDIA_ROOT no le sirve a nadie desde
+        # afuera (no hay URL pública que la resuelva) y filtra la organización del disco.
         read_only_fields = ("empleado",)
+
+    def get_tiene_archivo(self, obj) -> bool:
+        return bool(obj.archivo)
+
+    def get_archivo_url(self, obj) -> str | None:
+        """Endpoint protegido de descarga, no la ruta del disco."""
+        if not obj.archivo:
+            return None
+        return f"/api/v1/empleados/{obj.empleado_id}/documentos/{obj.id}/archivo/"
 
 
 class TipoDocumentoSerializer(serializers.ModelSerializer):
@@ -164,10 +180,40 @@ class FinalizarRelacionSerializer(serializers.Serializer):
     )
 
 
+def _validar_archivo(archivo):
+    """Extensión y peso del respaldo (R12: la forma se valida acá, no en el service).
+
+    La extensión se mira, no el contenido: para saber de verdad si un PDF es un PDF hace
+    falta leer los magic bytes (python-magic/libmagic, dependencia binaria). Es una
+    concesión consciente — el archivo nunca se ejecuta ni se sirve como HTML, se descarga
+    como adjunto, así que el peor caso es un archivo inútil cargado por RRHH, no un XSS.
+    """
+    if archivo in (None, ""):
+        return archivo
+    nombre = getattr(archivo, "name", "") or ""
+    extension = nombre.rsplit(".", 1)[-1].lower() if "." in nombre else ""
+    if extension not in settings.DOCUMENTO_EXTENSIONES:
+        raise serializers.ValidationError(
+            f"Formato no admitido ('{extension or 'sin extensión'}'). "
+            f"Se aceptan: {', '.join(settings.DOCUMENTO_EXTENSIONES)}."
+        )
+    if archivo.size > settings.DOCUMENTO_MAX_BYTES:
+        tope_mb = settings.DOCUMENTO_MAX_BYTES / (1024 * 1024)
+        real_mb = archivo.size / (1024 * 1024)
+        raise serializers.ValidationError(
+            f"El archivo pesa {real_mb:.1f} MB y el máximo es {tope_mb:.0f} MB. "
+            f"Si es una foto, sacala con menos resolución o escaneala como PDF."
+        )
+    return archivo
+
+
 class CrearDocumentoSerializer(serializers.ModelSerializer):
     class Meta:
         model = DocumentoEmpleado
-        fields = ("tipo_documento", "numero", "fecha_vencimiento", "observaciones")
+        fields = ("tipo_documento", "numero", "fecha_vencimiento", "archivo", "observaciones")
+
+    def validate_archivo(self, archivo):
+        return _validar_archivo(archivo)
 
 
 class ActualizarDocumentoSerializer(serializers.ModelSerializer):
@@ -175,4 +221,7 @@ class ActualizarDocumentoSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = DocumentoEmpleado
-        fields = ("numero", "fecha_vencimiento", "observaciones")
+        fields = ("numero", "fecha_vencimiento", "archivo", "observaciones")
+
+    def validate_archivo(self, archivo):
+        return _validar_archivo(archivo)

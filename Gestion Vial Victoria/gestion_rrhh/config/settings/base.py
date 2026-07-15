@@ -94,6 +94,21 @@ USE_TZ = True  # se persiste en UTC
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
+# --- Archivos de respaldo de documentos (CU-06) ---
+# Los archivos NO viven en la base: en la columna va la ruta (~80 bytes), el binario va acá.
+# `MEDIA_URL` a propósito NO se define y `media/` NO se sirve como estático: un apto médico
+# es un dato de salud, así que se descarga solo por el endpoint que valida rol y scope
+# (`/empleados/{id}/documentos/{doc_id}/archivo/`). Servirlo por URL directa saltearía el
+# login: en `media/` no hay permisos, solo el sistema de archivos.
+# Con volumen persistente en docker-compose; migrar a S3/R2 el día del deploy es cambiar
+# STORAGES por django-storages, sin tocar el modelo (por eso el FileField y no una URL).
+MEDIA_ROOT = env("MEDIA_ROOT", default=str(BASE_DIR / "media"))
+
+# Tope de subida. El default de Django (2.5 MB en memoria) deja pasar archivos enormes a
+# disco temporal; acá se corta antes, en el serializer.
+DOCUMENTO_MAX_BYTES = env.int("DOCUMENTO_MAX_BYTES", default=10 * 1024 * 1024)  # 10 MB
+DOCUMENTO_EXTENSIONES = ("pdf", "jpg", "jpeg", "png", "webp", "heic")
+
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "rest_framework_simplejwt.authentication.JWTAuthentication",

@@ -2,7 +2,9 @@
 
 Lectura scopeada por selector; escritura (alta/edición/baja/documentos) solo RRHH/Admin.
 """
+from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404
+from django.utils.text import slugify
 from rest_framework import mixins, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -39,13 +41,34 @@ class EmpleadoViewSet(
     def get_permissions(self):
         # Lectura: cualquier autenticado (el selector recorta el scope).
         # Escritura y acciones que mutan: RRHH/Admin.
-        if self.action in ("list", "retrieve", "documentos") and self.request.method == "GET":
+        if (
+            self.action in ("list", "retrieve", "documentos", "archivo_documento")
+            and self.request.method == "GET"
+        ):
             return [IsAuthenticated()]
         return [_SoloRRHH()]
 
     def get_queryset(self):
         return selectors.empleados_visibles_para(
             usuario=self.request.user, filtros=self.request.query_params
+        )
+
+    def _empleado_en_scope(self, pk) -> Empleado:
+        """El empleado, pero solo si el usuario puede verlo (§7).
+
+        Buscar con `Empleado.objects` saltea el scoping del selector: `list`/`retrieve` lo
+        aplican vía `get_queryset()`, y cualquier acción que resuelva el empleado por su
+        cuenta se lo perdía. Un usuario con rol Empleado podía pedir los documentos de
+        cualquier otra persona (A2 del análisis de sistema). Con los archivos adjuntos eso
+        pasaba de fuga de metadatos a descarga del apto médico ajeno.
+
+        Se llama al selector sin filtros a propósito, y no a `get_queryset()`: los de la
+        query string son para buscar en la lista, y acá darían 404 espurios (pedir
+        `/empleados/5/documentos/?empresa=3` no debería esconder al empleado 5 por estar
+        en otra empresa). Acá el único recorte que corresponde es el del rol.
+        """
+        return get_object_or_404(
+            selectors.empleados_visibles_para(usuario=self.request.user), pk=pk
         )
 
     def list(self, request):
@@ -73,7 +96,7 @@ class EmpleadoViewSet(
 
     @action(detail=True, methods=["get", "post"])
     def documentos(self, request, pk=None):
-        empleado = get_object_or_404(Empleado, pk=pk)
+        empleado = self._empleado_en_scope(pk)
         if request.method == "GET":
             qs = empleado.documentos.select_related("tipo_documento")
             return Response(DocumentoEmpleadoSerializer(qs, many=True).data)
@@ -91,7 +114,7 @@ class EmpleadoViewSet(
     )
     def documento(self, request, pk=None, documento_id=None):
         """Corregir/renovar (PATCH) o quitar (DELETE) un documento ya cargado."""
-        empleado = get_object_or_404(Empleado, pk=pk)
+        empleado = self._empleado_en_scope(pk)
         documento = get_object_or_404(empleado.documentos, pk=documento_id)
         if request.method == "DELETE":
             services.eliminar_documento(actor=request.user, documento=documento)
@@ -102,6 +125,36 @@ class EmpleadoViewSet(
             actor=request.user, documento=documento, **entrada.validated_data
         )
         return Response(DocumentoEmpleadoSerializer(documento).data)
+
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path=r"documentos/(?P<documento_id>[^/.]+)/archivo",
+    )
+    def archivo_documento(self, request, pk=None, documento_id=None):
+        """Descarga del respaldo. La única puerta al binario (§7).
+
+        `media/` no se sirve como estático justamente para que este endpoint sea el único
+        camino: acá hay login, rol y scope de empleado; en el sistema de archivos no hay
+        nada de eso. Un apto médico es un dato de salud y no puede colgar de una URL que
+        cualquiera con el link pueda abrir.
+        """
+        empleado = self._empleado_en_scope(pk)
+        documento = get_object_or_404(empleado.documentos, pk=documento_id)
+        if not documento.archivo:
+            raise Http404("El documento no tiene archivo de respaldo cargado.")
+        # `as_attachment` fuerza la descarga en vez de que el navegador renderice: un SVG o
+        # un HTML disfrazado de imagen no se ejecuta en el origen de la app.
+        # El nombre real (UUID) no le sirve a nadie; se arma uno legible al vuelo.
+        extension = documento.archivo.name.rsplit(".", 1)[-1]
+        nombre = slugify(
+            f"{documento.tipo_documento.nombre}-{empleado.apellido}-{empleado.legajo}"
+        )
+        return FileResponse(
+            documento.archivo.open("rb"),
+            as_attachment=True,
+            filename=f"{nombre}.{extension}",
+        )
 
     @action(
         detail=True,

@@ -20,4 +20,5 @@ class Command(BaseCommand):
             _, creado = Sector.objects.get_or_create(nombre=nombre)
             self.stdout.write(f"Sector {nombre}: {'creado' if creado else 'ya existía'}")
         call_command("seed_tipos_novedad")
+        call_command("seed_tipos_documento")
         self.stdout.write(self.style.SUCCESS("Seed inicial listo."))

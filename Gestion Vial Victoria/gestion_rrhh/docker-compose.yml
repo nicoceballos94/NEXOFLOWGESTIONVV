@@ -22,8 +22,13 @@ services:
       DJANGO_SETTINGS_MODULE: config.settings.dev
       DATABASE_URL: postgres://${POSTGRES_USER:-rrhh}:${POSTGRES_PASSWORD:-rrhh}@db:5432/${POSTGRES_DB:-rrhh}
       SECRET_KEY: ${SECRET_KEY:-insegura-solo-para-dev}
+      MEDIA_ROOT: /app/media
     volumes:
       - .:/app
+      # Los respaldos de documentos viven en un volumen propio: sin esto, un
+      # `docker compose down` se lleva puestos los scans de apto médico y carnet.
+      # El día del deploy esto se reemplaza por S3/R2 vía STORAGES, sin tocar el modelo.
+      - media:/app/media
     ports:
       - "8000:8000"
     depends_on:
@@ -32,3 +37,4 @@ services:
 
 volumes:
   pgdata:
+  media:
