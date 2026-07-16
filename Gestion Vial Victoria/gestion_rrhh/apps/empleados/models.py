@@ -5,6 +5,7 @@ una empresa se da por `RelacionLaboral`. Baja lógica solo donde el dominio lo p
 (R10: se finaliza la relación, nunca DELETE físico); el resto se protege con PROTECT.
 """
 from django.conf import settings
+from django.core.validators import MaxValueValidator
 from django.db import models
 
 from common import archivos
@@ -181,6 +182,14 @@ class TipoDocumento(ModeloBase):
     nombre = models.CharField(max_length=100, unique=True)
     descripcion = models.CharField(max_length=255, blank=True)
     activo = models.BooleanField(default=True)
+    # Vive acá y no en Parametro porque es un atributo del tipo: se borra con él y no hay
+    # claves sueltas que se desincronicen del catálogo. Un tipo nuevo nace avisando a 30
+    # días sin que nadie lo configure.
+    dias_aviso = models.PositiveSmallIntegerField(
+        default=30,
+        validators=[MaxValueValidator(180)],
+        help_text="Días de anticipación con que se avisa el vencimiento de este documento.",
+    )
 
     class Meta:
         verbose_name = "tipo de documento"
