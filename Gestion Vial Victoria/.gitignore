@@ -1,0 +1,3 @@
+# Permisos de Claude Code aceptados en ESTA máquina: rutas absolutas y scratchpads de
+# sesión. `settings.json` (config compartida del proyecto) sí se versiona.
+.claude/settings.local.json
