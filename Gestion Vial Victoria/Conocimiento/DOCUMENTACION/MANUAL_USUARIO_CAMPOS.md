@@ -2,8 +2,12 @@
 
 **Sistema de Gestión RRHH · Grupo Vial Victoria / Premocor**
 **Versión:** MVP 1 · **Fecha:** 15 de julio de 2026 · rama `fase-0-verificada`
-**Última actualización:** 15/07/2026 — se sumaron el archivo de respaldo del documento
-(§3.6) y los respaldos de la novedad (§5.3), que antes no existían.
+**Última actualización:** 15/07/2026 — se cerraron cuatro de los huecos que este mismo
+manual había señalado: la **alerta de vencimientos de toda la dotación** (CU-07, §7.1), las
+**alertas del día** del panel —contratos, certificados pendientes y cumpleaños— y la
+**parametría de avisos** por tipo de documento (§3.6), que estaba fija en el código. Antes
+se habían sumado el archivo de respaldo del documento (§3.6) y los respaldos de la novedad
+(§5.3).
 
 ---
 
@@ -107,7 +111,7 @@ cadena; el beneficio es que el dato nunca está mal.
 
 | Campo | Qué es | Estado | Reglas y detalles |
 |---|---|---|---|
-| **Fecha de nacimiento** | — | Opcional | 💤 No alimenta ninguna métrica hoy, **pero es el campo con más valor dormido del sistema** (ver §8.1): avisos de cumpleaños y pirámide etaria dependen de él. |
+| **Fecha de nacimiento** | — | Opcional | ⭐ Alimenta los **cumpleaños del día** en el panel (§7.1). Sin fecha, a esa persona no la saluda nadie. Queda pendiente la pirámide etaria (§8.1). |
 | **Teléfono** | Contacto directo. | Opcional | Operativo. |
 | **Email** | Correo. | Opcional | 💤 Operativo hoy. Es el canal natural de los avisos automáticos cuando se activen. |
 | **Dirección** | Domicilio. | Opcional | 💤 Texto libre: sirve para buscar a la persona, no para analizar (ver §8.3). |
@@ -142,8 +146,8 @@ etapas tiene tres juegos de estos datos.
 | **Sector** | RRHH, Administración, Obra, Logística… | Opcional | 💤 Transversal al grupo (los sectores no se duplican por empresa). Se puede filtrar por sector, pero **ninguna métrica se abre por sector** (ver §8.1 — es el hueco analítico más grande). |
 | **Puesto** | Cargo. | Opcional | 💤 Mismo caso que Sector. |
 | **Jornada legal** | Completa (8h), Reducida (6h), Media (4h) o Rotativa. | Opcional | 💤 Lista cerrada, agregable, sin usar. Es lo que permitiría medir dotación equivalente en vez de contar cabezas. |
-| **Tipo de contrato** | Indeterminado, Plazo fijo, Eventual, Temporada, Pasantía. | Opcional (Indeterminado por defecto) | 💤 Lista cerrada, agregable, sin usar. |
-| **Vencimiento de contrato** | Fin previsto del contrato. | Opcional | 💤 **Hueco operativo, no solo analítico.** El sistema guarda la fecha pero **no avisa nada** cuando se acerca. Un plazo fijo puede vencer sin que nadie se entere (ver §8.1). |
+| **Tipo de contrato** | Indeterminado, Plazo fijo, Eventual, Temporada, Pasantía. | Opcional (Indeterminado por defecto) | ⭐ Decide si el contrato **se vigila**: el Indeterminado no vence y nunca alerta; todos los demás sí. Falta agregarlo como métrica de temporalidad (§8.2). |
+| **Vencimiento de contrato** | Fin previsto del contrato. | Opcional | ⭐ Alimenta la alerta de vencimientos (CU-07). **Ojo: dejarlo vacío en un contrato a plazo NO lo deja tranquilo** — aparece en rojo, primero de la lista. No es un descuido del sistema: un plazo fijo sin fecha de fin es justo lo que hay que revisar. |
 | **Estado** | Activa o Finalizada. | Automático | 📊 Lo mueve la baja, no se edita a mano. Es la fuente de verdad del KPI de empleados activos. |
 | **Fecha de egreso** | Cuándo terminó. | Automático (en la baja) | 📊 Alimenta egresos del mes y rotación. No puede ser anterior al ingreso. |
 | **Motivo de egreso** | Renuncia, Fin de contrato, Despido, Jubilación, Mudanza, Otro. | Automático (en la baja) | 💤 **Se pide en cada baja y no se usa para nada.** Lista cerrada, perfectamente agregable. Ver §8.1: separa rotación voluntaria de involuntaria, que son dos problemas distintos con dos soluciones distintas. |
@@ -155,9 +159,17 @@ etapas tiene tres juegos de estos datos.
 |---|---|---|---|
 | **Tipo de documento** | Carnet, apto médico, CNRT, contrato… | **Obligatorio** | Catálogo administrable. **Un solo documento vigente por tipo y por persona**: renovar el apto médico es mover su fecha de vencimiento, no cargar otro. En la edición el tipo no se cambia: sería otro documento, no este. |
 | **Número** | Número o identificación. | Opcional | 💤 |
-| **Fecha de vencimiento** | Cuándo caduca. | Opcional | 💤 **Ver §8.1 — el hueco más caro del sistema.** La ficha del empleado pinta el documento en rojo (vencido) o amarillo (vence en ≤30 días), **pero solo si alguien abre esa ficha**. No existe el listado "quién tiene documentación por vencer". |
+| **Fecha de vencimiento** | Cuándo caduca. | Opcional | ⭐ **Alimenta la alerta de toda la dotación** (CU-07) y la tarjeta del panel, además del semáforo de la ficha. Sin fecha no hay alerta: el documento no se vigila. La anticipación del aviso la define el **tipo** (ver abajo). |
 | **Archivo de respaldo** | El scan (PDF o imagen). | Opcional | Hasta 10 MB. **Opcional a propósito**: el control de vencimientos funciona con la fecha sola y el scan puede llegar después. Se descarga solo desde la ficha: nunca por una URL que cualquiera con el link pueda abrir. |
 | **Observaciones** | Notas. | Opcional | 💤 |
+
+> **Con cuántos días avisa cada tipo.** Lo define el **tipo de documento**, no el documento
+> de cada persona: se configura una vez en *Configuración → Parametría de alertas* y aplica
+> a toda la dotación. Todos arrancan en **30 días**; el apto médico puede subirse a 60 si se
+> quiere más margen para conseguir turno, sin tocar el carnet. Un tipo nuevo nace avisando a
+> 30 sin que nadie lo configure, y aparece **solo** en la pantalla: las filas salen del
+> catálogo real. El valor va de 0 a 180 días —0 significa "avisame recién cuando venció",
+> que es una decisión legítima—. Los contratos a plazo tienen su propia fila.
 
 > **Dónde vive el archivo.** Nunca en la base: ahí va solo la ruta (~80 caracteres). El
 > archivo va a una carpeta del servidor (hoy, un volumen de Docker; cuando haya deploy, un
@@ -170,9 +182,11 @@ etapas tiene tres juegos de estos datos.
 > puntual no vive acá** — el certificado de una licencia o los estudios de un accidente
 > cuelgan de su novedad (§5.3), que sí los conserva todos.
 >
-> La excepción a discutir es el **apto médico**: hoy se pisa como el resto, pero es el
-> único de la lista con valor probatorio. Si hay un accidente y la ART pregunta "¿estaba
-> apto en esa fecha?", el apto viejo es la prueba.
+> **El apto médico se pisa como el resto — decisión tomada (15/07/2026), revisable.** Es el
+> único de la lista con valor probatorio: si hay un accidente y la ART pregunta "¿estaba
+> apto en esa fecha?", el apto viejo sería la prueba, y hoy esa prueba no se conserva. Se
+> deja así a sabiendas, no por omisión. Si algún día se decide conservarlo, el lugar natural
+> es el mismo que ya usa la bitácora de novedades (§5.3): apilar, no pisar.
 
 > **Nota:** un documento cargado por error **sí se puede borrar** (a diferencia de la
 > relación laboral). Un error de carga no es un hecho de la historia laboral que valga la
@@ -252,14 +266,31 @@ Premocor* — no quien está activo en Vial Victoria y alguna vez pasó por Prem
 Se registra cada documento con su vencimiento. Un vigente por tipo. Renovar = mover la
 fecha de vencimiento del documento existente.
 
-### CU-07 · Ver documentación por vencer ⚠️ **parcialmente implementado**
+### CU-07 · Ver documentación por vencer ✅
 
-Este caso de uso **está en el alcance acordado pero hoy funciona a medias**: la ficha de
-cada empleado pinta sus documentos (rojo = vencido, amarillo = vence dentro de 30 días),
-pero **no existe la vista que cruce a toda la dotación**. Para saber quiénes tienen el
-apto médico por vencer hay que abrir las fichas de a una.
+**Quién:** RRHH, Admin o Supervisor. **Dónde:** *Alertas y vencimientos*.
 
-Ver §8.1: es el hueco más caro del sistema y el más barato de cerrar.
+La pantalla cruza **toda la dotación** y agrupa por tipo de documento, con los contratos a
+plazo al final. Arriba, el resumen: cuántos vencidos, cuántos por vencer, cuántos al día.
+
+Qué cuenta como alerta, y por qué:
+
+- **Solo la gente activa.** Un carnet vencido de alguien que se fue hace dos años no es un
+  problema: es historia. Si contara, la lista se llenaría de ruido que nadie puede accionar.
+- **Un documento sin fecha de vencimiento no alerta**: no hay nada que vigilar.
+- **Un contrato a plazo fijo sin fecha de fin sí alerta, en rojo.** No es que esté al día:
+  es que no se sabe cuándo termina, y eso es justo lo que hay que revisar. Aparece primero,
+  antes que cualquier fecha. El contrato indeterminado no aparece nunca: no termina.
+- **El documento es de la persona, no de la empresa.** Quien trabaja en las dos empresas del
+  grupo tiene un carnet, no dos: aparece una sola vez.
+
+**La anticipación de cada aviso se configura** en *Configuración → Parametría de alertas*,
+por tipo de documento (§3.6). El apto médico puede pedir más margen que el carnet.
+
+> **El panel también avisa.** La tarjeta *Alertas del día* del panel general resume lo que
+> hay que mirar hoy —vencidos y por vencer, certificados que faltan, cumpleaños— ordenado
+> por urgencia: lo vencido siempre antes que un cumpleaños. Es un **resumen**: muestra los
+> primeros 6 y el link lleva a la lista completa.
 
 ---
 
@@ -304,7 +335,7 @@ decoración: gobiernan las reglas.
 | **Fecha de turno de praxis** | Turno médico. | Opcional | 💤 |
 | **Fecha de fin estimada** | Cuándo se preveía el alta. | Opcional | 💤 Contra la fecha de fin real mide **cuánto se desvían las licencias de lo previsto** (§8.2). |
 | **Fecha de reintegro** | Vuelta efectiva. | Opcional | 💤 |
-| **Certificado recibido el** | Cuándo se presentó. | Opcional | 💤 **Se carga y no se usa** para alertas. Los tipos con "pide certificado" deberían avisar si pasa el plazo; ese aviso **no existe** (§8.1). Es la *fecha*: el certificado en sí va como respaldo (§5.3). |
+| **Certificado recibido el** | Cuándo se presentó. | Opcional | ⭐ Vacío en un tipo que **pide certificado** = la novedad aparece en **Certificados pendientes** del panel (§7.1), desde que empieza. Cargarlo la saca de la lista. Es la *fecha*: el certificado en sí va como respaldo (§5.3). |
 | **Cantidad de horas** | Horas extra. | Condicional | 💤 **Obligatorio** solo para Horas extra; el sistema lo exige. Y no hay ninguna métrica de horas extra (§8.1). |
 | **Novedad origen** | A qué licencia madre pertenece. | Automático | 📊 Lo pone el sistema al prorrogar. Apunta **siempre a la madre**, nunca a la prórroga anterior: la cadena es plana. Evita el doble conteo en las métricas. |
 | **Relación laboral** | Contexto de empresa/contrato. | Automático | 📊 Por defecto, la relación activa del empleado. Es lo que le da empresa a la novedad. |
@@ -453,6 +484,10 @@ silencio.
 | **Ausentismo del mes** | **Cantidad de novedades** (no de días) de tipo **Falta, Licencia médica o Accidente** que empiezan en el mes. Excluye anuladas y rechazadas. Cuenta solo las madres: una licencia con 3 prórrogas es **un** evento. | Novedad: `tipo`, `fecha_desde`, `estado`, `novedad_origen` |
 | **Índice de rotación** | `((ingresos + egresos) / 2) ÷ dotación promedio × 100`. Fórmula estándar. Disponible mensual y anual (12 meses), con serie para el gráfico. | Relación: `fecha_ingreso`, `fecha_egreso` |
 | **Ranking de faltas** | Top 5 empleados por **días de falta** del mes (ambos extremos inclusive). Acá sí se cuentan **días**, no eventos. | Novedad: `tipo`, `fecha_desde`, `fecha_hasta`, `empleado` · Relación: `empresa` |
+| **Vencimientos de la dotación** | Documentos y contratos de la **gente activa**, agrupados por tipo, con semáforo por item (vencido / por vencer / al día) y resumen. Cada tipo usa **su propia** anticipación. | Documento: `fecha_vencimiento`, `tipo_documento` · TipoDocumento: `dias_aviso` · Relación: `estado`, `tipo_contrato`, `fecha_vencimiento_contrato`, `empresa` |
+| **Alertas del día** | Resumen accionable del panel, ordenado por urgencia (vencido → por vencer → cumpleaños) y recortado a 6. Informa el total real aunque muestre menos. | Todo lo de arriba · Novedad: `certificado_recibido_en`, `estado` · TipoNovedad: `requiere_certificado` · Empleado: `fecha_nacimiento` |
+| **Certificados pendientes** | Novedades **ya empezadas** que exigen certificado y no lo tienen, de gente activa. Excluye anuladas y rechazadas: la rechazada nunca pasó y la anulada se borra de los hechos. | Novedad: `certificado_recibido_en`, `fecha_desde`, `estado` · TipoNovedad: `requiere_certificado` |
+| **Cumpleaños del día** | Empleados activos que cumplen años **hoy** (mes y día). Con más de uno, se resume en una línea. | Empleado: `fecha_nacimiento` · Relación: `estado` |
 
 > ⚠️ **Advertencia de lectura — "Ausentismo del mes" mide eventos, no días.** Una licencia
 > de 30 días y un permiso de 2 horas suman **1 cada uno**. Es un contador de episodios,
@@ -468,23 +503,33 @@ silencio.
 
 ### 7.2 Mapa rápido: campo → métrica
 
-**Campos que trabajan (7 de los ~45 que se cargan):**
+**Campos que trabajan (15 de los ~45 que se cargan):**
 
 | Campo | Alimenta |
 |---|---|
 | Relación · `fecha_ingreso` | Activos · Variación · Ingresos · **Rotación** · Antigüedad |
 | Relación · `fecha_egreso` | Variación · Egresos · **Rotación** |
-| Relación · `estado` | Activos |
-| Relación · `empresa` | Ranking de faltas (etiqueta) |
+| Relación · `estado` | Activos · **Vencimientos** (solo dotación activa) |
+| Relación · `empresa` | Ranking de faltas · **Vencimientos** (etiqueta) |
+| Relación · `tipo_contrato` | **Vencimientos** (el indeterminado no vence) |
+| Relación · `fecha_vencimiento_contrato` | **Vencimientos · Alertas del día** |
+| Documento · `fecha_vencimiento` | **Vencimientos · Alertas del día** |
+| Documento · `tipo_documento` | **Vencimientos** (agrupación) |
+| TipoDocumento · `dias_aviso` | **Vencimientos** (umbral del semáforo) |
+| Empleado · `fecha_nacimiento` | **Cumpleaños del día** |
 | Novedad · `tipo` | Ausentismo · Ranking |
-| Novedad · `fecha_desde` | Ausentismo · Ranking |
+| Novedad · `fecha_desde` | Ausentismo · Ranking · **Certificados pendientes** |
 | Novedad · `fecha_hasta` | Ranking (días) |
-| Novedad · `estado` | Ausentismo · Ranking (exclusión) |
+| Novedad · `estado` | Ausentismo · Ranking · **Certificados** (exclusión) |
+| Novedad · `certificado_recibido_en` | **Certificados pendientes** |
 | Novedad · `novedad_origen` | Ausentismo (evita doble conteo) |
 
-**La conclusión incómoda:** el sistema captura del orden de **45 campos** y las métricas
-usan **9**. Todo lo demás es ficha, operación o potencial dormido. La sección siguiente
-es sobre eso.
+**La conclusión, revisada:** el sistema captura del orden de **45 campos**. Cuando se
+escribió la primera versión de este manual, las métricas usaban **9**; hoy usan **15**. Los
+6 que se sumaron no son campos nuevos: son los mismos que ya se cargaban desde siempre y a
+los que por fin alguien les hizo una pregunta. Eso es exactamente lo que decía el veredicto
+—*el dato está, falta preguntarle*— y sigue valiendo para los que quedan. La sección
+siguiente es sobre eso.
 
 ---
 
@@ -504,16 +549,27 @@ los lea. Ordenados por relación valor/esfuerzo:
 
 | # | Campo | Métrica que habilita | Por qué importa |
 |:--:|---|---|---|
-| **1** | Documentos · `fecha_vencimiento` | **Alerta de vencimientos de toda la dotación** | 🔴 **El hueco más caro.** El dato está cargado y hasta indexado en la base *específicamente para esta consulta* — la consulta nunca se escribió. Hoy solo se ve documento por documento abriendo cada ficha. El objetivo declarado del sistema es "que nadie maneje con el carnet vencido", y eso hoy depende de que alguien se acuerde de mirar. **El umbral de 30 días está fijo en el código**, cuando ya existe una tabla de parámetros pensada para configurarlo. |
-| **2** | Novedad · `clasificacion` | **Ausentismo justificado vs. injustificado** | 🔴 Se pide en cada carga y no se lee nunca. Son dos fenómenos distintos: el justificado se gestiona, el injustificado se sanciona. Sumarlos juntos, como hace el panel hoy, **oculta el único ausentismo sobre el que se puede accionar**. |
-| **3** | Relación · `motivo_egreso` | **Rotación voluntaria vs. involuntaria** | 🔴 Es la métrica estándar de RRHH y el sistema tiene el dato en cada baja. Un 15% de rotación por renuncias (la gente se va) y un 15% por despidos (la empresa saca) exigen decisiones opuestas — el índice actual los suma y no distingue. |
-| **4** | Relación · `sector` y `puesto` | **Abrir todas las métricas por sector** | 🔴 Se puede *filtrar* por sector pero ninguna métrica se *abre* por sector. "12% de ausentismo" no dice nada accionable; "30% en Obra y 3% en Administración" señala dónde está el problema. El dato está: falta agrupar. |
-| **5** | Relación · `fecha_vencimiento_contrato` | **Alerta de contratos por vencer** | 🟠 Mismo caso que los documentos: la fecha se guarda, nadie avisa. Un plazo fijo que vence sin aviso es un problema legal, no una molestia. |
-| **6** | Novedad · `certificado_recibido_en` | **Licencias sin certificado / demora de presentación** | 🟠 El catálogo ya marca qué tipos exigen certificado, y la fecha de presentación se carga. La alerta "sin certificado tras X días" está descrita en la especificación y **no existe en el código**. |
-| **7** | Empleado · `fecha_nacimiento` | **Cumpleaños del mes · pirámide etaria** | 🟠 Los cumpleaños figuran en el alcance acordado y no están implementados. Es el clásico "victoria fácil": alto valor percibido, esfuerzo mínimo. |
-| **8** | Novedad · `cantidad_horas` | **Horas extra por mes / sector / empleado** | 🟠 El sistema **obliga** a cargar las horas y después no las suma nunca. Se está pidiendo un dato que no se mira: es el caso más flagrante del sistema. |
-| **9** | Novedad · `fecha_aviso_empleado` | **Avisos tardíos** | 🟡 Comparar el aviso con el inicio de la ausencia mide cultura de trabajo. Dato cargado, cero uso. |
-| **10** | Novedad · `fecha_hasta` (agregada) | **Días de ausentismo** (no solo eventos) | 🟡 El ranking de faltas ya calcula días — la misma lógica aplicada a licencias y accidentes convertiría el contador de eventos en una métrica de tiempo perdido real. |
+| **1** | Novedad · `clasificacion` | **Ausentismo justificado vs. injustificado** | 🔴 Se pide en cada carga y no se lee nunca. Son dos fenómenos distintos: el justificado se gestiona, el injustificado se sanciona. Sumarlos juntos, como hace el panel hoy, **oculta el único ausentismo sobre el que se puede accionar**. |
+| **2** | Relación · `motivo_egreso` | **Rotación voluntaria vs. involuntaria** | 🔴 Es la métrica estándar de RRHH y el sistema tiene el dato en cada baja. Un 15% de rotación por renuncias (la gente se va) y un 15% por despidos (la empresa saca) exigen decisiones opuestas — el índice actual los suma y no distingue. |
+| **3** | Relación · `sector` y `puesto` | **Abrir todas las métricas por sector** | 🔴 Se puede *filtrar* por sector pero ninguna métrica se *abre* por sector. "12% de ausentismo" no dice nada accionable; "30% en Obra y 3% en Administración" señala dónde está el problema. El dato está: falta agrupar. |
+| **4** | Novedad · `cantidad_horas` | **Horas extra por mes / sector / empleado** | 🟠 El sistema **obliga** a cargar las horas y después no las suma nunca. Se está pidiendo un dato que no se mira: es el caso más flagrante que queda. |
+| **5** | Novedad · `fecha_aviso_empleado` | **Avisos tardíos** | 🟡 Comparar el aviso con el inicio de la ausencia mide cultura de trabajo. Dato cargado, cero uso. |
+| **6** | Novedad · `fecha_hasta` (agregada) | **Días de ausentismo** (no solo eventos) | 🟡 El ranking de faltas ya calcula días — la misma lógica aplicada a licencias y accidentes convertiría el contador de eventos en una métrica de tiempo perdido real. |
+| **7** | Empleado · `fecha_nacimiento` (agregada) | **Pirámide etaria** | 🟡 Los cumpleaños del día ya salen (§7.1). Agregada por tramo de edad, la misma fecha describe la composición de la dotación — otra pregunta al mismo dato. |
+
+#### Cerrados desde la versión anterior de este manual ✅
+
+Cuatro de los huecos que esta sección señalaba ya no existen. Se dejan listados a propósito:
+el valor de la sección no es la lista, es el patrón —**el dato estaba cargado y solo faltaba
+la consulta**— y estos son la prueba de que el patrón se sostiene.
+
+| Campo | Qué lo cerró | Qué decía este manual |
+|---|---|---|
+| Documentos · `fecha_vencimiento` | **Alerta de vencimientos de la dotación** (CU-07) | *"El hueco más caro. El dato está cargado y hasta indexado en la base específicamente para esta consulta — la consulta nunca se escribió."* Era exactamente eso: la consulta, y nada más. |
+| Documentos · umbral de aviso | **Parametría por tipo** (§3.6) | *"El umbral de 30 días está fijo en el código, cuando ya existe una tabla de parámetros pensada para configurarlo."* Hoy cada tipo tiene el suyo y se edita desde Configuración, sin deploy. |
+| Relación · `fecha_vencimiento_contrato` | **Contratos en la alerta** (CU-07) | *"La fecha se guarda, nadie avisa. Un plazo fijo que vence sin aviso es un problema legal."* Además, el que **no tiene** fecha cargada ahora también alerta. |
+| Novedad · `certificado_recibido_en` | **Certificados pendientes** (§7.1) | *"La alerta 'sin certificado tras X días' está descrita en la especificación y no existe en el código."* Ahora existe, en la tarjeta del panel. |
+| Empleado · `fecha_nacimiento` | **Cumpleaños del día** (§7.1) | *"El clásico victoria fácil: alto valor percibido, esfuerzo mínimo."* Lo fue. Queda pendiente la pirámide etaria (fila 7). |
 
 ### 8.2 Potencial medio — valen la pena cuando haya volumen
 
@@ -558,9 +614,10 @@ se puede agregar**. Hay que decidir entre rediseñarlo o aceptar que es solo ope
 
 | Veredicto | Campos | Acción sugerida |
 |---|---|---|
-| 🔴 **Métrica urgente, dato listo** | `fecha_vencimiento` (documentos), `clasificacion`, `motivo_egreso`, `sector`/`puesto` | Construir la consulta. El dato ya está. |
-| 🟠 **Métrica de alto valor, dato listo** | `fecha_vencimiento_contrato`, `certificado_recibido_en`, `fecha_nacimiento`, `cantidad_horas` | Siguiente iteración. |
-| 🟡 **Mejora incremental** | `fecha_aviso_empleado`, días de ausentismo, `aprobada_en`, antigüedad, `tipo_contrato`, `jornada_legal` | Cuando haya volumen. |
+| ✅ **Ya alimenta una métrica** | `fecha_vencimiento` (documentos), `fecha_vencimiento_contrato`, `certificado_recibido_en`, `fecha_nacimiento`, `tipo_contrato`, `dias_aviso` | Ninguna. Eran 🔴/🟠 en la versión anterior. |
+| 🔴 **Métrica urgente, dato listo** | `clasificacion`, `motivo_egreso`, `sector`/`puesto` | Construir la consulta. El dato ya está. |
+| 🟠 **Métrica de alto valor, dato listo** | `cantidad_horas` | Siguiente iteración. |
+| 🟡 **Mejora incremental** | `fecha_aviso_empleado`, días de ausentismo, `aprobada_en`, antigüedad, `jornada_legal`, pirámide etaria | Cuando haya volumen. |
 | 🔧 **Rediseñar para poder medir** | `art`, `obra_social` | Convertir a catálogo. Barato, desbloquea métricas. |
 | ✅ **Correcto como está (operativo, no métrico)** | `contacto_emergencia`, `motivo`, `observaciones`, `direccion`, `telefono`, `email` | Ninguna. |
 | 🔒 **Reservado a fase futura** | `id_huella`, `exento_marcacion`, `generada_automaticamente`, praxis, `cuil` | No tocar. |
@@ -568,12 +625,18 @@ se puede agregar**. Hay que decidir entre rediseñarlo o aceptar que es solo ope
 
 > **La conclusión de fondo:** después de revisar los ~45 campos del sistema, **no hay un
 > solo campo que convenga eliminar**. Los que no se usan se dividen en tres grupos, y
-> ninguno es basura: los que esperan una consulta que nunca se escribió (la mayoría, y son
-> los que más duelen), los que están reservados a propósito para fases futuras, y los que
-> son operativos por naturaleza y nunca serán métrica.
+> ninguno es basura: los que esperan una consulta que nunca se escribió (los que más
+> duelen), los que están reservados a propósito para fases futuras, y los que son
+> operativos por naturaleza y nunca serán métrica.
 >
 > El problema del sistema **no es que se cargue de más: es que se lee de menos.** El dato
 > está. Falta preguntarle.
+>
+> **Y se le preguntó.** Entre la primera versión de este manual y esta, los campos que
+> alimentan métricas pasaron de 9 a 15 **sin agregar un solo campo al formulario**: los seis
+> nuevos ya se cargaban desde siempre. Ninguno requirió pedirle más datos a nadie; hicieron
+> falta la consulta que faltaba y un lugar donde configurarla. Los tres 🔴 que quedan
+> —`clasificacion`, `motivo_egreso`, `sector`/`puesto`— son el mismo caso, todavía abierto.
 
 ---
 
