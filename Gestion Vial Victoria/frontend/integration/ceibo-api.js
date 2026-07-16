@@ -480,6 +480,75 @@
       return Object.assign(out, dashRotacion(d, rotState || "m"));
     },
 
+    // Vencimientos de toda la dotación (documentos + contratos). Como el dashboard:
+    // devuelve el dict crudo, o null si el rol no ve la dotación / falla la red.
+    async loadVencimientos() {
+      try { return await jget("/alertas/vencimientos/"); }
+      catch (e) { console.warn("[ceibo] vencimientos no disponibles", e); return null; }
+    },
+
+    // Alertas del día (tarjeta del panel): vencimientos + certificados + cumpleaños.
+    async loadAlertasDia() {
+      try { return await jget("/alertas/del-dia/"); }
+      catch (e) { console.warn("[ceibo] alertas del día no disponibles", e); return null; }
+    },
+    // El backend manda `estado` (bad/warn/info), no colores: el semáforo lo pinta el diseño.
+    alertasDiaVals(d, ui) {
+      return {
+        alertasDia: (d.items || []).map(function (i) {
+          return { title: i.title, text: i.text, dot: ui.dotDe(i.estado) };
+        }),
+        hoyLabel: d.fecha,
+      };
+    },
+
+    // Parametría de alertas: con cuántos días de anticipación avisa cada cosa.
+    async loadConfigVenc() {
+      try { return (await jget("/config/vencimientos/")).filas; }
+      catch (e) { console.warn("[ceibo] config de vencimientos no disponible", e); return null; }
+    },
+    async guardarDiasAviso(clave, dias) {
+      return await jsend("PATCH", "/config/vencimientos/", { clave: clave, dias: dias });
+    },
+    // Traduce la respuesta a las vars del diseño (vencGroups, vencResumen).
+    // `ui` son los helpers de estilo del componente: el semáforo lo define el canvas, acá
+    // solo se lo llama. `mockGroups` aporta el ícono SVG, igual que mockMetrics en el panel.
+    vencimientosVals(d, ui, mockGroups) {
+      var icono = (mockGroups && mockGroups[0] && mockGroups[0].icon) || "";
+      var grupos = (d.grupos || []).map(function (g) {
+        var items = g.items || [];
+        var n = { ok: 0, warn: 0, bad: 0 };
+        items.forEach(function (i) { n[i.estado] = (n[i.estado] || 0) + 1; });
+        return {
+          tipo: g.tipo,
+          icon: icono,
+          items: items.map(function (i) {
+            return {
+              emp: i.empleado,
+              empresa: i.empresa,
+              // Sin fecha cargada: el guion es el mismo que usa el canvas en su mock.
+              fecha: i.fecha ? fmtISOtoDMY(i.fecha) : "—",
+              dot: ui.dot(ui.semColor(i.estado)),
+              badge: ui.badge(i.estado),
+              label: ui.semLabel(i.estado),
+            };
+          }),
+          summary: n.ok + " al día · " + n.warn + " por vencer · " + n.bad + " vencidos",
+        };
+      });
+      var r = d.resumen || {};
+      return {
+        vencGroups: grupos,
+        // El resumen viene contado del backend: es la dotación entera, no solo lo que
+        // se está mostrando.
+        vencResumen: [
+          { n: r.vencidos || 0, label: "Vencidos", dotBig: ui.dot("var(--bad)") },
+          { n: r.por_vencer || 0, label: "Próximos a vencer", dotBig: ui.dot("var(--warn)") },
+          { n: r.al_dia || 0, label: "Al día", dotBig: ui.dot("var(--ok)") },
+        ],
+      };
+    },
+
     // Novedades con cadenas expandidas: se agrupan las prórrogas bajo su madre
     // (novedad_origen) para tener la cadena completa sin N+1.
     async listNovedades() {

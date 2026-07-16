@@ -35,12 +35,37 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
     const d = await window.CeiboAPI.loadDashboard();
     this.setState({ dashboard: d });
   };
+  reloadVencimientos = async () => {
+    const v = await window.CeiboAPI.loadVencimientos();
+    this.setState({ vencimientos: v });
+  };
+  reloadAlertasDia = async () => {
+    const a = await window.CeiboAPI.loadAlertasDia();
+    this.setState({ alertasDiaData: a });
+  };
+  reloadConfigVenc = async () => {
+    const filas = await window.CeiboAPI.loadConfigVenc();
+    this.setState({ cfgVenc: filas });
+  };
+  // El diseño pinta el semáforo (this.dot/semColor); 'info' no es parte de él —el cumpleaños
+  // no es una alerta— así que usa el color de marca.
+  _dotDe = (estado) => this.dot(estado === 'info' ? 'var(--accent)' : this.semColor(estado));
+  _uiSem = () => ({
+    dot: (c) => this.dot(c),
+    badge: (k) => this.badge(k),
+    semColor: (s) => this.semColor(s),
+    semLabel: (s) => this.semLabel(s),
+    dotDe: this._dotDe,
+  });
   async componentDidMount() {
     try {
       await window.CeiboAPI.init();
       await this.reloadEmpleados();
       await this.reloadNovedades();
       await this.reloadDashboard();
+      await this.reloadVencimientos();
+      await this.reloadAlertasDia();
+      await this.reloadConfigVenc();
       this.setState({ tiposDoc: await window.CeiboAPI.listTiposDoc() });
       const e = this.state.empleados;
       if (e && e.length) { this.setState({ selEmp: e[0].id }); this.recargarDocs(e[0].id); }
@@ -64,8 +89,55 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
     if (this.state.dashboard) {
       Object.assign(v, window.CeiboAPI.dashboardVals(this.state.dashboard, this.state.rot, v.metrics));
     }
+    // Vencimientos reales: reemplazan los 4 grupos mock del canvas.
+    if (this.state.vencimientos) {
+      Object.assign(v, window.CeiboAPI.vencimientosVals(
+        this.state.vencimientos, this._uiSem(), v.vencGroups));
+    }
+    // Alertas del día: reemplazan las 4 inventadas del canvas y descongelan la fecha.
+    if (this.state.alertasDiaData) {
+      Object.assign(v, window.CeiboAPI.alertasDiaVals(this.state.alertasDiaData, this._uiSem()));
+    }
+    // Parametría real: las filas salen del catálogo, así que un tipo nuevo aparece solo.
+    if (this.state.cfgVenc) {
+      v.cfgRows = this.state.cfgVenc.map((f) => ({
+        label: f.label, hint: f.hint, val: f.dias,
+        inc: () => this.cfgVencChange(f.clave, 5),
+        dec: () => this.cfgVencChange(f.clave, -5),
+      }));
+    }
     return v;
   }
+  // ===== parametría de alertas =====
+  _cfgTimers = {};
+  cfgVencChange = (clave, delta) => {
+    // Optimista: el +/- tiene que responder en el acto. Si el guardado falla, se recarga
+    // del server y el número vuelve solo — mejor que bloquear el botón esperando la red.
+    this.setState((s) => ({
+      cfgVenc: s.cfgVenc.map((f) => f.clave === clave
+        ? { ...f, dias: Math.max(0, Math.min(180, f.dias + delta)) } : f),
+    }));
+    // Debounce: quien toca `+` cinco veces manda UN PATCH con el valor final y no cinco
+    // que pueden llegar desordenados y dejar guardado un número intermedio.
+    clearTimeout(this._cfgTimers[clave]);
+    this._cfgTimers[clave] = setTimeout(() => this._guardarCfgVenc(clave), 500);
+  };
+  _guardarCfgVenc = async (clave) => {
+    const fila = (this.state.cfgVenc || []).find((f) => f.clave === clave);
+    if (!fila) return;
+    try {
+      await window.CeiboAPI.guardarDiasAviso(clave, fila.dias);
+      // Lo que se acaba de configurar cambia el semáforo: sin esto, Alertas seguiría
+      // mostrando el umbral viejo hasta la próxima recarga.
+      this.reloadVencimientos();
+      this.reloadAlertasDia();
+    } catch (e) {
+      console.error('[ceibo] config vencimientos', e);
+      window.CeiboAPI.toast(e.message || String(e), 'error');
+      await this.reloadConfigVenc();   // el server manda: se descarta lo optimista
+    }
+  };
+  goCfg = () => { this.setView('config'); this.reloadConfigVenc(); };
   openAltaNov = () => {
     this.setState({ modal: 'altanov', editNovId: null, novFormTipo: 'Falta' });
     setTimeout(() => window.CeiboAPI.populateNovForm(), 60);
@@ -176,6 +248,11 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
       });
     }).catch(function () {});
   };
+  // Entrar a la pantalla recarga. Un documento cargado en una ficha, o un alta/baja, cambia
+  // lo que vence; sin esto se vería el estado del momento en que se abrió la app. Es el
+  // único punto de recarga a propósito: los vencimientos no se editan desde esta pantalla.
+  goAle = () => { this.setView('alertas'); this.reloadVencimientos(); };
+  goDash = () => { this.setView('dashboard'); this.reloadAlertasDia(); };
   openDocNuevo = () => {
     this.setState({ modal: 'doc', docEditId: null, docArchivoNombre: '' });
     // Tras montar el modal: deja el select en el primer tipo libre (los ya cargados no
@@ -252,7 +329,7 @@ EDICIONES = [
     # --- state: campos nuevos ---
     (
         "theme: 'dark', view: 'dashboard', selEmp: 1,",
-        "theme: 'dark', view: 'dashboard', selEmp: 1,\n    empleados: null, novedades: null, dashboard: null, apiErr: null, altaEditId: null, tiposDoc: null,",
+        "theme: 'dark', view: 'dashboard', selEmp: 1,\n    empleados: null, novedades: null, dashboard: null, apiErr: null, altaEditId: null, tiposDoc: null, vencimientos: null, alertasDiaData: null, cfgVenc: null,",
         "state: campos de integración",
     ),
     # --- novBase(): usar datos reales si están cargados ---
@@ -358,6 +435,11 @@ EDICIONES = [
         '<button onClick="{{ submitDoc }}" style="background:var(--accent);border:none;color:#04201C;font-weight:600;font-size:13px;border-radius:10px;padding:0 20px;height:40px;cursor:pointer;box-shadow:0 4px 14px rgba(45,212,191,.28)">Guardar documento</button>',
         "botón Guardar documento → submitDoc",
     ),
+    # (La fecha de "Alertas del día" estaba congelada en el markup —"Viernes 4 de julio,
+    #  2026"— y se cableó a `{{ hoyLabel }}`. No se inyecta: el cambio se subió al canvas el
+    #  2026-07-15 y el diseño ya lo trae. El canvas calcula su propia fecha para verse solo;
+    #  el valor real lo pisa CeiboAPI.alertasDiaVals.)
+
     # --- dashboard: el ranking mide DÍAS (no cantidad de faltas); se aclara en el título ---
     (
         '<div style="font-weight:600;font-size:15px;color:var(--text)">Ranking de faltas</div>',
