@@ -3,8 +3,9 @@
 **Alcance:** backend `gestion_rrhh/` (Django + DRF + Postgres) y frontend `frontend/`
 (canvas de Claude Design + capa de integración `ceibo-api.js` + `build.py`).
 **Fecha:** 2026-07-14 · rama `fase-0-verificada`.
-**Última actualización:** 2026-07-15 — la sección **B (correctitud e integridad) está
-resuelta**; sus hallazgos se quitaron de este documento (ver "B. Correctitud…" abajo).
+**Última actualización:** 2026-07-15 — las secciones **B (correctitud e integridad)** y
+**C (robustez y rendimiento)** están **resueltas**; sus hallazgos se quitaron de este
+documento (ver "B. Correctitud…" y "C. Robustez…" abajo).
 
 Cada hallazgo tiene un ID (A = seguridad, B = correctitud/integridad, C = robustez,
 D = mejoras) y referencia a archivo y línea. Al final hay una tabla de prioridades.
@@ -126,57 +127,45 @@ un eslabón resuelto por vez. Sin este fix, B3 hacía explotar ese flujo con un
 
 ---
 
-## C. Robustez y rendimiento
+## C. Robustez y rendimiento ✅ resuelta (2026-07-15)
 
-### C1 — N+1 en la lista de empleados 🟡
-`gestion_rrhh/apps/empleados/models.py:105-112` +
-`gestion_rrhh/apps/empleados/api/serializers.py:39`
+Los cinco hallazgos (C1–C5) están arreglados y verificados contra Postgres (112 tests en
+verde + medición de queries sobre la base real + la app corriendo en el navegador). Se
+quitan de este documento; queda acá el registro de qué se hizo y las consecuencias que
+sobreviven al fix.
 
-El serializer expone `activo`, que ejecuta `self.relaciones.filter(...).exists()`:
-una query **por empleado** listado, a pesar de que el selector ya prefetchea
-`relaciones`. Con 25 por página son ~25 queries extra; el patrón se paga también en
-`relacion_activa`.
+| ID | Era | Quedó |
+|---|---|---|
+| C1 | `activo` hacía `.filter().exists()`, que ignora el prefetch: una query **por empleado** listado | Se resuelve sobre `relaciones.all()` — serializar 12 empleados pasó de **12 queries a 0** |
+| C2 | La serie de rotación disparaba 4 COUNT por mes; el panel abría con **71 queries** (este documento decía ~50: estaba corto, medido son 71) | `_Dotacion` lee las relaciones **una vez** y cuenta en memoria — **71 → 5 queries** |
+| C3 | `getAllPages` no miraba `r.ok`: un 401/429/500 devolvía lista parcial y la UI decía "0 empleados" sin error | Lanza error como `jget`; `page_size` 200 → 100 (el tope real del backend, antes se clampeaba en silencio) |
+| C4 | Login y refresh compartían el scope `login` (5/min): varias pestañas renovando cortaban sesiones válidas | Scope `refresh` propio a 30/min — verificado: 8 refresh seguidos no gastan el cupo del login |
+| C5 | El no-solapamiento traía **todas** las novedades del empleado y descartaba por fecha en Python | El rango se filtra en SQL, sobre el índice GiST que ya trae el `ExclusionConstraint` |
 
-**Fix:** resolver sobre el cache prefetcheado
-(`any(r.estado == EstadoRelacion.ACTIVA for r in self.relaciones.all())`).
-
-### C2 — El dashboard dispara ~50 queries por carga 🟡
-`gestion_rrhh/apps/dashboard/selectors.py:143-151`
-
-La serie de rotación de 12 meses llama `_rotacion_periodo` + `_activos_a` por mes
-(3-4 queries cada una). Funciona, pero escala mal y el panel es la pantalla de
-entrada.
-
-**Fix:** agregación única por mes (una query con `TruncMonth` para
-ingresos/egresos y otra para la dotación) o un cache corto (60 s) del dict completo.
-
-### C3 — `getAllPages` ignora errores HTTP 🟡
-`frontend/integration/ceibo-api.js:90-98`
-
-No chequea `r.ok`: si una página responde 401/429/500, `d.results` es `undefined` y
-devuelve silenciosamente una lista parcial o vacía — la UI muestra "0 empleados" sin
-error. Además `page_size=200` supera el `max_page_size=100` del backend (se clampea:
-funciona, pero duplica requests sin saberlo).
-
-**Fix:** lanzar error si `!r.ok` (como hace `jget`) y usar `page_size=100`.
-
-### C4 — Throttle compartido entre login y refresh 🟢
-`gestion_rrhh/apps/usuarios/api/views.py:8-17`
-
-Ambas vistas usan el scope `login` (5/min). Varias pestañas refrescando a la vez
-pueden comerse el cupo y cortar sesiones válidas; y un atacante de fuerza bruta se
-beneficia de que el refresh legítimo comparta su límite.
-
-**Fix:** scope propio para refresh (p. ej. 30/min).
-
-### C5 — Índice compuesto para el chequeo de solapamiento 🟢 (mitigado)
-`gestion_rrhh/apps/novedades/services.py`
-
-`_validar_sin_solapamiento` filtra por `(empleado, estado__in, ocupa_periodo)` y trae
-**todas** las candidatas del empleado a Python. Con historial largo por empleado
-conviene filtrar el rango de fechas en SQL en vez de descartarlo en Python.
-El índice ya no hace falta: el `ExclusionConstraint` de B3 trae su propio índice GiST
-sobre `(empleado_id, daterange(...))`, que cubre este filtro.
+**Consecuencias que quedan vivas:**
+- **El dashboard ahora carga la dotación en memoria.** `_Dotacion` trae
+  `(empleado_id, estado, fecha_ingreso, fecha_egreso)` de todas las relaciones. Con miles
+  de filas son unas pocas tuplas; en **decenas de miles** habría que volver a agregación en
+  SQL. El umbral está documentado en el docstring de la clase, que es donde se va a leer.
+- **Cuidado con la asimetría al tocar `_Dotacion`**: `activos_*` cuenta **personas**
+  distintas, `ingresos_en`/`egresos_en` cuentan **relaciones** (dos altas de la misma
+  persona son dos ingresos). Es la semántica que ya tenían las queries, y es lo primero que
+  se rompe al reescribir. La red es `test_dashboard_api.py`, que fija `hoy` y afirma
+  números exactos.
+- **Efecto lateral a favor:** las 71 queries eran 71 snapshots, así que una escritura
+  concurrente a mitad de render podía dejar el KPI de activos peleado con la serie de
+  rotación. Una sola lectura es un solo snapshot y eso desapareció.
+- **C3 cambia el comportamiento a propósito:** donde antes había una lista a medias sin
+  aviso, ahora hay una excepción. Es lo buscado (un fallo tiene que romper ruidoso, no
+  mentir), pero es un cambio real: un endpoint caído ahora se ve.
+- **`_se_solapan` ya no existe.** El predicado vivía en Python y ahora es
+  `_filtro_solapadas_con` (un `Q`), para no tener la misma regla escrita dos veces y que
+  se desincronicen. Se traduce 1:1, incluido el rango abierto (`fecha_hasta` NULL), que
+  necesita `isnull=True` explícito porque en SQL `fecha_hasta >= x` con NULL no matchea.
+- **Los throttles no tienen test automatizado**: C4 se verificó a mano contra la API viva
+  (8 refresh → 401 sin 429; el 6º login fallido → 429). Un scope mal escrito explota al
+  arrancar, así que el riesgo de que se rompa en silencio es bajo, pero un test de 429
+  seguiría siendo mejor que esta nota.
 
 ---
 
@@ -239,7 +228,8 @@ puntos frágiles del proyecto.
 
 ## Prioridades sugeridas
 
-Toda la sección B salió de esta tabla: está resuelta (2026-07-15).
+Las secciones B y C salieron de esta tabla: están resueltas (2026-07-15). Lo que queda
+pendiente es **toda la sección A** y las mejoras de D.
 
 | Prioridad | ID | Hallazgo | Esfuerzo |
 |---|---|---|---|
@@ -247,14 +237,12 @@ Toda la sección B salió de esta tabla: está resuelta (2026-07-15).
 | 🔴 2 | A2 | Scope en `GET /empleados/{id}/documentos/` | Trivial (1 línea) |
 | 🟠 3 | A3 | PII solo para RRHH/Admin | Bajo |
 | 🟠 4 | A4 | `SECRET_KEY` sin default en prod | Trivial |
-| 🟡 5 | C1 | N+1 de `activo` | Trivial |
-| 🟡 6 | C3 | Errores en `getAllPages` | Trivial |
-| 🟡 7 | C2 | Dashboard en menos queries | Medio |
-| 🟢 8 | D7 | CI mínima | Bajo |
-| 🟢 9 | D2 | Auditoría (RP8) | Alto |
-| 🟢 10 | D3 | Alertas de vencimiento | Medio |
-| 🟢 — | resto | D1, D4, D5, D6, D8, C4, C5 | según roadmap |
+| 🟢 5 | D7 | CI mínima | Bajo |
+| 🟢 6 | D2 | Auditoría (RP8) | Alto |
+| 🟢 7 | D3 | Alertas de vencimiento | Medio |
+| 🟢 — | resto | D1, D4, D5, D6, D8 | según roadmap |
 
-**Lo próximo, sin vueltas:** A2 es una línea y hoy cualquier usuario con rol Empleado
-puede leer los documentos de cualquier otra persona. A1 es lo que vuelve real a todo el
-sistema de roles (hoy todo visitante es admin). Ninguno de los dos se arregló acá.
+**Lo próximo, sin vueltas:** ahora la única sección roja es la de seguridad. A2 es una
+línea y hoy cualquier usuario con rol Empleado puede leer los documentos de cualquier otra
+persona. A1 es lo que vuelve real a todo el sistema de roles (hoy todo visitante es
+admin). Ninguno de los dos se arregló acá: rendimiento y robustez ya están, seguridad no.

@@ -11,6 +11,7 @@ RegistroAuditoria con acción semántica cuando exista la app `auditoria` (hoy n
 from datetime import timedelta
 
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
@@ -36,17 +37,22 @@ def _tomar_calendario(empleado) -> None:
     Empleado.objects.select_for_update().filter(pk=empleado.pk).first()
 
 
-def _se_solapan(a_desde, a_hasta, b_desde, b_hasta) -> bool:
-    """¿Se pisan los rangos [a_desde, a_hasta] y [b_desde, b_hasta], ambos inclusive?
+def _filtro_solapadas_con(desde, hasta) -> Q:
+    """Q que matchea las novedades cuyo rango pisa [desde, hasta], ambos extremos inclusive.
 
-    `hasta` en None = rango abierto (licencia sin alta médica): corre sin fin, así que pisa
-    todo lo que empiece en o después de su `desde`. Vale para los dos rangos.
+    Es el mismo predicado que evalúa el ExclusionConstraint con `daterange(..., '[]') &&`,
+    escrito en ORM para poder usarlo como filtro: dos rangos se pisan si ninguno termina
+    antes de que el otro empiece.
+
+    `hasta`/`fecha_hasta` en None = rango abierto (licencia sin alta médica): corre sin fin,
+    así que pisa todo lo que empiece en o después de su `desde`. Vale para los dos lados, y
+    por eso el `isnull=True` va explícito: en SQL, `fecha_hasta >= x` con NULL da desconocido
+    (o sea, no matchea) y las novedades abiertas se escaparían del filtro.
     """
-    if a_hasta is not None and b_desde > a_hasta:
-        return False
-    if b_hasta is not None and a_desde > b_hasta:
-        return False
-    return True
+    solapan = Q(fecha_hasta__isnull=True) | Q(fecha_hasta__gte=desde)
+    if hasta is not None:
+        solapan &= Q(fecha_desde__lte=hasta)
+    return solapan
 
 
 def _ids_de_la_cadena(novedad: Novedad) -> set:
@@ -66,31 +72,39 @@ def _validar_sin_solapamiento(
 
     Esta es la puerta (mensaje amigable); el ExclusionConstraint del modelo es la red de
     seguridad. Las dos miran las mismas columnas y los mismos estados a propósito.
+
+    El solapamiento se filtra en SQL y no descartando en Python: así Postgres resuelve el
+    rango con el índice GiST que ya trae el ExclusionConstraint —sobre (empleado_id,
+    daterange(fecha_desde, fecha_hasta))— en vez de traer el historial entero del empleado
+    para tirar casi todo. Con años de novedades por persona, la diferencia importa.
     """
     if not tipo.ocupa_periodo:
         return
-    candidatas = Novedad.objects.filter(
-        empleado=empleado,
-        estado__in=OCUPAN_PERIODO,
-        ocupa_periodo=True,  # la columna propia, la misma que mira el ExclusionConstraint
-    ).select_related("tipo_novedad")
-    if excluir_ids:
-        candidatas = candidatas.exclude(pk__in=excluir_ids)
-    for otra in candidatas:
-        if not _se_solapan(desde, hasta, otra.fecha_desde, otra.fecha_hasta):
-            continue
-        fin = otra.fecha_hasta.isoformat() if otra.fecha_hasta else "sin fin"
-        raise ValidationError(
-            {
-                campo: (
-                    f"El empleado ya tiene una novedad en ese período: "
-                    f"{otra.tipo_novedad.nombre} "
-                    f"({otra.fecha_desde.isoformat()} → {fin}, {otra.get_estado_display()}). "
-                    f"Dos novedades no pueden convivir en las mismas fechas: corregí el "
-                    f"período, o rechazá/anulá la anterior."
-                )
-            }
+    otra = (
+        Novedad.objects.filter(
+            _filtro_solapadas_con(desde, hasta),
+            empleado=empleado,
+            estado__in=OCUPAN_PERIODO,
+            ocupa_periodo=True,  # la columna propia, la misma que mira el ExclusionConstraint
         )
+        .exclude(pk__in=excluir_ids or [])
+        .select_related("tipo_novedad")
+        .first()  # la más reciente por el orden del Meta; si hay varias, alcanza con una
+    )
+    if otra is None:
+        return
+    fin = otra.fecha_hasta.isoformat() if otra.fecha_hasta else "sin fin"
+    raise ValidationError(
+        {
+            campo: (
+                f"El empleado ya tiene una novedad en ese período: "
+                f"{otra.tipo_novedad.nombre} "
+                f"({otra.fecha_desde.isoformat()} → {fin}, {otra.get_estado_display()}). "
+                f"Dos novedades no pueden convivir en las mismas fechas: corregí el "
+                f"período, o rechazá/anulá la anterior."
+            )
+        }
+    )
 
 
 @transaction.atomic

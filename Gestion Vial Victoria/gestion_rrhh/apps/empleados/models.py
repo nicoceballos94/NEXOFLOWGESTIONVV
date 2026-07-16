@@ -106,12 +106,21 @@ class Empleado(ModeloBase):
 
     @property
     def relacion_activa(self) -> "RelacionLaboral | None":
-        """La (única, por R1) relación ACTIVA en cualquier empresa, si existe."""
-        return self.relaciones.filter(estado=EstadoRelacion.ACTIVA).first()
+        """La (única, por R1) relación ACTIVA en cualquier empresa, si existe.
+
+        Se resuelve sobre `relaciones.all()` y no con `.filter()`: un `.filter()` sobre la
+        relación inversa ignora el prefetch del selector y dispara una query POR EMPLEADO
+        (N+1 en la lista, que serializa `activo` para los 25 de la página). `.all()` usa la
+        caché si está, y si no cae, hace la misma única query que haría el `.filter()`.
+        El orden es el del Meta (`-fecha_ingreso`), igual en la caché que en la base.
+        """
+        return next(
+            (r for r in self.relaciones.all() if r.estado == EstadoRelacion.ACTIVA), None
+        )
 
     @property
     def activo(self) -> bool:
-        return self.relaciones.filter(estado=EstadoRelacion.ACTIVA).exists()
+        return self.relacion_activa is not None
 
 
 class RelacionLaboral(ModeloBase):

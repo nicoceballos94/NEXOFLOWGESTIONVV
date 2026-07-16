@@ -19,8 +19,6 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-from django.db.models import Q
-
 from apps.empleados.models import EstadoRelacion, RelacionLaboral
 from apps.novedades.models import EstadoNovedad, Novedad
 
@@ -45,43 +43,61 @@ def _sumar_meses(inicio: date, meses: int) -> date:
     return date(total // 12, total % 12 + 1, 1)
 
 
-def _activos_ahora() -> int:
-    """Empleados activos HOY según el campo `estado` (fuente de verdad, igual que la
-    lista de empleados). Se usa para el KPI; una relación FINALIZADA nunca cuenta,
-    aunque su `fecha_egreso` sea futura (baja con egreso diferido)."""
-    return (
-        RelacionLaboral.objects.filter(estado=EstadoRelacion.ACTIVA)
-        .values("empleado_id")
-        .distinct()
-        .count()
-    )
+class _Dotacion:
+    """Las relaciones laborales leídas UNA vez; las cuentas se resuelven en memoria.
 
+    Antes cada helper era su propio COUNT: la serie de rotación (12 meses × 4 cuentas)
+    llevaba el panel —la pantalla de entrada— a ~70 queries por carga. Los mismos números
+    salen de una sola lectura de (empleado_id, estado, fecha_ingreso, fecha_egreso), que
+    para una dotación de miles de relaciones son unas pocas tuplas en memoria. Si esto
+    creciera a decenas de miles, habría que volver a agregación en SQL.
 
-def _activos_a(fecha: date) -> int:
-    """Empleados con al menos una relación vigente en `fecha` (por fechas):
-    ingresó en/antes de `fecha` y (sin egreso o egresó después). Reconstrucción
-    histórica para la variación y la dotación media de la rotación."""
-    return (
-        RelacionLaboral.objects.filter(fecha_ingreso__lte=fecha)
-        .filter(Q(fecha_egreso__isnull=True) | Q(fecha_egreso__gt=fecha))
-        .values("empleado_id")
-        .distinct()
-        .count()
-    )
+    Efecto lateral bienvenido: una sola lectura es un solo snapshot, así que un alta
+    concurrente ya no puede dejar el KPI de activos peleado con la serie de rotación.
 
+    Ojo con la asimetría al leer los métodos: `activos_*` cuenta PERSONAS distintas (alguien
+    con dos relaciones es un activo), mientras que `ingresos_en`/`egresos_en` cuentan
+    RELACIONES (esas dos altas son dos ingresos). Es la semántica que ya tenían las queries.
+    """
 
-def _ingresos_en(desde: date, hasta: date) -> int:
-    """Relaciones con fecha_ingreso en [desde, hasta)."""
-    return RelacionLaboral.objects.filter(
-        fecha_ingreso__gte=desde, fecha_ingreso__lt=hasta
-    ).count()
+    def __init__(self, filas):
+        self._filas = list(filas)  # (empleado_id, estado, fecha_ingreso, fecha_egreso)
 
+    @classmethod
+    def leer(cls) -> "_Dotacion":
+        return cls(
+            RelacionLaboral.objects.values_list(
+                "empleado_id", "estado", "fecha_ingreso", "fecha_egreso"
+            )
+        )
 
-def _egresos_en(desde: date, hasta: date) -> int:
-    """Relaciones con fecha_egreso en [desde, hasta)."""
-    return RelacionLaboral.objects.filter(
-        fecha_egreso__gte=desde, fecha_egreso__lt=hasta
-    ).count()
+    def activos_ahora(self) -> int:
+        """Empleados activos HOY según el campo `estado` (fuente de verdad, igual que la
+        lista de empleados). Se usa para el KPI; una relación FINALIZADA nunca cuenta,
+        aunque su `fecha_egreso` sea futura (baja con egreso diferido)."""
+        return len({
+            emp for emp, estado, _, _ in self._filas if estado == EstadoRelacion.ACTIVA
+        })
+
+    def activos_a(self, fecha: date) -> int:
+        """Empleados con al menos una relación vigente en `fecha` (por fechas):
+        ingresó en/antes de `fecha` y (sin egreso o egresó después). Reconstrucción
+        histórica para la variación y la dotación media de la rotación."""
+        return len({
+            emp
+            for emp, _, ingreso, egreso in self._filas
+            if ingreso <= fecha and (egreso is None or egreso > fecha)
+        })
+
+    def ingresos_en(self, desde: date, hasta: date) -> int:
+        """Relaciones con fecha_ingreso en [desde, hasta)."""
+        return sum(1 for _, _, ing, _ in self._filas if desde <= ing < hasta)
+
+    def egresos_en(self, desde: date, hasta: date) -> int:
+        """Relaciones con fecha_egreso en [desde, hasta)."""
+        return sum(
+            1 for _, _, _, egr in self._filas if egr is not None and desde <= egr < hasta
+        )
 
 
 def _ausentismo_en(desde: date, hasta: date) -> int:
@@ -105,11 +121,11 @@ def _rotacion(ingresos: int, egresos: int, dotacion_promedio: float) -> float:
     return round(((ingresos + egresos) / 2) / dotacion_promedio * 100, 1)
 
 
-def _rotacion_periodo(ini: date, fin: date, activos_fin: int) -> float:
+def _rotacion_periodo(dotacion: _Dotacion, ini: date, fin: date, activos_fin: int) -> float:
     """Rotación de [ini, fin): promedio de dotación entre el día previo a `ini` y `fin`."""
-    activos_ini = _activos_a(ini - timedelta(days=1))
+    activos_ini = dotacion.activos_a(ini - timedelta(days=1))
     dot_prom = (activos_ini + activos_fin) / 2
-    return _rotacion(_ingresos_en(ini, fin), _egresos_en(ini, fin), dot_prom)
+    return _rotacion(dotacion.ingresos_en(ini, fin), dotacion.egresos_en(ini, fin), dot_prom)
 
 
 def metricas_dashboard(*, hoy: date | None = None) -> dict:
@@ -119,35 +135,37 @@ def metricas_dashboard(*, hoy: date | None = None) -> dict:
     ini_mes_sig = _sumar_meses(ini_mes, 1)
     ini_mes_ant = _sumar_meses(ini_mes, -1)
 
-    # --- KPIs (stock y flujo) ---
-    activos_ahora = _activos_ahora()                        # valor del KPI (por estado)
-    activos_hoy = _activos_a(hoy)                           # por fechas: dotación de la rotación
-    activos_fin_mes_ant = _activos_a(ini_mes - timedelta(days=1))
+    dotacion = _Dotacion.leer()  # única lectura de relaciones; el resto se cuenta en memoria
 
-    ingresos_mes = _ingresos_en(ini_mes, ini_mes_sig)
-    ingresos_mes_ant = _ingresos_en(ini_mes_ant, ini_mes)
-    egresos_mes = _egresos_en(ini_mes, ini_mes_sig)
-    egresos_mes_ant = _egresos_en(ini_mes_ant, ini_mes)
+    # --- KPIs (stock y flujo) ---
+    activos_ahora = dotacion.activos_ahora()                # valor del KPI (por estado)
+    activos_hoy = dotacion.activos_a(hoy)                   # por fechas: dotación de la rotación
+    activos_fin_mes_ant = dotacion.activos_a(ini_mes - timedelta(days=1))
+
+    ingresos_mes = dotacion.ingresos_en(ini_mes, ini_mes_sig)
+    ingresos_mes_ant = dotacion.ingresos_en(ini_mes_ant, ini_mes)
+    egresos_mes = dotacion.egresos_en(ini_mes, ini_mes_sig)
+    egresos_mes_ant = dotacion.egresos_en(ini_mes_ant, ini_mes)
     ausentismo_mes = _ausentismo_en(ini_mes, ini_mes_sig)
     ausentismo_mes_ant = _ausentismo_en(ini_mes_ant, ini_mes)
 
     # --- Rotación mensual / anual + serie de 12 meses para el gráfico ---
-    rot_mensual = _rotacion_periodo(ini_mes, ini_mes_sig, activos_hoy)
-    rot_mensual_ant = _rotacion_periodo(ini_mes_ant, ini_mes, activos_fin_mes_ant)
+    rot_mensual = _rotacion_periodo(dotacion, ini_mes, ini_mes_sig, activos_hoy)
+    rot_mensual_ant = _rotacion_periodo(dotacion, ini_mes_ant, ini_mes, activos_fin_mes_ant)
 
     ini_12m = _sumar_meses(ini_mes, -11)
-    rot_anual = _rotacion_periodo(ini_12m, ini_mes_sig, activos_hoy)
+    rot_anual = _rotacion_periodo(dotacion, ini_12m, ini_mes_sig, activos_hoy)
     ini_12m_ant = _sumar_meses(ini_mes, -23)
-    rot_anual_ant = _rotacion_periodo(ini_12m_ant, ini_12m, activos_fin_mes_ant)
+    rot_anual_ant = _rotacion_periodo(dotacion, ini_12m_ant, ini_12m, activos_fin_mes_ant)
 
     serie = []
     for i in range(11, -1, -1):
         m_ini = _sumar_meses(ini_mes, -i)
         m_fin = _sumar_meses(m_ini, 1)
-        activos_m_fin = _activos_a(m_fin - timedelta(days=1))
+        activos_m_fin = dotacion.activos_a(m_fin - timedelta(days=1))
         serie.append({
             "label": _MESES_ABREV[m_ini.month - 1],
-            "valor": _rotacion_periodo(m_ini, m_fin, activos_m_fin),
+            "valor": _rotacion_periodo(dotacion, m_ini, m_fin, activos_m_fin),
         })
 
     # --- Ranking de faltas del mes (top 5), por EMPLEADO, medido en DÍAS ---
@@ -165,7 +183,10 @@ def metricas_dashboard(*, hoy: date | None = None) -> dict:
             fecha_desde__lt=ini_mes_sig,
         )
         .exclude(estado__in=ESTADOS_NOVEDAD_EXCLUIDOS)
-        .values("empleado_id", "empleado__nombre", "empleado__apellido", "fecha_desde", "fecha_hasta")
+        .values(
+            "empleado_id", "empleado__nombre", "empleado__apellido",
+            "fecha_desde", "fecha_hasta",
+        )
     )
     acc: dict[int, dict] = {}
     for f in faltas:

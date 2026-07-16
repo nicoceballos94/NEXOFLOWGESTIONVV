@@ -89,10 +89,16 @@
     }
     return data;
   }
+  // Chequea r.ok como jget: sin eso, un 401/429/500 en cualquier página dejaba `d.results`
+  // undefined y la paginación seguía como si nada → la UI mostraba "0 empleados" o una lista
+  // a medias, sin un solo error visible. Un fallo tiene que romper ruidoso, no mentir.
+  // `page_size` tope 100 (max_page_size del backend): pedir 200 se clampeaba en silencio.
   async function getAllPages(path) {
     var rows = [], url = CONFIG.API + path;
     while (url) {
-      var d = await authedFetch(url, {}).then(function (r) { return r.json(); });
+      var r = await authedFetch(url, {});
+      if (!r.ok) throw new Error("GET " + path + " → " + r.status);
+      var d = await r.json();
       rows = rows.concat(d.results || []);
       url = d.next;
     }
@@ -447,19 +453,19 @@
       if (!tk.access) throw new Error("login falló: " + JSON.stringify(tk));
       _token = tk.access;
       _refresh = tk.refresh || null;   // para renovar el access cuando venza (authedFetch)
-      var emp = await getAllPages("/empresas/?page_size=200");
-      var sec = await getAllPages("/sectores/?page_size=200");
-      var pue = await getAllPages("/puestos/?page_size=200");
+      var emp = await getAllPages("/empresas/?page_size=100");
+      var sec = await getAllPages("/sectores/?page_size=100");
+      var pue = await getAllPages("/puestos/?page_size=100");
       emp.forEach(function (x) { _empresaByName[x.nombre] = x.id; _empresaById[x.id] = x.nombre; });
       sec.forEach(function (x) { _sectorByName[x.nombre] = x.id; _sectorById[x.id] = x.nombre; });
       pue.forEach(function (x) { _puestoByName[x.nombre.toLowerCase()] = x.id; _puestoById[x.id] = x.nombre; });
-      var tipos = await getAllPages("/tipos-novedad/?page_size=200");
+      var tipos = await getAllPages("/tipos-novedad/?page_size=100");
       tipos.forEach(function (t) { _tipoNovByCodigo[t.codigo] = t; });
       console.log("[ceibo] catálogos: " + emp.length + " empresas, " + sec.length + " sectores, " + pue.length + " puestos, " + tipos.length + " tipos de novedad");
     },
 
     async listEmpleados() {
-      _rawEmpleados = await getAllPages("/empleados/?page_size=200");
+      _rawEmpleados = await getAllPages("/empleados/?page_size=100");
       var mapped = _rawEmpleados.map(adapt);
       _empById = {};
       mapped.forEach(function (m) { _empById[m.id] = { name: m.name, empresa: m.empresa }; });
@@ -552,7 +558,7 @@
     // Novedades con cadenas expandidas: se agrupan las prórrogas bajo su madre
     // (novedad_origen) para tener la cadena completa sin N+1.
     async listNovedades() {
-      var raw = await getAllPages("/novedades/?expandir_cadenas=true&page_size=200");
+      var raw = await getAllPages("/novedades/?expandir_cadenas=true&page_size=100");
       _novRawById = {};
       raw.forEach(function (n) { _novRawById[n.id] = n; });
       var madres = raw.filter(function (n) { return !n.novedad_origen; });

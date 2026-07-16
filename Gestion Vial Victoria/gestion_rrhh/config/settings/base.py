@@ -131,6 +131,11 @@ REST_FRAMEWORK = {
         "anon": "20/min",
         "user": "300/min",
         "login": "5/min",
+        # Scope propio, y no el de `login`: compartirlo hacía que varias pestañas renovando
+        # su access (dura 15 min) se comieran los 5/min y cortaran sesiones válidas, y de
+        # paso le regalaba cupo a un ataque de fuerza bruta contra el login. El refresh ya
+        # exige un token válido, así que puede ser holgado sin aflojar la puerta.
+        "refresh": "30/min",
     },
 }
 
