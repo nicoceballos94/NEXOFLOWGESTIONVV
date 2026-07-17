@@ -129,9 +129,21 @@
     if (parts.length <= 1) return { nombre: parts[0] || "", apellido: "" };
     return { nombre: parts[0], apellido: parts.slice(1).join(" ") };
   }
+  // Un ingreso reciente no es "1 años": bajo el año se informa en meses (y bajo el mes,
+  // en días), porque el período de prueba se cuenta en meses y redondearlo a un año
+  // falsea el dato justo cuando más importa.
   function anios(rel) {
     if (!rel || rel.antiguedad_en_dias == null) return "";
-    return Math.max(1, Math.floor(rel.antiguedad_en_dias / 365)) + " años";
+    var dias = rel.antiguedad_en_dias;
+    if (dias < 30) return dias === 1 ? "1 día" : dias + " días";
+    if (dias < 365) {
+      // Tope en 11: a 364 días, floor(364/30) daría "12 meses", que se lee como el año
+      // cumplido —y el año cumplido dispara antigüedad—. Bajo los 365 nunca decimos 12.
+      var meses = Math.min(11, Math.floor(dias / 30));
+      return meses === 1 ? "1 mes" : meses + " meses";
+    }
+    var n = Math.floor(dias / 365);
+    return n === 1 ? "1 año" : n + " años";
   }
   function stripAccents(s) { return (s || "").normalize("NFD").replace(/[̀-ͯ]/g, ""); }
   function normLabel(s) { return stripAccents((s || "").replace(/\s*·\s*$/, "").trim().toLowerCase()); }

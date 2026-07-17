@@ -3,9 +3,12 @@
 **Alcance:** backend `gestion_rrhh/` (Django + DRF + Postgres) y frontend `frontend/`
 (canvas de Claude Design + capa de integración `ceibo-api.js` + `build.py`).
 **Fecha:** 2026-07-14 · rama `fase-0-verificada`.
-**Última actualización:** 2026-07-15 — las secciones **B (correctitud e integridad)** y
+**Última actualización:** 2026-07-16 — las secciones **B (correctitud e integridad)** y
 **C (robustez y rendimiento)** están **resueltas**; sus hallazgos se quitaron de este
-documento (ver "B. Correctitud…" y "C. Robustez…" abajo).
+documento (ver "B. Correctitud…" y "C. Robustez…" abajo). De la sección D se cerraron
+**D6, D7 y D8**, y se corrigieron **D3 y D4**, que ya estaban hechos cuando se escribió
+este análisis: el relevamiento los dio por pendientes de más. **Toda la sección A
+(seguridad) sigue abierta.**
 
 Cada hallazgo tiene un ID (A = seguridad, B = correctitud/integridad, C = robustez,
 D = mejoras) y referencia a archivo y línea. Al final hay una tabla de prioridades.
@@ -184,17 +187,18 @@ anulaciones, ediciones y bajas no registran actor ni momento (el motivo se conca
 en `observaciones`, que es frágil). Para RRHH —dominio con disputas legales— es de
 las mejoras de más valor.
 
-### D3 — Alertas de vencimiento: está el dato, falta el proceso
-`DocumentoEmpleado.fecha_vencimiento` está indexado "para la query de alertas",
-`Parametro` existe para los días de aviso, `Empresa.referente_rrhh` es "el
-destinatario de avisos"… pero no hay ningún job/endpoint/consumidor que los use.
-Los tres están muertos hoy. Un endpoint `GET /documentos/por-vencer/` + panel en el
-dashboard sería el primer paso natural (n8n puede consumirlo después).
+### D3 — Alertas de vencimiento ✅ ya estaba resuelto (constatado 2026-07-16)
+El hallazgo era falso: existe `apps/dashboard/vencimientos.py` con sus tests
+(`test_vencimientos.py`, `test_alertas_dia.py`), el endpoint de por-vencer y el panel
+del dashboard cableado en `ceibo-api.js`. Ni `fecha_vencimiento` ni `Parametro` ni
+`referente_rrhh` están muertos.
 
-### D4 — Sin adjuntos
-No hay `FileField` en todo el sistema: certificados médicos y documentos son solo
-metadata (fechas y números). Está bien para MVP1, pero conviene decidir dónde
-vivirán los archivos (S3/local) antes de que el modelo crezca.
+### D4 — Adjuntos ✅ ya estaba resuelto (constatado 2026-07-16)
+El hallazgo era falso: hay `FileField` en `DocumentoEmpleado`
+(`empleados/models.py:234`, migración `0002_documentoempleado_archivo`) y en
+`AdjuntoNovedad` (`novedades/models.py:240`). Los archivos viven hoy en un volumen de
+media propio (`docker-compose.yml`), y el modelo ya prevé el pase a S3/R2 vía `STORAGES`
+sin tocarlo.
 
 ### D5 — El front carga todo en memoria
 `listEmpleados`/`listNovedades` traen **todas** las páginas y filtran client-side.
@@ -202,34 +206,51 @@ Con cientos de registros va bien; con miles, la carga inicial y el ranking van a
 doler. El backend ya soporta filtros y paginación — el front podría usarlos cuando
 duela (no antes).
 
-### D6 — `getOrCreatePuesto` crea catálogo por texto libre
-`ceibo-api.js:248-256`: un typo en "Chofer"/"chofer "/"Choferr" crea puestos
-duplicados que después ensucian filtros. Mejor un `<select>` con opción "crear
-nuevo…" explícita.
+### D6 — `getOrCreatePuesto` crea catálogo por texto libre ✅ resuelta en backend (2026-07-16)
+El typo seguía siendo texto libre en el canvas, así que el arreglo se puso donde la
+garantía no depende del cliente: `Puesto` tiene ahora unicidad **case-insensitive** por
+constraint (`UniqueConstraint(Lower("nombre"))`), el nombre se normaliza (`strip`) al
+guardar, y `POST /puestos/` es **idempotente**: si el puesto ya existe devuelve el
+existente (200) en vez de crear un duplicado. "Chofer" / "chofer" / "  CHOFER  " colapsan
+en una sola fila. Migración en dos pasos (`0003` fusiona los duplicados que ya existan y
+repunta sus relaciones; `0004` agrega el constraint) — van separadas porque Postgres no
+crea el índice único en la misma transacción que tocó filas con FKs.
 
-### D7 — Sin CI
-No hay `.github/workflows`. Hay tests y ruff configurados (`pyproject.toml`) pero
-nada los corre automáticamente. Un workflow mínimo (ruff + pytest contra Postgres
-de servicio + `python frontend/build.py` para validar anclas) protegería justo los
-puntos frágiles del proyecto.
+**Queda pendiente (UI):** "Choferr" sigue creando un puesto nuevo. Eso lo cierra el
+`<select>` con "crear nuevo…" explícito, que es cambio de canvas (Claude Design) y no se
+hizo acá.
 
-### D8 — Detalles menores del front
-- `anios()` (`ceibo-api.js:118-121`): muestra mínimo "1 años" para cualquier
-  antigüedad menor a un año, y "1 años" es gramaticalmente incorrecto → "6 meses" /
-  "1 año".
-- `splitName()` (`ceibo-api.js:113-117`): "Juan Carlos Pérez" → nombre "Juan",
-  apellido "Carlos Pérez". Heurística inevitable con un solo campo; considerar dos
-  campos en el canvas.
-- Novedades filtradas por empresa dependen de `relacion_laboral` no nulo
-  (`novedades/selectors.py:49-50`): una novedad sin relación asociada desaparece de
-  ese filtro (el dashboard ya lo resuelve aparte; la lista no).
+### D7 — CI ✅ resuelta (2026-07-16)
+El hallazgo estaba mal relevado: **sí existía** `.github/workflows/backend-ci.yml` (ruff +
+migrate + pytest contra Postgres de servicio). Se buscó en `Gestion Vial Victoria/` y no en
+la raíz del repo, que es donde vive `.github/`. Lo que faltaba de verdad se agregó:
+
+- `frontend-ci.yml`: corre `python frontend/build.py`, que falla ruidosamente si un export
+  de Claude Design rompe un ancla del cableado. Era la pieza que el análisis pedía.
+- `backend-ci.yml`: el check de migraciones era
+  `makemigrations --check --dry-run || makemigrations`. El `||` lo anulaba: en vez de
+  fallar, generaba las migraciones al vuelo y seguía en verde. Ahora es un check estricto
+  y sobre todas las apps (antes solo `usuarios` y `organizacion`).
+
+### D8 — Detalles menores del front ✅ resuelta (2026-07-16)
+- `anios()` (`ceibo-api.js:132`): **arreglado**. Bajo el año informa en meses (y bajo el
+  mes, en días), con singular/plural correcto. Además nunca dice "12 meses": a 364 días
+  redondear al año falsea justo el dato que dispara antigüedad → tope en "11 meses".
+- Novedades filtradas por empresa (`novedades/selectors.py`): **arreglado**. Cuando la
+  novedad no trae `relacion_laboral`, la empresa se resuelve por las relaciones del
+  empleado (el mismo criterio que ya usaba el ranking del dashboard), con `distinct()` para
+  no duplicar a quien tiene relación en las dos empresas del grupo. Antes esas novedades no
+  aparecían bajo **ninguna** empresa.
+- `splitName()` (`ceibo-api.js:127`): **sin cambios, a propósito**. Es una heurística
+  inevitable con un solo campo de nombre; separarlo en dos es decisión de canvas.
 
 ---
 
 ## Prioridades sugeridas
 
-Las secciones B y C salieron de esta tabla: están resueltas (2026-07-15). Lo que queda
-pendiente es **toda la sección A** y las mejoras de D.
+Las secciones B y C salieron de esta tabla: están resueltas (2026-07-15). De D quedan D1,
+D2 y D5 (D3 y D4 nunca estuvieron pendientes; D6, D7 y D8 se cerraron el 2026-07-16). Lo
+que queda pendiente es **toda la sección A** y esas tres de D.
 
 | Prioridad | ID | Hallazgo | Esfuerzo |
 |---|---|---|---|
@@ -237,12 +258,17 @@ pendiente es **toda la sección A** y las mejoras de D.
 | 🔴 2 | A2 | Scope en `GET /empleados/{id}/documentos/` | Trivial (1 línea) |
 | 🟠 3 | A3 | PII solo para RRHH/Admin | Bajo |
 | 🟠 4 | A4 | `SECRET_KEY` sin default en prod | Trivial |
-| 🟢 5 | D7 | CI mínima | Bajo |
-| 🟢 6 | D2 | Auditoría (RP8) | Alto |
-| 🟢 7 | D3 | Alertas de vencimiento | Medio |
-| 🟢 — | resto | D1, D4, D5, D6, D8 | según roadmap |
+| 🟢 5 | D2 | Auditoría (RP8) | Alto |
+| 🟢 — | resto | D1, D5, D6 (el `<select>` del canvas) | según roadmap |
 
-**Lo próximo, sin vueltas:** ahora la única sección roja es la de seguridad. A2 es una
-línea y hoy cualquier usuario con rol Empleado puede leer los documentos de cualquier otra
+**Lo próximo, sin vueltas:** la única sección roja es la de seguridad. A2 es una línea y
+hoy cualquier usuario con rol Empleado puede leer los documentos de cualquier otra
 persona. A1 es lo que vuelve real a todo el sistema de roles (hoy todo visitante es
-admin). Ninguno de los dos se arregló acá: rendimiento y robustez ya están, seguridad no.
+admin). Nada de eso se arregló acá: lo cerrado hasta ahora es robustez, rendimiento y las
+mejoras de proceso; seguridad sigue intacta.
+
+**Nota de método (2026-07-16):** tres de los ocho hallazgos de D (D3, D4 y D7) estaban mal
+relevados — describían como faltante código que ya existía. Conviene verificar cada
+hallazgo contra el repo antes de planificar sobre esta tabla, y buscar desde la raíz del
+repo (`NEXOFLOWGESTIONVV/`), no desde `Gestion Vial Victoria/`: `.github/` vive un nivel
+más arriba y por eso se dio por inexistente.

@@ -47,7 +47,15 @@ def _aplicar_filtros(qs: QuerySet[Novedad], filtros) -> QuerySet[Novedad]:
     if estado:
         qs = qs.filter(estado=estado)
     if empresa:
-        qs = qs.filter(relacion_laboral__empresa_id=empresa)
+        # `relacion_laboral` es opcional (p. ej. datos importados fuera del alta). Filtrar
+        # solo por ella hacía desaparecer esas novedades de la lista: se caen del JOIN y no
+        # aparecen bajo NINGUNA empresa. Igual que el ranking del dashboard, se cae a las
+        # relaciones del empleado cuando la novedad no trae la suya.
+        # distinct(): con relación en las dos empresas del grupo, el OR matchea dos veces.
+        qs = qs.filter(
+            Q(relacion_laboral__empresa_id=empresa)
+            | Q(relacion_laboral__isnull=True, empleado__relaciones__empresa_id=empresa)
+        ).distinct()
     if desde:
         qs = qs.filter(fecha_desde__gte=desde)
     if hasta:

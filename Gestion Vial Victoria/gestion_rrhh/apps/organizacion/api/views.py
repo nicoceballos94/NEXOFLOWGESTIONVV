@@ -42,6 +42,21 @@ class PuestoViewSet(viewsets.ModelViewSet):
     filterset_fields = ("sector", "activo")
     http_method_names = ["get", "post", "patch", "head", "options"]
 
+    def create(self, request, *args, **kwargs):
+        """POST idempotente por nombre (case-insensitive): si el puesto ya existe, lo devuelve.
+
+        El alta de empleados escribe el puesto a mano y postea sin saber si está en el
+        catálogo. Fallar con 409 obligaría a cada cliente a reintentar con un GET; devolver
+        el existente es lo que ese cliente quiere y evita el duplicado que motiva todo esto.
+        Se devuelve 200 (no 201) porque no se creó nada nuevo.
+        """
+        nombre = str(request.data.get("nombre", "")).strip()
+        if nombre:
+            existente = Puesto.objects.filter(nombre__iexact=nombre).first()
+            if existente is not None:
+                return Response(self.get_serializer(existente).data)
+        return super().create(request, *args, **kwargs)
+
 
 class ConfigVencimientosView(APIView):
     """Parametría de alertas (§21): con cuántos días de anticipación avisa cada cosa.

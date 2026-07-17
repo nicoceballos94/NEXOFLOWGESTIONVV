@@ -43,6 +43,8 @@ jobs:
           cache-dependency-path: "Gestion Vial Victoria/gestion_rrhh/requirements*.txt"
       - run: pip install -r requirements-dev.txt
       - run: ruff check .
-      - run: python manage.py makemigrations usuarios organizacion --check --dry-run || python manage.py makemigrations usuarios organizacion
+      # Falla si un modelo cambió sin su migración. Sin `||`: generarlas acá dejaría
+      # pasar en verde justo el error que el check busca.
+      - run: python manage.py makemigrations --check --dry-run
       - run: python manage.py migrate
       - run: pytest

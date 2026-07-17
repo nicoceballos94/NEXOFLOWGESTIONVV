@@ -623,6 +623,46 @@ def test_lista_colapsa_cadenas_por_defecto(
     assert resp2.data["count"] == 2
 
 
+def test_filtro_empresa_incluye_novedad_sin_relacion(
+    cliente_rrhh, empleado, empresa, tipo_licencia
+):
+    """Una novedad sin `relacion_laboral` (dato importado fuera del alta) no debe caerse
+    del filtro por empresa: la empresa se resuelve por las relaciones del empleado."""
+    huerfana = Novedad.objects.create(
+        empleado=empleado, tipo_novedad=tipo_licencia, relacion_laboral=None,
+        fecha_desde="2025-05-01", fecha_hasta="2025-05-05", motivo="Importada",
+    )
+    resp = cliente_rrhh.get(f"/api/v1/novedades/?empresa={empresa.id}")
+    assert resp.status_code == 200, resp.data
+    assert [n["id"] for n in resp.data["results"]] == [huerfana.id]
+
+
+def test_filtro_empresa_excluye_otra_empresa(cliente_rrhh, empleado, tipo_licencia):
+    """El fallback por empleado no debe traer novedades de una empresa ajena."""
+    otra = Empresa.objects.create(nombre="OTRA SA")
+    Novedad.objects.create(
+        empleado=empleado, tipo_novedad=tipo_licencia, relacion_laboral=None,
+        fecha_desde="2025-05-01", fecha_hasta="2025-05-05", motivo="Importada",
+    )
+    resp = cliente_rrhh.get(f"/api/v1/novedades/?empresa={otra.id}")
+    assert resp.status_code == 200, resp.data
+    assert resp.data["count"] == 0
+
+
+def test_filtro_empresa_no_duplica_con_relacion_en_dos_empresas(
+    cliente_rrhh, empleado, empresa, tipo_licencia
+):
+    """Con relación activa en dos empresas del grupo, el OR matchea dos veces: una sola fila."""
+    otra = Empresa.objects.create(nombre="OTRA SA")
+    RelacionLaboral.objects.create(empleado=empleado, empresa=otra, fecha_ingreso="2024-02-01")
+    Novedad.objects.create(
+        empleado=empleado, tipo_novedad=tipo_licencia, relacion_laboral=None,
+        fecha_desde="2025-05-01", fecha_hasta="2025-05-05", motivo="Importada",
+    )
+    resp = cliente_rrhh.get(f"/api/v1/novedades/?empresa={empresa.id}")
+    assert resp.data["count"] == 1
+
+
 # ---------- Adjuntos: la bitácora del hecho ----------
 @pytest.fixture
 def media_temporal(settings, tmp_path):
