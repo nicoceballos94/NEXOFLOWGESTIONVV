@@ -13,6 +13,8 @@ Uso:  python build.py   →   dist/index.html + support.js + ceibo-api.js
 Servir: cd dist && python -m http.server 8080
 """
 from pathlib import Path
+import hashlib
+import re
 import shutil
 import sys
 
@@ -69,13 +71,29 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
       this.setState({ tiposDoc: await window.CeiboAPI.listTiposDoc() });
       const e = this.state.empleados;
       if (e && e.length) { this.setState({ selEmp: e[0].id }); this.recargarDocs(e[0].id); }
+      this.setState({ cargaInicial: 'lista' });
     } catch (err) {
       console.error('[ceibo] init', err);
-      this.setState({ apiErr: String(err) });
+      // 'error' —y no 'lista'— a propósito: si la carga falló, los módulos siguen tapados.
+      // Destaparlos mostraría los mocks del canvas como si fueran la dotación real.
+      this.setState({ apiErr: String(err), cargaInicial: 'error' });
     }
   }
   renderVals() {
     const v = this.renderValsBase();
+    // El canvas trae datos de ejemplo hardcodeados (134 activos, rankings, alertas) para
+    // poder diseñarse solo. Hasta que termina la primera carga, `base()`/`novBase()`/
+    // `metrics` devuelven ESOS valores, así que la app abría mostrando cifras inventadas
+    // y recién ~1s después las reemplazaba por las reales. Mientras carga no se muestra
+    // ningún módulo: se muestra el panel de carga, y si la API falló, el error.
+    const carga = this.state.cargaInicial;
+    v.cargandoInit = carga === 'cargando';
+    v.errorInit = carga === 'error';
+    v.apiErrMsg = this.state.apiErr || '';
+    if (carga !== 'lista') {
+      v.isDash = false; v.isEmp = false; v.isFicha = false; v.isNov = false;
+      v.isAle = false; v.isRep = false; v.isCfg = false;
+    }
     v.submitAlta = this.submitAlta;
     v.altaTitle = this.state.altaEditId ? 'Editar empleado' : 'Alta de empleado';
     if (v.ficha) v.ficha.openEdit = () => this.openEdit(this.state.selEmp);
@@ -105,7 +123,18 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
     }
     // Destinatarios y canales: no hay backend donde guardarlos, así que se apagan en vez
     // de fingir que se configuran (ver CeiboAPI.notifVals).
-    Object.assign(v, window.CeiboAPI.notifVals(v));
+    // El guard es a propósito: renderVals corre en CADA render y fuera de todo try/catch,
+    // así que si CeiboAPI no trae este método la excepción se lleva puesta la app entera
+    // (pantalla en blanco, no un módulo roto). Los nombres hasheados de build.py hacen
+    // imposible el desajuste que lo provocó; esto asegura que el modo de falla, si algún
+    // día vuelve, sea perder un bloque de Configuración y no toda la pantalla.
+    // Se chequea también que exista CeiboAPI: si el archivo no cargó (404), no es que falte
+    // el método sino el objeto entero, y `window.CeiboAPI.notifVals` ya tira al leerlo.
+    if (window.CeiboAPI && typeof window.CeiboAPI.notifVals === 'function') {
+      Object.assign(v, window.CeiboAPI.notifVals(v));
+    } else {
+      console.error('[ceibo] CeiboAPI.notifVals no está disponible; ¿ceibo-api.js desactualizado?');
+    }
     // Parametría real: las filas salen del catálogo, así que un tipo nuevo aparece solo.
     if (this.state.cfgVenc) {
       // Los aria van acá también: este override reemplaza a cfgRows del canvas, así que
@@ -150,6 +179,11 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
   setView = (v) => {
     const dejaEmpleados = v !== 'empleados' && v !== 'ficha';
     this.setState(dejaEmpleados ? { view: v, empSearch: '' } : { view: v });
+    // Los módulos comparten un solo <main> con scroll propio, así que la posición de la
+    // pantalla anterior sobrevivía al cambio de vista: se entraba a Empleados con 137 px
+    // de scroll y el título y los filtros quedaban tapados por el encabezado. Se vuelve
+    // arriba después del render (antes, el DOM todavía tiene el alto de la vista vieja).
+    window.CeiboAPI.scrollMainTop();
   };
   // ===== parametría de alertas =====
   _cfgTimers = {};
@@ -382,10 +416,22 @@ EDICIONES = [
         '<script src="./support.js"></script>\n<script src="./ceibo-api.js"></script>',
         "head: script ceibo-api.js",
     ),
+    # --- head: index.html nunca se cachea ---
+    # Los assets van con hash y se pueden cachear para siempre; el index es el que dice
+    # cuáles son, así que servir uno viejo deja al usuario en la versión anterior después
+    # de desplegar. Lo correcto es el header Cache-Control del servidor —esto es el
+    # refuerzo que viaja con el archivo y funciona con `python -m http.server`, que no
+    # manda headers de caché.
+    (
+        '<meta name="viewport" content="width=device-width, initial-scale=1">',
+        '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
+        '<meta http-equiv="Cache-Control" content="no-cache, must-revalidate">',
+        "head: no cachear index.html",
+    ),
     # --- state: campos nuevos ---
     (
         "theme: 'dark', view: 'dashboard', selEmp: 1,",
-        "theme: 'dark', view: 'dashboard', selEmp: 1,\n    empleados: null, novedades: null, dashboard: null, apiErr: null, altaEditId: null, tiposDoc: null, vencimientos: null, alertasDiaData: null, cfgVenc: null,",
+        "theme: 'dark', view: 'dashboard', selEmp: 1,\n    empleados: null, novedades: null, dashboard: null, apiErr: null, altaEditId: null, tiposDoc: null, vencimientos: null, alertasDiaData: null, cfgVenc: null,\n    cargaInicial: 'cargando',",
         "state: campos de integración",
     ),
     # --- novBase(): usar datos reales si están cargados ---
@@ -414,6 +460,10 @@ EDICIONES = [
     ),
     # (El FIX del header malformado de "Registrar/Editar novedad" ya no hace falta:
     #  el export 2026-07-10 de Claude Design trae el header balanceado de fábrica.)
+    # (El panel de "Cargando datos…" / error de carga y su @keyframes spin ya no se
+    #  inyectan: se subieron al canvas el 2026-07-20 y el diseño los trae de fábrica.
+    #  La LÓGICA que decide cuándo mostrarlos —cargaInicial y el apagado de los módulos—
+    #  sigue en BLOQUE_INTEGRACION: es cableado, no diseño.)
     # --- template: marcar modales para leer sus inputs del DOM ---
     (
         "style=\"background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:720px;max-width:100%",
@@ -496,56 +546,12 @@ EDICIONES = [
     #  2026-07-15 y el diseño ya lo trae. El canvas calcula su propia fecha para verse solo;
     #  el valor real lo pisa CeiboAPI.alertasDiaVals.)
 
-    # --- responsive: clases de anclaje para las media queries (BUG-05, BUG-06) ---
-    # Las grillas del canvas son estilos inline, así que el CSS solo las puede pisar con
-    # !important y necesita a qué agarrarse. Se marcan las tres filas con una clase.
-    (
-        '<div style="display:grid;grid-template-columns:2.2fr 1.3fr 1fr 1.1fr 0.9fr 42px;gap:14px;padding:13px 20px;border-bottom:1px solid var(--border);font-size:11px',
-        '<div class="ceibo-emp-head" style="display:grid;grid-template-columns:2.2fr 1.3fr 1fr 1.1fr 0.9fr 42px;gap:14px;padding:13px 20px;border-bottom:1px solid var(--border);font-size:11px',
-        "empleados: clase en la cabecera de la grilla",
-    ),
-    (
-        '<div onClick="{{ e.open }}" onKeyDown="{{ e.openKey }}" role="button" tabindex="0"',
-        '<div onClick="{{ e.open }}" onKeyDown="{{ e.openKey }}" class="ceibo-emp-row" role="button" tabindex="0"',
-        "empleados: clase en la fila",
-    ),
-    (
-        '<div style="display:flex;align-items:center;gap:16px;padding:14px 0;border-bottom:1px solid var(--border)">',
-        '<div class="ceibo-cfg-row" style="display:flex;align-items:center;gap:16px;padding:14px 0;border-bottom:1px solid var(--border)">',
-        "configuración: clase en la fila de parametría",
-    ),
-    # --- responsive: las media queries propiamente dichas ---
-    # El canvas trae un solo breakpoint y solo encoge la barra lateral: el contenido seguía
-    # con seis columnas dentro de ~264 px útiles, con el nombre, el DNI y la empresa
-    # encimados. En móvil cada fila pasa a ser una tarjeta con la etiqueta de cada dato.
-    (
-        "  @media(max-width:900px){ .ceibo-shell{grid-template-columns:66px 1fr !important}",
-        """  @media(max-width:900px){
-    .ceibo-emp-head{display:none !important}
-    .ceibo-emp-row{display:grid !important;grid-template-columns:1fr auto !important;
-      gap:7px 12px !important;padding:14px 16px !important;align-items:start !important}
-    .ceibo-emp-row > div::before{font-size:10.5px;font-weight:600;letter-spacing:.04em;
-      color:var(--text3);text-transform:uppercase;flex:none}
-    .ceibo-emp-row > div:nth-child(1){grid-column:1;grid-row:1;min-width:0}
-    .ceibo-emp-row > div:nth-child(6){grid-column:2;grid-row:1;align-self:center}
-    .ceibo-emp-row > div:nth-child(2),.ceibo-emp-row > div:nth-child(3),
-    .ceibo-emp-row > div:nth-child(4),.ceibo-emp-row > div:nth-child(5){
-      grid-column:1 / -1;display:flex;justify-content:space-between;align-items:center;gap:12px}
-    .ceibo-emp-row > div:nth-child(2)::before{content:"Empresa"}
-    .ceibo-emp-row > div:nth-child(3)::before{content:"Sector"}
-    .ceibo-emp-row > div:nth-child(4)::before{content:"Puesto"}
-    .ceibo-emp-row > div:nth-child(5)::before{content:"Estado"}
-  }
-  @media(max-width:600px){
-    /* La descripción quedaba con una palabra por línea porque los +/- se llevaban el ancho.
-       Apilada arriba y los controles abajo a la derecha, se lee de un renglón. */
-    .ceibo-cfg-row{flex-wrap:wrap !important;gap:10px !important}
-    .ceibo-cfg-row > div:first-child{flex:1 1 100% !important}
-    .ceibo-cfg-row > div:last-child{margin-left:auto}
-  }
-  @media(max-width:900px){ .ceibo-shell{grid-template-columns:66px 1fr !important}""",
-        "responsive: media queries de empleados y configuración",
-    ),
+    # (El layout móvil ya no se inyecta: se subió al canvas el 2026-07-20 y el export lo
+    #  trae de fábrica. Eran nueve ediciones —las clases ceibo-emp-head/emp-row/cfg-row/
+    #  nov-head/nov-row, sus media queries y el sr-only del menú lateral— y se borraron de
+    #  acá al promoverlo, que es lo que indicaba su propio comentario. Ojo: esas clases son
+    #  ahora ANCLAS DE DISEÑO. Si un rediseño las quita, el layout móvil de Empleados,
+    #  Novedades y Configuración se rompe en silencio, sin que este script corte.)
     # --- empleados: buscar ignorando tildes (BUG-08) ---
     # `toLowerCase().indexOf()` no normaliza: buscar "maria" encontraba "Maria Agust Cardoso"
     # pero no "María Godoy" ni "María López", que es justo lo que se estaba buscando. El DNI
@@ -605,6 +611,163 @@ EDICIONES = [
 ]
 
 
+# ===== invariantes del diseño =====
+# El layout móvil vive en el canvas desde el 2026-07-20 (ver el comentario en EDICIONES).
+# Eso le sacó a este script su red de seguridad: las inyecciones cortaban si el diseño
+# cambiaba, pero una regla CSS que ya está en el export no corta nada.
+#
+# El modo de falla peligroso no es que el layout se rompa —eso se ve al abrir la app— sino
+# que las tarjetas móviles rotulan por POSICIÓN (`nth-child(N)::before{content:"..."}`).
+# Si un rediseño reordena, agrega o renombra una columna, el layout sigue impecable y la
+# tarjeta muestra "EMPRESA" arriba del sector: datos mal rotulados con cara de correctos.
+# Por eso se verifica la cabecera literal, que es la que declara el orden de las columnas.
+INVARIANTES_DISENO = [
+    {
+        "pantalla": "Empleados",
+        "head": "ceibo-emp-head",
+        "fila": "ceibo-emp-row",
+        "cabecera": "<div>EMPLEADO</div><div>EMPRESA</div><div>SECTOR</div>"
+                    "<div>PUESTO</div><div>ESTADO</div><div></div>",
+        "etiquetas": {2: "Empresa", 3: "Sector", 4: "Puesto", 5: "Estado"},
+    },
+    {
+        "pantalla": "Novedades",
+        "head": "ceibo-nov-head",
+        "fila": "ceibo-nov-row",
+        "cabecera": "<div>TIPO</div><div>EMPLEADO</div><div>FECHA</div>"
+                    "<div>CLASIFICACIÓN</div><div>ESTADO</div>",
+        "etiquetas": {2: "Empleado", 3: "Fecha", 4: "Clasificación"},
+    },
+]
+
+# Clases sin cabecera que verificar, pero de las que igual depende el layout/accesibilidad.
+CLASES_REQUERIDAS = [
+    {"clase": "ceibo-cfg-row", "para": "layout móvil de Configuración"},
+    {
+        "clase": "ceibo-navlbl",
+        "para": "nombre accesible del menú lateral en móvil",
+        # No alcanza con que la regla exista: tiene que seguir siendo "oculto solo a la
+        # vista". display:none esconde la etiqueta del lector de pantalla y los seis
+        # botones del menú vuelven a anunciarse como "botón" a secas (REG-03).
+        "prohibido": "display:none",
+    },
+]
+
+
+def _reglas_css(plano: str, clase: str) -> list:
+    """Cuerpos de las reglas CSS cuyo selector incluye .clase.
+
+    Con borde a la derecha para no confundir `.ceibo-navlbl` con `.ceibo-navlbl-x`:
+    un simple `in` daría por presente una regla que en realidad se renombró.
+    """
+    selector = re.compile(r"\." + re.escape(clase) + r"(?![-\w])")
+    return [cuerpo for sel, cuerpo in re.findall(r"([^{}]*)\{([^{}]*)\}", plano)
+            if selector.search(sel)]
+
+
+def verificar_invariantes(html: str) -> None:
+    """Corta si el diseño dejó de cumplir lo que el layout móvil asume."""
+    plano = "".join(html.split())   # sin espacios: tolera reformateo del CSS
+    fallas = []
+
+    for inv in INVARIANTES_DISENO:
+        p = inv["pantalla"]
+        for clase in (inv["head"], inv["fila"]):
+            if f'class="{clase}"' not in html:
+                fallas.append(
+                    f'{p}: falta class="{clase}" en el markup. El CSS móvil quedó '
+                    f"apuntando a nada y la tabla vuelve a ser ilegible en celular.")
+            if not _reglas_css(plano, clase):
+                fallas.append(
+                    f"{p}: no hay reglas CSS para .{clase}. ¿Se borró o se renombró el "
+                    f"bloque @media del diseño?")
+        if "".join(inv["cabecera"].split()) not in plano:
+            fallas.append(
+                f"{p}: la cabecera de la tabla cambió. Las etiquetas de la tarjeta móvil "
+                f"se asignan por posición, así que reordenar/agregar/renombrar una columna "
+                f"las deja rotulando el dato equivocado.\n"
+                f"       Esperada: {inv['cabecera']}\n"
+                f"       Hay que reajustar los nth-child del @media y esta cabecera.")
+        for n, etiqueta in inv["etiquetas"].items():
+            regla = f'.{inv["fila"]}>div:nth-child({n})::before{{content:"{etiqueta}"}}'
+            if regla not in plano:
+                fallas.append(
+                    f'{p}: falta la etiqueta móvil de la columna {n} ("{etiqueta}").')
+
+    for req in CLASES_REQUERIDAS:
+        clase, para_que = req["clase"], req["para"]
+        if f'class="{clase}"' not in html:
+            fallas.append(f'falta class="{clase}" en el markup ({para_que}).')
+        reglas = _reglas_css(plano, clase)
+        if not reglas:
+            fallas.append(
+                f"no hay reglas CSS para .{clase} ({para_que}); ¿se borró o se renombró?")
+        elif req.get("prohibido"):
+            malas = [c for c in reglas if req["prohibido"] in c]
+            if malas:
+                fallas.append(
+                    f".{clase} volvió a usar '{req['prohibido']}' ({para_que}). "
+                    f"Tiene que quedar oculta solo a la vista (clip/clip-path), o el "
+                    f"lector de pantalla pierde el nombre de los botones del menú.")
+
+    if fallas:
+        print("\nERROR: el diseño ya no cumple lo que asume el layout móvil.\n")
+        for f in fallas:
+            print(f"  - {f}")
+        sys.exit(
+            "\nEstas reglas viven en el canvas (Claude Design), no en build.py. "
+            "Revisar el export\ny reajustar el @media correspondiente antes de seguir. "
+            "Ver 'invariantes del diseño'\nen este archivo.")
+    print(f"  [ok] invariantes del diseño ({len(INVARIANTES_DISENO)} tablas + "
+          f"{len(CLASES_REQUERIDAS)} clases)")
+
+
+# Los assets se publican con el hash de su contenido en el nombre. Antes se llamaban
+# siempre `ceibo-api.js` y `support.js`: al actualizar, un navegador con la versión vieja
+# en caché podía quedarse con el JS anterior y pedir el index.html nuevo. El resultado no
+# era "algo desactualizado" sino la app en blanco —el index nuevo llamaba a una función que
+# el JS viejo no tenía y el render entero moría—. Con el hash en el nombre, cada index.html
+# pide exactamente los archivos con los que se construyó: la mezcla ya no puede ocurrir.
+# El único archivo con nombre fijo es index.html, y quedarse con uno viejo solo sirve la
+# versión anterior completa y coherente, que es una falla aceptable.
+ASSETS = [
+    ("support.js", lambda: DESIGN / "support.js"),
+    ("ceibo-api.js", lambda: RAIZ / "integration" / "ceibo-api.js"),
+]
+
+
+def escribir_assets(html: str) -> str:
+    """Copia los assets con hash en el nombre y reescribe sus <script> en el HTML."""
+    vigentes = set()
+    for nombre, origen in ASSETS:
+        datos = origen().read_bytes()
+        h = hashlib.sha256(datos).hexdigest()[:10]
+        base, ext = nombre.rsplit(".", 1)
+        hasheado = f"{base}.{h}.{ext}"
+        (DIST / hasheado).write_bytes(datos)
+        vigentes.add(hasheado)
+        ancla = f'<script src="./{nombre}"></script>'
+        if ancla not in html:
+            sys.exit(f"ERROR: no se encontró el <script> de {nombre} para hashear. Revisar build.py")
+        html = html.replace(ancla, f'<script src="./{hasheado}"></script>', 1)
+        print(f"  [ok] asset {nombre} -> {hasheado}")
+
+    # Borrar versiones anteriores: si no, dist/ va juntando un archivo por cada build y no
+    # se distingue cuál está en uso. Solo se tocan los que matchean el patrón hasheado.
+    patron = re.compile(r"^(support|ceibo-api)\.[0-9a-f]{10}\.js$")
+    for viejo in DIST.iterdir():
+        if viejo.name not in vigentes and patron.match(viejo.name):
+            viejo.unlink()
+            print(f"  [--] asset viejo removido: {viejo.name}")
+    # Los nombres sin hash de builds anteriores también sobran y confunden.
+    for nombre, _ in ASSETS:
+        obsoleto = DIST / nombre
+        if obsoleto.exists():
+            obsoleto.unlink()
+            print(f"  [--] asset sin hash removido: {nombre}")
+    return html
+
+
 def main():
     try:
         sys.stdout.reconfigure(encoding="utf-8")  # consola Windows (cp1252) → UTF-8
@@ -617,6 +780,8 @@ def main():
     # (La sección "Egreso" del alta ya no viene en el canvas (export 2026-07-10); no hay
     #  nada que remover acá.)
 
+    verificar_invariantes(html)
+
     for ancla, reemplazo, desc in EDICIONES:
         if ancla not in html:
             sys.exit(f"ERROR: ancla no encontrada [{desc}]. ¿Cambió el diseño? Revisar build.py")
@@ -624,9 +789,8 @@ def main():
         print("  [ok] "+desc)
 
     DIST.mkdir(exist_ok=True)
+    html = escribir_assets(html)
     (DIST / "index.html").write_text(html, encoding="utf-8")
-    shutil.copy2(DESIGN / "support.js", DIST / "support.js")
-    shutil.copy2(RAIZ / "integration" / "ceibo-api.js", DIST / "ceibo-api.js")
     print(f"\nOK -> {DIST / 'index.html'}")
     print("Servir:  cd dist && python -m http.server 8080")
 

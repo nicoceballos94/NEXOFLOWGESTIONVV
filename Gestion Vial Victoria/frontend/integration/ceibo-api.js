@@ -599,6 +599,22 @@
     a11yModal(sel) { rotularCampos(sel); focoAtrapado(sel); },
     a11yCerrar: focoDevuelto,
 
+    // Cambio de módulo = pantalla nueva: se entra por arriba. El scroll vive en <main>
+    // (no en window), así que scrollTo() del navegador no sirve.
+    // Se hace dos veces a propósito: ya, y de nuevo después del re-render, porque el
+    // re-render conserva la posición del módulo anterior. Con setTimeout y no con
+    // requestAnimationFrame: rAF queda suspendido en pestañas ocultas, así que navegar
+    // con la pestaña en segundo plano dejaba el scroll sin resetear y recién saltaba al
+    // volver, moviendo la pantalla debajo del usuario en el peor momento.
+    scrollMainTop() {
+      var irArriba = function () {
+        var m = document.querySelector("main");
+        if (m) m.scrollTop = 0;
+      };
+      irArriba();
+      setTimeout(irArriba, 0);
+    },
+
     async init() {
       var tk = await fetch(CONFIG.API + "/auth/token/", {
         method: "POST", headers: { "content-type": "application/json" },

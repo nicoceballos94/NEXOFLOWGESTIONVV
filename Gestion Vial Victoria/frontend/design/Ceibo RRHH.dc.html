@@ -43,7 +43,44 @@
   @keyframes ov{from{opacity:0}to{opacity:1}}
   @keyframes pop{from{opacity:0;transform:translateY(10px) scale(.98)}to{opacity:1;transform:none}}
   @keyframes fin{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
-  @media(max-width:900px){ .ceibo-shell{grid-template-columns:66px 1fr !important} .ceibo-navlbl{display:none !important} .ceibo-brandlbl{display:none !important} .ceibo-userlbl{display:none !important} }
+  @keyframes spin{to{transform:rotate(360deg)}}
+  @media(max-width:900px){
+    .ceibo-emp-head{display:none !important}
+    .ceibo-emp-row{display:grid !important;grid-template-columns:1fr auto !important;
+      gap:7px 12px !important;padding:14px 16px !important;align-items:start !important}
+    .ceibo-emp-row > div::before{font-size:10.5px;font-weight:600;letter-spacing:.04em;
+      color:var(--text3);text-transform:uppercase;flex:none}
+    .ceibo-emp-row > div:nth-child(1){grid-column:1;grid-row:1;min-width:0}
+    .ceibo-emp-row > div:nth-child(6){grid-column:2;grid-row:1;align-self:center}
+    .ceibo-emp-row > div:nth-child(2),.ceibo-emp-row > div:nth-child(3),
+    .ceibo-emp-row > div:nth-child(4),.ceibo-emp-row > div:nth-child(5){
+      grid-column:1 / -1;display:flex;justify-content:space-between;align-items:center;gap:12px}
+    .ceibo-emp-row > div:nth-child(2)::before{content:"Empresa"}
+    .ceibo-emp-row > div:nth-child(3)::before{content:"Sector"}
+    .ceibo-emp-row > div:nth-child(4)::before{content:"Puesto"}
+    .ceibo-emp-row > div:nth-child(5)::before{content:"Estado"}
+    .ceibo-nov-head{display:none !important}
+    .ceibo-nov-row{display:grid !important;grid-template-columns:1fr auto !important;
+      gap:7px 12px !important;padding:14px 16px !important;align-items:start !important}
+    .ceibo-nov-row > div::before{font-size:10.5px;font-weight:600;letter-spacing:.04em;
+      color:var(--text3);text-transform:uppercase;flex:none}
+    .ceibo-nov-row > div:nth-child(1){grid-column:1;grid-row:1;min-width:0}
+    .ceibo-nov-row > div:nth-child(5){grid-column:2;grid-row:1;align-self:center}
+    .ceibo-nov-row > div:nth-child(2),.ceibo-nov-row > div:nth-child(3),
+    .ceibo-nov-row > div:nth-child(4){
+      grid-column:1 / -1;display:flex;justify-content:space-between;align-items:center;gap:12px}
+    .ceibo-nov-row > div:nth-child(2)::before{content:"Empleado"}
+    .ceibo-nov-row > div:nth-child(3)::before{content:"Fecha"}
+    .ceibo-nov-row > div:nth-child(4)::before{content:"Clasificación"}
+  }
+  @media(max-width:600px){
+    /* La descripción quedaba con una palabra por línea porque los +/- se llevaban el ancho.
+       Apilada arriba y los controles abajo a la derecha, se lee de un renglón. */
+    .ceibo-cfg-row{flex-wrap:wrap !important;gap:10px !important}
+    .ceibo-cfg-row > div:first-child{flex:1 1 100% !important}
+    .ceibo-cfg-row > div:last-child{margin-left:auto}
+  }
+  @media(max-width:900px){ .ceibo-shell{grid-template-columns:66px 1fr !important} .ceibo-navlbl,.ceibo-brandlbl,.ceibo-userlbl{position:absolute !important;width:1px !important;height:1px !important;padding:0 !important;margin:0 !important;overflow:hidden !important;clip:rect(0 0 0 0) !important;clip-path:inset(50%) !important;white-space:nowrap !important;border:0 !important} }
 </style>
 </helmet>
 
@@ -127,6 +164,19 @@
     </header>
 
     <main style="flex:1;overflow-y:auto;padding:26px 30px 60px">
+      <sc-if value="{{ cargandoInit }}" hint-placeholder-val="{{ false }}">
+        <div role="status" aria-live="polite" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:80px 20px;color:var(--text3)">
+          <div style="width:26px;height:26px;border-radius:50%;border:2.5px solid var(--border2);border-top-color:var(--accent);animation:spin .7s linear infinite"></div>
+          <div style="font-size:13px">Cargando datos…</div>
+        </div>
+      </sc-if>
+      <sc-if value="{{ errorInit }}" hint-placeholder-val="{{ false }}">
+        <div role="alert" style="display:flex;align-items:flex-start;gap:11px;background:var(--surface);border:1px solid var(--bad);border-radius:12px;padding:16px 18px;margin-top:8px">
+          <div style="width:8px;height:8px;border-radius:50%;background:var(--bad);flex:none;margin-top:6px"></div>
+          <div><div style="font-size:13.5px;font-weight:600;color:var(--text)">No se pudieron cargar los datos</div>
+          <div style="font-size:12px;color:var(--text3);line-height:1.5">No se muestra nada en vez de mostrar información de ejemplo. Reintentá recargando la página.</div>
+          <div style="font-size:11.5px;color:var(--text3);margin-top:6px;font-family:ui-monospace,monospace">{{ apiErrMsg }}</div></div></div>
+      </sc-if>
 
       <!-- ===================== DASHBOARD ===================== -->
       <sc-if value="{{ isDash }}" hint-placeholder-val="{{ true }}">
@@ -266,11 +316,11 @@
         </div>
 
         <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow:hidden;box-shadow:var(--shadow)">
-          <div style="display:grid;grid-template-columns:2.2fr 1.3fr 1fr 1.1fr 0.9fr 42px;gap:14px;padding:13px 20px;border-bottom:1px solid var(--border);font-size:11px;font-weight:600;letter-spacing:.04em;color:var(--text3);background:var(--surface2)">
+          <div class="ceibo-emp-head" style="display:grid;grid-template-columns:2.2fr 1.3fr 1fr 1.1fr 0.9fr 42px;gap:14px;padding:13px 20px;border-bottom:1px solid var(--border);font-size:11px;font-weight:600;letter-spacing:.04em;color:var(--text3);background:var(--surface2)">
             <div>EMPLEADO</div><div>EMPRESA</div><div>SECTOR</div><div>PUESTO</div><div>ESTADO</div><div></div>
           </div>
           <sc-for list="{{ filteredEmployees }}" as="e" hint-placeholder-count="8">
-            <div onClick="{{ e.open }}" onKeyDown="{{ e.openKey }}" role="button" tabindex="0" aria-label="{{ e.aria }}" style="display:grid;grid-template-columns:2.2fr 1.3fr 1fr 1.1fr 0.9fr 42px;gap:14px;padding:13px 20px;border-bottom:1px solid var(--border);align-items:center;cursor:pointer" style-hover="background:var(--surface2)">
+            <div onClick="{{ e.open }}" onKeyDown="{{ e.openKey }}" class="ceibo-emp-row" role="button" tabindex="0" aria-label="{{ e.aria }}" style="display:grid;grid-template-columns:2.2fr 1.3fr 1fr 1.1fr 0.9fr 42px;gap:14px;padding:13px 20px;border-bottom:1px solid var(--border);align-items:center;cursor:pointer" style-hover="background:var(--surface2)">
               <div style="display:flex;align-items:center;gap:11px;min-width:0">
                 <div style="{{ e.avatar }}">{{ e.initials }}</div>
                 <div style="min-width:0">
@@ -484,12 +534,12 @@
         </div>
 
         <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow:hidden;box-shadow:var(--shadow)">
-          <div style="display:grid;grid-template-columns:1.6fr 1.4fr 1.2fr 1fr 1fr;gap:14px;padding:13px 20px;border-bottom:1px solid var(--border);font-size:11px;font-weight:600;letter-spacing:.04em;color:var(--text3);background:var(--surface2)">
+          <div class="ceibo-nov-head" style="display:grid;grid-template-columns:1.6fr 1.4fr 1.2fr 1fr 1fr;gap:14px;padding:13px 20px;border-bottom:1px solid var(--border);font-size:11px;font-weight:600;letter-spacing:.04em;color:var(--text3);background:var(--surface2)">
             <div>TIPO</div><div>EMPLEADO</div><div>FECHA</div><div>CLASIFICACIÓN</div><div>ESTADO</div>
           </div>
           <sc-for list="{{ filteredNov }}" as="n" hint-placeholder-count="6">
             <div>
-              <div onClick="{{ n.openDet }}" onKeyDown="{{ n.openDetKey }}" role="button" tabindex="0" aria-label="{{ n.aria }}" style="display:grid;grid-template-columns:1.6fr 1.4fr 1.2fr 1fr 1fr;gap:14px;padding:14px 20px;border-bottom:1px solid var(--border);align-items:center;cursor:pointer" style-hover="background:var(--surface2)">
+              <div onClick="{{ n.openDet }}" onKeyDown="{{ n.openDetKey }}" class="ceibo-nov-row" role="button" tabindex="0" aria-label="{{ n.aria }}" style="display:grid;grid-template-columns:1.6fr 1.4fr 1.2fr 1fr 1fr;gap:14px;padding:14px 20px;border-bottom:1px solid var(--border);align-items:center;cursor:pointer" style-hover="background:var(--surface2)">
                 <div style="display:flex;align-items:center;gap:10px;min-width:0">
                   <div style="{{ n.iconWrap }}"><span style="{{ n.icon }}"></span></div>
                   <div style="min-width:0">
@@ -639,7 +689,7 @@
           <div style="font-size:12.5px;color:var(--text3);margin-bottom:18px">Definí con cuántos días de anticipación el sistema avisa antes de cada vencimiento.</div>
           <div style="display:flex;flex-direction:column">
             <sc-for list="{{ cfgRows }}" as="c" hint-placeholder-count="4">
-              <div style="display:flex;align-items:center;gap:16px;padding:14px 0;border-bottom:1px solid var(--border)">
+              <div class="ceibo-cfg-row" style="display:flex;align-items:center;gap:16px;padding:14px 0;border-bottom:1px solid var(--border)">
                 <div style="flex:1">
                   <div style="font-size:13.5px;font-weight:500;color:var(--text)">{{ c.label }}</div>
                   <div style="font-size:11.5px;color:var(--text3)">{{ c.hint }}</div>

@@ -26,6 +26,8 @@ frontend/
 │   └── design-change-template.md # plantilla para pedir un cambio
 ├── integration/
 │   └── ceibo-api.js            # capa de integración con la API (lo único a mano)
+├── tests/
+│   └── test_invariantes_diseno.py  # el guard de build.py corta ante rediseños peligrosos
 ├── build.py                    # inyecta el cableado → dist/
 └── dist/                       # generado (gitignored)
 ```
@@ -40,6 +42,15 @@ cd frontend
 python build.py
 cd dist && python -m http.server 8080
 # abrir http://127.0.0.1:8080
+```
+
+El layout móvil (media queries y clases `ceibo-*-row`) vive en el canvas, no acá, así
+que `build.py` no puede cortar por "ancla no encontrada" si un rediseño lo rompe. Esa
+red la pone `verificar_invariantes()`, y este test comprueba que efectivamente atrapa
+algo — conviene correrlo después de promover un export:
+
+```bash
+python frontend/tests/test_invariantes_diseno.py
 ```
 
 ## Qué está cableado (contra la API de empleados)
