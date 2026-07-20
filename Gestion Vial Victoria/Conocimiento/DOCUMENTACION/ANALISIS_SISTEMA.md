@@ -7,8 +7,14 @@
 **C (robustez y rendimiento)** están **resueltas**; sus hallazgos se quitaron de este
 documento (ver "B. Correctitud…" y "C. Robustez…" abajo). De la sección D se cerraron
 **D6, D7 y D8**, y se corrigieron **D3 y D4**, que ya estaban hechos cuando se escribió
-este análisis: el relevamiento los dio por pendientes de más. **Toda la sección A
-(seguridad) sigue abierta.**
+este análisis: el relevamiento los dio por pendientes de más. De la sección A quedó
+cerrado **A2** (se arregló junto con los archivos adjuntos y este documento no lo había
+registrado); **A1, A3 y A4 siguen abiertos**.
+
+**Reverificación (2026-07-16, segunda pasada):** todos los cierres declarados en este
+documento (B1–B6, C1–C5, D6, D7, D8 y los descargos de D3/D4/D7) se constataron uno por
+uno contra el código en la rama `fase-0-verificada`, y la suite completa corre en verde
+contra Postgres (120 tests, vía `docker compose exec api pytest`). Ninguno quedó a medias.
 
 Cada hallazgo tiene un ID (A = seguridad, B = correctitud/integridad, C = robustez,
 D = mejoras) y referencia a archivo y línea. Al final hay una tabla de prioridades.
@@ -53,18 +59,14 @@ cuando exista un entorno real, rotarla.
 **Fix:** pantalla de login que pida usuario/clave contra `/auth/token/` y guarde el
 refresh en memoria (o sessionStorage), y eliminar `USER`/`PASS` de `CONFIG`.
 
-### A2 — Fuga de scope: cualquier autenticado ve documentos de cualquier empleado 🔴
-`gestion_rrhh/apps/empleados/api/views.py:73-78`
-
-La acción `documentos` (GET) tiene permiso `IsAuthenticated`, pero resuelve el
-empleado con `get_object_or_404(Empleado, pk=pk)` **sin pasar por el selector**.
-El scoping por rol ("el Empleado ve solo su ficha") se aplica en `list`/`retrieve`
-vía `get_queryset()`, pero acá se lo saltea: un usuario con rol Empleado puede
-pedir `GET /api/v1/empleados/{cualquier_id}/documentos/` y ver los documentos
-(número, vencimientos, observaciones) de cualquier otra persona.
-
-**Fix:** `empleado = get_object_or_404(self.get_queryset(), pk=pk)` en la rama GET
-(las acciones de escritura ya exigen RRHH/Admin, ahí no hay fuga).
+### A2 — Fuga de scope en documentos de empleado ✅ resuelto (constatado 2026-07-16)
+El hueco existió pero ya está cerrado: se arregló al agregar los archivos adjuntos (donde
+la fuga pasaba de metadatos a descargar el apto médico ajeno) y este documento no lo había
+registrado. Hoy `documentos`, `documento` y `archivo_documento` resuelven el empleado con
+`_empleado_en_scope()` (`empleados/api/views.py:56-72`), que pasa por
+`selectors.empleados_visibles_para(usuario=...)`: un rol Empleado que pide los documentos
+de otra persona muere en 404. El mismo patrón está en novedades: `adjuntos` y
+`archivo_adjunto` resuelven vía `get_object()` → selector scopeado.
 
 ### A3 — PII expuesta a roles que no deberían verla 🟠
 `gestion_rrhh/apps/empleados/api/serializers.py:36-65` vs. la promesa de
@@ -244,28 +246,42 @@ la raíz del repo, que es donde vive `.github/`. Lo que faltaba de verdad se agr
 - `splitName()` (`ceibo-api.js:127`): **sin cambios, a propósito**. Es una heurística
   inevitable con un solo campo de nombre; separarlo en dos es decisión de canvas.
 
+### D9 — Hallazgos menores nuevos del reanálisis (2026-07-16)
+Aparecieron en la segunda pasada; ninguno es urgente:
+
+- **`docEstado()` fecha vencimientos con el huso equivocado** (`ceibo-api.js:188-194`):
+  `new Date("2026-07-16")` es la medianoche **UTC**, y `new Date()` es la hora local. En
+  Argentina (UTC-3) un documento que vence HOY da diferencia negativa y se pinta como
+  **vencido** (rojo) durante todo el día, cuando debería ser "por vencer". Es el mismo
+  bug de familia que B6 (`todayISO`), en la otra dirección. Fix: comparar contra
+  `todayISO()` como strings, o armar la fecha con `new Date(y, m-1, d)` local.
+- **La empresa de una novedad se muestra por la relación activa del empleado, no por la
+  de la novedad** (`adaptNov` usa `_empById[n.empleado].empresa`). Con empleados con
+  historial en las dos empresas del grupo, la grilla puede etiquetar una novedad vieja
+  con la empresa actual. El filtro real lo hace el backend (D8 lo dejó bien); esto es
+  solo la etiqueta visible.
+
 ---
 
 ## Prioridades sugeridas
 
-Las secciones B y C salieron de esta tabla: están resueltas (2026-07-15). De D quedan D1,
-D2 y D5 (D3 y D4 nunca estuvieron pendientes; D6, D7 y D8 se cerraron el 2026-07-16). Lo
-que queda pendiente es **toda la sección A** y esas tres de D.
+Las secciones B y C salieron de esta tabla: están resueltas (2026-07-15). A2 también salió
+(estaba resuelto y sin registrar). De D quedan D1, D2, D5 y los menores de D9 (D3 y D4
+nunca estuvieron pendientes; D6, D7 y D8 se cerraron el 2026-07-16). Lo que queda
+pendiente de A es **A1, A3 y A4**.
 
 | Prioridad | ID | Hallazgo | Esfuerzo |
 |---|---|---|---|
-| 🔴 1 | A1 | Login real; sacar credenciales hardcodeadas | Medio |
-| 🔴 2 | A2 | Scope en `GET /empleados/{id}/documentos/` | Trivial (1 línea) |
-| 🟠 3 | A3 | PII solo para RRHH/Admin | Bajo |
-| 🟠 4 | A4 | `SECRET_KEY` sin default en prod | Trivial |
-| 🟢 5 | D2 | Auditoría (RP8) | Alto |
-| 🟢 — | resto | D1, D5, D6 (el `<select>` del canvas) | según roadmap |
+| 🔴 1 | A1 | Login real; sacar credenciales hardcodeadas (queda para más adelante, por decisión del 2026-07-16) | Medio |
+| 🟠 2 | A3 | PII solo para RRHH/Admin | Bajo |
+| 🟠 3 | A4 | `SECRET_KEY` sin default en prod | Trivial |
+| 🟢 4 | D2 | Auditoría (RP8) | Alto |
+| 🟢 — | resto | D1, D5, D9, D6 (el `<select>` del canvas) | según roadmap |
 
-**Lo próximo, sin vueltas:** la única sección roja es la de seguridad. A2 es una línea y
-hoy cualquier usuario con rol Empleado puede leer los documentos de cualquier otra
-persona. A1 es lo que vuelve real a todo el sistema de roles (hoy todo visitante es
-admin). Nada de eso se arregló acá: lo cerrado hasta ahora es robustez, rendimiento y las
-mejoras de proceso; seguridad sigue intacta.
+**Lo próximo, sin vueltas:** con A2 ya cerrado, lo que queda de seguridad es A1 (decidido
+para más adelante), A3 (un serializer sin PII para Supervisor) y A4 (una línea en
+`prod.py`). A3 y A4 son baratos y se pueden cerrar en cualquier momento; A4 en particular
+conviene hacerlo antes del primer deploy real, porque su falla es silenciosa.
 
 **Nota de método (2026-07-16):** tres de los ocho hallazgos de D (D3, D4 y D7) estaban mal
 relevados — describían como faltante código que ya existía. Conviene verificar cada
