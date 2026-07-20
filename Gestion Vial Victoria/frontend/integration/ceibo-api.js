@@ -13,11 +13,35 @@
 
   var CONFIG = {
     API: "http://localhost:8000/api/v1",
-    USER: "admin",              // login dev único (MVP); se reemplaza por login real
-    PASS: "Clave-Segura-123",
   };
 
-  var _token = null, _refresh = null;
+  // Sesión. El access vive solo en memoria; el refresh se persiste en sessionStorage para
+  // que un F5 no eche al usuario, y muere al cerrar la pestaña (en una PC compartida de
+  // oficina, localStorage dejaría la sesión abierta para el siguiente que la use).
+  var _token = null, _refresh = null, _perfil = null;
+  var CLAVE_SESION = "ceibo.refresh";
+  // Lo llama el cableado para volver a la pantalla de login cuando la sesión muere sola
+  // (refresh vencido o revocado). Sin esto, la app quedaba mostrando datos viejos y cada
+  // acción fallaba con un 401 silencioso.
+  var _onSesionVencida = null;
+
+  function guardarRefresh(valor) {
+    _refresh = valor || null;
+    try {
+      if (valor) sessionStorage.setItem(CLAVE_SESION, valor);
+      else sessionStorage.removeItem(CLAVE_SESION);
+    } catch (e) {
+      // Modo incógnito estricto o storage bloqueado: la sesión sigue viva en memoria,
+      // solo que no sobrevive al F5. No es motivo para romper el login.
+      console.warn("[ceibo] sessionStorage no disponible; la sesión no sobrevive al refresco");
+    }
+  }
+
+  function limpiarSesion() {
+    _token = null;
+    _perfil = null;
+    guardarRefresh(null);
+  }
   var _empresaByName = {}, _empresaById = {};
   var _sectorByName = {}, _sectorById = {};
   var _puestoByName = {}, _puestoById = {};
@@ -41,11 +65,11 @@
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ refresh: _refresh }),
     });
-    if (!r.ok) { _refresh = null; return false; }
+    if (!r.ok) { limpiarSesion(); return false; }
     var d = await r.json().catch(function () { return {}; });
-    if (!d.access) return false;
+    if (!d.access) { limpiarSesion(); return false; }
     _token = d.access;
-    if (d.refresh) _refresh = d.refresh;   // ROTATE_REFRESH_TOKENS=True → llega uno nuevo
+    if (d.refresh) guardarRefresh(d.refresh);  // ROTATE_REFRESH_TOKENS=True → llega uno nuevo
     return true;
   }
   // fetch con Authorization y reintento único ante 401 (access vencido → refresh → retry).
@@ -53,9 +77,16 @@
     opts = opts || {};
     opts.headers = Object.assign({}, opts.headers, auth());
     var r = await fetch(url, opts);
-    if (r.status === 401 && await refreshToken()) {
-      opts.headers = Object.assign({}, opts.headers, auth());
-      r = await fetch(url, opts);
+    if (r.status === 401) {
+      if (await refreshToken()) {
+        opts.headers = Object.assign({}, opts.headers, auth());
+        r = await fetch(url, opts);
+      } else if (_onSesionVencida) {
+        // El refresh ya no sirve: la sesión terminó de verdad. Se avisa una sola vez
+        // (limpiarSesion() ya corrió dentro de refreshToken) para volver al login en vez
+        // de dejar la app mostrando datos viejos que ya nadie puede actualizar.
+        _onSesionVencida();
+      }
     }
     return r;
   }
@@ -626,14 +657,84 @@
       setTimeout(irArriba, 0);
     },
 
-    async init() {
-      var tk = await fetch(CONFIG.API + "/auth/token/", {
+    // ---------- sesión (A1) ----------
+    // Antes acá había un usuario y una clave de superusuario hardcodeados: cualquiera que
+    // abriera el front era admin y los roles del backend no protegían nada. Ahora la
+    // sesión la abre una persona con sus credenciales.
+    onSesionVencida(cb) { _onSesionVencida = cb; },
+
+    hayToken() { return !!_token; },
+    perfil() { return _perfil; },
+
+    async login(usuario, clave) {
+      var r = await fetch(CONFIG.API + "/auth/token/", {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ username: CONFIG.USER, password: CONFIG.PASS }),
-      }).then(function (r) { return r.json(); });
-      if (!tk.access) throw new Error("login falló: " + JSON.stringify(tk));
-      _token = tk.access;
-      _refresh = tk.refresh || null;   // para renovar el access cuando venza (authedFetch)
+        body: JSON.stringify({ username: usuario, password: clave }),
+      });
+      if (!r.ok) {
+        limpiarSesion();
+        // 401 = credenciales; 429 = el throttle de login (5/min). Se distinguen porque el
+        // usuario no puede hacer nada con "error 429", pero sí con "esperá un minuto".
+        if (r.status === 429) throw new Error("Demasiados intentos. Esperá un minuto y probá de nuevo.");
+        if (r.status === 401) throw new Error("Usuario o contraseña incorrectos.");
+        throw new Error("No se pudo iniciar sesión (error " + r.status + ").");
+      }
+      var d = await r.json().catch(function () { return {}; });
+      if (!d.access) throw new Error("El servidor no devolvió un token válido.");
+      _token = d.access;
+      guardarRefresh(d.refresh || null);
+      await this.cargarPerfil();
+      return _perfil;
+    },
+
+    // Reabre la sesión al recargar la página: el access murió con el JS, pero el refresh
+    // sobrevivió en sessionStorage. Devuelve false si no hay nada que restaurar o si el
+    // refresh ya no sirve — en ambos casos, a la pantalla de login.
+    async restaurarSesion() {
+      if (!_refresh) {
+        try { _refresh = sessionStorage.getItem(CLAVE_SESION) || null; } catch (e) { _refresh = null; }
+      }
+      if (!_refresh) return false;
+      if (!await refreshToken()) return false;
+      try {
+        await this.cargarPerfil();
+      } catch (e) {
+        limpiarSesion();
+        return false;
+      }
+      return true;
+    },
+
+    async cargarPerfil() {
+      _perfil = await jget("/mi/perfil/");
+      return _perfil;
+    },
+
+    // Lo que va en el pie del sidebar, donde el canvas tenía "Luciana Sosa / Referente
+    // RRHH · PREMOCOR" hardcodeado. Sin nombre y apellido cargados cae al username, que
+    // es feo pero cierto: preferible a un nombre inventado.
+    perfilVals() {
+      if (!_perfil) return { nombre: "—", rol: "" };
+      var nombre = ((_perfil.first_name || "") + " " + (_perfil.last_name || "")).trim();
+      var roles = _perfil.roles || [];
+      return {
+        nombre: nombre || _perfil.username || "—",
+        rol: roles.length ? roles.join(" · ") : "Sin rol asignado",
+      };
+    },
+
+    logout() {
+      limpiarSesion();
+      // Los índices de la sesión anterior no pueden sobrevivir al cambio de usuario: el
+      // que entre después ve lo que su rol permita, no lo que quedó cacheado del anterior.
+      _empresaByName = {}; _empresaById = {};
+      _sectorByName = {}; _sectorById = {};
+      _puestoByName = {}; _puestoById = {};
+      _rawEmpleados = []; _empById = {}; _empresaByRelacionId = {};
+      _tipoNovByCodigo = {}; _novRawById = {}; _tipoDocByNombre = {}; _docsByEmp = {};
+    },
+
+    async init() {
       var emp = await getAllPages("/empresas/?page_size=100");
       var sec = await getAllPages("/sectores/?page_size=100");
       var pue = await getAllPages("/puestos/?page_size=100");

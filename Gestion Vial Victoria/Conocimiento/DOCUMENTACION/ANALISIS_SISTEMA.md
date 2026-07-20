@@ -6,7 +6,9 @@
 **Última actualización:** 2026-07-20 — se verificó **cada hallazgo abierto contra el
 código** y se depuró el documento: los cerrados salieron del cuerpo (queda el registro
 mínimo en el apéndice). Lo que sigue acá es **solo lo pendiente**. En la misma jornada se
-cerraron **A3, A4 y D9**; la suite corre en verde contra Postgres (125 tests, 5 nuevos).
+cerraron **A1, A3, A4 y D9**; la suite corre en verde contra Postgres (125 tests, 5
+nuevos). Con el login real, la sección A pasa de cuatro hallazgos abiertos a uno (**A5**,
+nuevo: la UI todavía no distingue roles).
 
 Cada hallazgo tiene un ID (A = seguridad, D = mejoras) y referencia a archivo y línea.
 Al final hay una tabla de prioridades.
@@ -20,24 +22,25 @@ y buscar desde la raíz (`NEXOFLOWGESTIONVV/`), no desde `Gestion Vial Victoria/
 
 ## A. Seguridad
 
-### A1 — Credenciales de admin hardcodeadas en el frontend 🔴
-`frontend/integration/ceibo-api.js:14-18` — verificado abierto 2026-07-20
+### A5 — La UI no distingue roles 🟠
+`frontend/` (canvas + `build.py`) — abierto desde el 2026-07-20
 
-```js
-var CONFIG = { API: "...", USER: "admin", PASS: "Clave-Segura-123" };
-```
+Con A1 cerrado, cada persona entra con sus credenciales y el backend aplica su rol. Pero
+**la UI sigue mostrando todo a todos**: un Supervisor ve "Nuevo empleado", "Aprobar" y
+"Editar", y recién al hacer click se come un 403. No es un agujero de seguridad —el
+backend rechaza igual— pero es una promesa que la app no cumple.
 
-Cualquiera que abra el front (o el repo) tiene la clave de un superusuario, y la app
-no tiene pantalla de login: todo visitante ES admin. Todo el sistema de roles del
-backend (Admin/RRHH/Supervisor/Empleado) queda sin efecto en la práctica.
-Es un atajo de MVP conocido, pero es **lo primero** a resolver antes de cualquier
-deploy o de dar acceso a terceros. Además la clave ya quedó en el historial de git:
-cuando exista un entorno real, rotarla.
+El diseño ya lo tenía previsto: `Ceibo RRHH.dc.html` documenta que *"el canvas no lo sabe
+(no hay sesión) y asume que sí. El cableado lo corrige con el rol real"*, y expone el hook
+`puedeAdjuntar`. Los roles reales ya llegan al front: `CeiboAPI.perfilVals()` los lee de
+`/mi/perfil/` y hoy solo se usan para el pie del sidebar.
 
-**Fix:** pantalla de login que pida usuario/clave contra `/auth/token/` y guarde el
-refresh en memoria (o sessionStorage), y eliminar `USER`/`PASS` de `CONFIG`.
+**Fix:** ocultar por rol las acciones de escritura (altas, aprobar/rechazar, editar,
+adjuntar), usando el rol de `/mi/perfil/`. Toca markup → entra por el canvas.
 
-**Estado:** postergado por decisión explícita del 2026-07-16.
+**Nota para probarlo:** la base de dev tiene **un solo usuario** (`admin`, superusuario,
+sin grupos). No hay con qué probar la vista de un Supervisor ni el recorte de PII de A3
+hasta que existan usuarios de prueba con cada rol.
 
 ---
 
@@ -89,15 +92,15 @@ cambio de Claude Design.
 
 | Prioridad | ID | Hallazgo | Esfuerzo |
 |---|---|---|---|
-| 🔴 1 | A1 | Login real; sacar credenciales hardcodeadas (postergado por decisión del 2026-07-16) | Medio |
+| 🟠 1 | A5 | Ocultar por rol las acciones que el backend rechaza | Medio |
 | 🟢 2 | D2 | Auditoría (RP8) | Alto |
 | 🟢 — | resto | D1, D5, D6 (el `<select>` del canvas) | según roadmap |
 
-**Lo próximo, sin vueltas:** cerrados A3 y A4, **A1 es lo único que queda de seguridad**, y
-está postergado por decisión explícita. Mientras siga abierto, el sistema de roles del
-backend —incluido el recorte de PII que se acaba de agregar— **no protege nada en la
-práctica**: el front entra siempre como superusuario, así que todo visitante ve todo. A3
-recién rinde el día que exista login real; hasta entonces es una red tendida de antemano.
+**Lo próximo, sin vueltas:** con A1 cerrado, el recorte de PII de A3 **recién ahora hace
+algo**: hasta hoy el front entraba siempre como superusuario y todo visitante veía todo.
+Lo que queda de seguridad es A5, que es de coherencia, no de exposición — el backend ya
+rechaza lo que no corresponde. Antes de eso conviene **crear usuarios de prueba por rol**:
+sin ellos no hay forma de ver funcionando ni A3 ni A5.
 
 ---
 
@@ -108,6 +111,7 @@ suite corre en verde contra Postgres (120 tests, `docker compose exec api pytest
 
 | ID | Qué era | Cerrado |
 |---|---|---|
+| A1 | Credenciales de admin hardcodeadas; sin pantalla de login | 2026-07-20 |
 | A2 | Fuga de scope en documentos de empleado | 2026-07-16 (`_empleado_en_scope()`) |
 | A3 | PII de toda la dotación visible para el Supervisor | 2026-07-20 |
 | A4 | `SECRET_KEY` con default inseguro heredado por prod | 2026-07-20 |
@@ -158,3 +162,14 @@ contexto que hay que tener a mano al tocar ese código):
 - **`docEstado()` corrigió un segundo off-by-one no registrado en el análisis:** además del
   documento que vence HOY (que se pintaba vencido), **"vence en 31 días" caía en amarillo**
   por el mismo corrimiento de huso. Ahora el umbral de 30 días es exacto.
+- **La sesión vive en `sessionStorage`** (A1): sobrevive al F5, muere al cerrar la pestaña.
+  El access queda solo en memoria. Como cualquier token manejado por JS, es alcanzable por
+  un XSS — la mitigación real es no introducir uno, no el lugar donde se guarda.
+- **La clave de dev quedó en el historial de git** (y citada en este documento como parte
+  del hallazgo). Para dev no importa; **el día que exista un entorno real hay que rotarla**.
+- **La carga inicial ya no corre al montar el componente** sino en `cargarTodo()`, después
+  del login o de restaurar la sesión. Quien agregue un `reloadX` nuevo tiene que sumarlo
+  ahí, no en `componentDidMount`, o no se va a cargar nunca.
+- **`logout()` limpia los índices en memoria de `ceibo-api.js`** (empresas, sectores,
+  puestos, empleados, tipos). Si se agrega un caché nuevo al módulo, va también ahí: si no,
+  el próximo usuario que entre en la misma pestaña ve datos del anterior.

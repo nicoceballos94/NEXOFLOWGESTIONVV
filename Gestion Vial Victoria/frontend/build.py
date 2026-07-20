@@ -59,8 +59,12 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
     semLabel: (s) => this.semLabel(s),
     dotDe: this._dotDe,
   });
-  async componentDidMount() {
+  // Toda la carga inicial, ya con sesión abierta. Antes vivía en componentDidMount porque
+  // el token se pedía solo con credenciales fijas; ahora arranca cuando hay una persona
+  // autenticada — al entrar por el login o al restaurar la sesión tras un F5.
+  async cargarTodo() {
     try {
+      this.setState({ cargaInicial: 'cargando' });
       await window.CeiboAPI.init();
       await this.reloadEmpleados();
       await this.reloadNovedades();
@@ -79,6 +83,55 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
       this.setState({ apiErr: String(err), cargaInicial: 'error' });
     }
   }
+  // Login real contra /auth/token/ (reemplaza la maqueta del canvas, que solo validaba
+  // que los campos no estuvieran vacíos).
+  doLogin = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    const S = this.state;
+    if (!String(S.loginUsuario || '').trim() || !S.loginClave) {
+      this.setState({ loginError: 'Completá usuario y contraseña.' });
+      return;
+    }
+    if (S.loginOcupado) return;   // doble Enter no dispara dos logins (y dos golpes al throttle)
+    this.setState({ loginOcupado: true, loginError: '' });
+    try {
+      await window.CeiboAPI.login(S.loginUsuario.trim(), S.loginClave);
+      // La clave no queda en el estado ni un momento más de lo necesario.
+      this.setState({ sesion: true, loginOcupado: false, loginClave: '', loginError: '' });
+      await this.cargarTodo();
+    } catch (err) {
+      this.setState({ loginOcupado: false, loginClave: '', loginError: String(err.message || err) });
+    }
+  };
+  doLogout = () => {
+    window.CeiboAPI.logout();
+    // Los datos de la sesión anterior se van con ella: si no, el siguiente en entrar ve
+    // por un instante la dotación del anterior antes de que termine su propia carga.
+    this.setState({
+      sesion: false, loginUsuario: '', loginClave: '', loginError: '', loginOcupado: false,
+      view: 'dashboard', cargaInicial: 'cargando', apiErr: null,
+      empleados: null, novedades: null, dashboard: null, vencimientos: null,
+      alertasDiaData: null, cfgVenc: null, tiposDoc: null,
+    });
+  };
+  async componentDidMount() {
+    // Si la sesión murió sola (refresh vencido o revocado), volver al login en vez de
+    // dejar la app mostrando datos que ya no se pueden actualizar.
+    window.CeiboAPI.onSesionVencida(() => {
+      if (!this.state.sesion) return;
+      this.doLogout();
+      this.setState({ loginError: 'Tu sesión venció. Ingresá de nuevo.' });
+    });
+    let hay = false;
+    try {
+      hay = await window.CeiboAPI.restaurarSesion();
+    } catch (err) {
+      console.warn('[ceibo] no se pudo restaurar la sesión', err);
+    }
+    if (!hay) return;             // sin sesión: queda la pantalla de login
+    this.setState({ sesion: true });
+    await this.cargarTodo();
+  }
   renderVals() {
     const v = this.renderValsBase();
     // El canvas trae datos de ejemplo hardcodeados (134 activos, rankings, alertas) para
@@ -89,6 +142,18 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
     const carga = this.state.cargaInicial;
     v.cargandoInit = carga === 'cargando';
     v.errorInit = carga === 'error';
+    // Sesión: el canvas define doLogin/doLogout como maqueta (entra con cualquier campo no
+    // vacío). Acá se pisan por los reales, y el pie del sidebar deja de decir "Luciana
+    // Sosa · Referente RRHH" para decir quién entró de verdad.
+    v.doLogin = this.doLogin;
+    v.doLogout = this.doLogout;
+    if (this.state.sesion) {
+      const p = window.CeiboAPI.perfilVals();
+      v.userNombre = p.nombre;
+      v.userRol = p.rol;
+      v.userIniciales = (p.nombre || '').trim().split(/\s+/).slice(0, 2)
+        .map(x => x.charAt(0).toUpperCase()).join('') || '·';
+    }
     v.apiErrMsg = this.state.apiErr || '';
     if (carga !== 'lista') {
       v.isDash = false; v.isEmp = false; v.isFicha = false; v.isNov = false;
