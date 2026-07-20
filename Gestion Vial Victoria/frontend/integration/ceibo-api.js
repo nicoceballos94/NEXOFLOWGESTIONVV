@@ -325,23 +325,83 @@
   }
   function readAltaForm() { return readModalForm('[data-modal="alta"]'); }
 
-  // ---------- empresa en la ficha: bloqueada al editar, obligatoria al dar de alta ----------
+  // ---------- campos de la ficha que el guardado NO toca ----------
+  // El PATCH de edición va contra ActualizarEmpleadoSerializer, que expone SOLO datos de la
+  // persona. El DNI no está entre ellos, y todo lo que cuelga de la relación laboral
+  // (empresa, sector, puesto, ingreso, jornada) se cambia por sus propios endpoints: no hay
+  // PATCH de relación, solo crear y finalizar. Con los campos habilitados el form aceptaba
+  // ediciones que el PATCH descartaba sin decir nada —se guardaba "bien" y el sector seguía
+  // igual—, así que se bloquean y se explica el motivo en pantalla.
   var EMPRESA_LOCK_MSG =
     "La empresa no se edita desde la ficha. Para mover al empleado a otra empresa, " +
     "registrá su salida (baja) y luego su reingreso.";
-  function lockEmpresa(el) {
+  var RELACION_LOCK_MSG =
+    "Sector, puesto, fecha de ingreso y jornada son parte de la relación laboral y no se " +
+    "editan desde la ficha: se cambian registrando la baja y el reingreso.";
+  var DNI_LOCK_MSG = "El DNI identifica a la persona y no se edita desde la ficha.";
+  var ESTADO_LOCK_MSG =
+    "El estado no se elige a mano: sale de la relación laboral (activo mientras haya una " +
+    "relación ACTIVA). Se cambia dando de baja o registrando el reingreso.";
+  // Campos de la relación laboral, por etiqueta normalizada (las claves de readAltaForm).
+  var CAMPOS_RELACION = ["sector", "puesto", "fecha de ingreso", "jornada legal"];
+
+  function lockCampo(el, msg) {
     if (!el) return;
     el.disabled = true;
-    el.title = EMPRESA_LOCK_MSG;
+    el.title = msg;
     el.style.opacity = "0.55";
     el.style.cursor = "not-allowed";
+    // "Fecha de ingreso" son DOS inputs: el de texto y un date picker superpuesto que lo
+    // escribe (onChange={{ pickDate }}). Deshabilitar solo el de texto dejaba vivo el
+    // calendario, así que el campo "bloqueado" se seguía editando con dos clics.
+    var wrap = el.parentElement;
+    if (wrap) {
+      wrap.querySelectorAll('input[type="date"]').forEach(function (d) {
+        d.disabled = true;
+        d.style.cursor = "not-allowed";
+      });
+    }
   }
-  function unlockEmpresa(el) {
+  function unlockCampo(el) {
     if (!el) return;
     el.disabled = false;
     el.title = "";
     el.style.opacity = "";
     el.style.cursor = "";
+    var wrap = el.parentElement;
+    if (wrap) {
+      wrap.querySelectorAll('input[type="date"]').forEach(function (d) {
+        d.disabled = false;
+        d.style.cursor = "pointer";
+      });
+    }
+  }
+  // Un `title` no lo lee nadie: si los campos quedan grises sin explicación visible, el
+  // usuario solo ve una ficha rota. El motivo va arriba de la sección que se bloqueó.
+  function notaEdicion(f) {
+    var ref = f["sector"] || f["empresa"] || f["puesto"];
+    var grid = ref && ref.closest ? ref.closest("div[style*='grid-template-columns']") : null;
+    if (!grid || !grid.parentElement) return;
+    var cont = grid.parentElement;
+    if (cont.querySelector("[data-ceibo-nota]")) return;   // no duplicar si se reabre
+    var nota = document.createElement("div");
+    nota.setAttribute("data-ceibo-nota", "1");
+    nota.textContent =
+      "Los datos laborales no se editan desde la ficha: se cambian registrando la baja y " +
+      "el reingreso. Acá se guardan solo los datos personales, de contacto y de cobertura.";
+    nota.style.cssText =
+      "font-size:11.5px;line-height:1.45;color:var(--text3);background:var(--surface);" +
+      "border:1px solid var(--border2);border-radius:9px;padding:9px 11px;margin-bottom:12px";
+    cont.insertBefore(nota, grid);
+  }
+  function quitarNotaEdicion() {
+    var m = document.querySelector('[data-modal="alta"]');
+    if (!m) return;
+    m.querySelectorAll("[data-ceibo-nota]").forEach(function (n) { n.remove(); });
+  }
+  function unlockEmpresa(el) {
+    unlockCampo(el);
+    if (!el) return;
     // Antepone una opción vacía y la deja seleccionada, para forzar una elección consciente.
     if (el.tagName === "SELECT") {
       var first = el.options[0];
@@ -356,6 +416,21 @@
   }
 
   // ---------- helpers de novedad ----------
+  var ESTADO_NOV_LOCK_MSG =
+    "El estado no se edita acá: se cambia con Aprobar, Rechazar o Anular desde el detalle " +
+    "de la novedad.";
+  // El canvas ofrece los seis estados del dominio, pero el backend solo tiene endpoint para
+  // aprobar/rechazar/anular. Elegir "En proceso" o "Cerrada" no hacía nada: la novedad
+  // quedaba Registrada y nadie avisaba. Se retiran del <select> hasta que existan, que es
+  // más honesto que aceptarlas y perderlas.
+  function podarEstadosNov(sel) {
+    if (!sel || sel.tagName !== "SELECT") return;
+    Array.prototype.slice.call(sel.options).forEach(function (o) {
+      var v = o.value || o.textContent;
+      if (v !== "Registrada" && !ESTADONOV[v]) o.remove();
+    });
+    sel.value = "Registrada";
+  }
   // Resuelve el id de empleado por nombre escrito (autocompletado); null si no está en la base.
   function empIdByName(name) {
     var key = normLabel(name);
@@ -567,6 +642,30 @@
       };
     },
 
+    // Destinatarios y canales de aviso. El canvas los resuelve con estado local
+    // (toggleRole/toggleCanal) y no hay dónde guardarlos: en `gestion_rrhh` no existe
+    // modelo ni endpoint de notificaciones. Los chips y switches cambiaban de color, se
+    // perdían al recargar y nadie lo decía, así que el usuario creía haber configurado
+    // avisos que nunca se iban a enviar. Hasta que exista el módulo se muestran apagados
+    // y el click explica por qué, en vez de simular una configuración que no persiste.
+    notifVals(v) {
+      var apagar = function (s) { return (s || "") + ";opacity:.45;cursor:not-allowed"; };
+      var avisar = function () {
+        showToast("Los destinatarios y canales todavía no se pueden configurar: falta el " +
+          "módulo de notificaciones.", "error");
+      };
+      return {
+        notifSubtitle: "A quién y por dónde se enviarán los avisos de vencimiento. " +
+          "Todavía no se puede configurar: los valores son de referencia y no se guardan.",
+        roles: (v.roles || []).map(function (r) {
+          return { label: r.label, chip: apagar(r.chip), toggle: avisar };
+        }),
+        canales: (v.canales || []).map(function (c) {
+          return { label: c.label, hint: c.hint, track: apagar(c.track), knob: c.knob, toggle: avisar };
+        }),
+      };
+    },
+
     // Novedades con cadenas expandidas: se agrupan las prórrogas bajo su madre
     // (novedad_origen) para tener la cadena completa sin N+1.
     async listNovedades() {
@@ -625,6 +724,8 @@
         empEl.parentNode.replaceChild(input, empEl);
         input.parentNode.appendChild(dl);
       }
+      // Estado: solo los que el backend sabe aplicar (ver podarEstadosNov).
+      podarEstadosNov(f["estado"]);
       // Fecha de la novedad: por defecto hoy (si está vacía).
       var fecha = f["fecha"];
       if (fecha && !fecha.value) fecha.value = fmtISOtoDMY(todayISO());
@@ -688,9 +789,26 @@
       var empId = empEl && empEl.tagName === "SELECT" ? empEl.value : empIdByName(g("empleado"));
       if (!empId) throw new Error("Empleado inválido: elegí un nombre de la lista de registrados");
       payload.empleado = Number(empId);
+      // El estado se valida ANTES de crear: podarEstadosNov ya saca los no soportados del
+      // <select>, pero si el diseño cambia y vuelve a ofrecerlos, esto corta acá en vez de
+      // dejar la novedad en un estado distinto del elegido.
+      var estadoSel = g("estado");
+      var accion = ESTADONOV[estadoSel];
+      if (estadoSel && estadoSel !== "Registrada" && !accion) {
+        throw new Error('El estado "' + estadoSel + '" todavía no se puede aplicar. ' +
+          "Registrá la novedad y cambiale el estado desde el detalle.");
+      }
       var nov = await jsend("POST", "/novedades/", payload);
-      var accion = ESTADONOV[g("estado")];
-      if (accion) await jsend("POST", "/novedades/" + nov.id + "/" + accion + "/", {});
+      if (accion) {
+        // La novedad YA existe: si la transición falla hay que decirlo con todas las letras.
+        // Un "error" a secas invita a reintentar el alta, y eso duplicaría el registro.
+        try {
+          await jsend("POST", "/novedades/" + nov.id + "/" + accion + "/", {});
+        } catch (e) {
+          throw new Error('La novedad se registró, pero no se pudo pasar a "' + estadoSel +
+            '": ' + e.message + ". No la cargues de nuevo: cambiale el estado desde el detalle.");
+        }
+      }
       showToast("Novedad registrada", "ok");
     },
 
@@ -723,6 +841,11 @@
         ro.style.cssText = empEl.style.cssText + ";opacity:.65;cursor:not-allowed";
         empEl.parentNode.replaceChild(ro, empEl);
       }
+      // El PATCH de novedad no toca el estado (lo mueven aprobar/rechazar/anular desde el
+      // detalle). Editable, prometía un cambio que nunca se mandaba. Se muestra el estado
+      // real —no el que dejó el canvas— y se bloquea.
+      if (f["estado"]) f["estado"].value = n.estado_display || f["estado"].value;
+      lockCampo(f["estado"], ESTADO_NOV_LOCK_MSG);
       set("fecha", n.fecha_desde);
       if (f["motivo"]) f["motivo"].value = n.motivo || "";
       if (f["observaciones"]) f["observaciones"].value = n.observaciones || "";
@@ -767,7 +890,10 @@
     },
 
     // Alta (editId=null) o edición (editId=id). Lee el form del DOM por etiqueta.
-    async submitAlta(editId) {
+    // `exento` llega aparte: "Exento de marcación" es un toggle del diseño (un <div>, no un
+    // input), así que readAltaForm no lo ve. Sin este parámetro el campo se mostraba, se
+    // podía tocar y nunca se mandaba —y al editar volvía a false en cada guardado—.
+    async submitAlta(editId, exento) {
       var f = readAltaForm();
       var g = function (k) { var el = f[k]; return el ? el.value.trim() : ""; };
       var nm = splitName(g("nombre y apellido"));
@@ -781,6 +907,7 @@
         email: g("email"),
         contacto_emergencia: g("contacto de emergencia"),
         id_huella: g("id de huella") || null,
+        exento_marcacion: !!exento,
         obra_social: g("obra social"),
         art: g("art"),
         observaciones: g("observaciones"),
@@ -849,10 +976,13 @@
       if (f["empresa"] && emp.empresa !== "—") f["empresa"].value = emp.empresa;
       if (f["sector"] && emp.sector !== "—") f["sector"].value = emp.sector;
       if (f["puesto"]) f["puesto"].value = emp.puesto === "—" ? "" : emp.puesto;
-      // La empresa pertenece a la relación laboral y no se edita en la ficha: para mover
-      // al empleado a otra empresa hay que registrar su salida (baja) y reingreso. Se bloquea
-      // el campo para no mentir (el PATCH de edición solo toca datos de la persona).
-      lockEmpresa(f["empresa"]);
+      // El PATCH de edición solo toca datos de la persona: se bloquea todo lo demás para
+      // no aceptar cambios que se descartan en silencio (ver CAMPOS_RELACION arriba).
+      lockCampo(f["empresa"], EMPRESA_LOCK_MSG);
+      lockCampo(f["dni"], DNI_LOCK_MSG);
+      CAMPOS_RELACION.forEach(function (k) { lockCampo(f[k], RELACION_LOCK_MSG); });
+      lockCampo(f["estado"], ESTADO_LOCK_MSG);
+      notaEdicion(f);
     },
 
     // Prepara el modal en modo ALTA: habilita empresa y fuerza una elección consciente
@@ -860,7 +990,13 @@
     // encuadrada en la empresa correcta y no caiga en la primera por descuido.
     prepareAlta() {
       var f = readAltaForm();
+      quitarNotaEdicion();          // el modal es el mismo que el de edición
       unlockEmpresa(f["empresa"]);
+      unlockCampo(f["dni"]);
+      CAMPOS_RELACION.forEach(function (k) { unlockCampo(f[k]); });
+      // El estado se bloquea también en el alta: un alta nace ACTIVA (la relación se crea
+      // así) y el <select> nunca se leyó, con lo cual elegir "Inactivo" tampoco hacía nada.
+      lockCampo(f["estado"], ESTADO_LOCK_MSG);
     },
 
     // Baja lógica: motivo del modal de baja, finaliza la relación ACTIVA (fecha = hoy).

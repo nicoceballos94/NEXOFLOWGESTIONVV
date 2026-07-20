@@ -98,6 +98,9 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
     if (this.state.alertasDiaData) {
       Object.assign(v, window.CeiboAPI.alertasDiaVals(this.state.alertasDiaData, this._uiSem()));
     }
+    // Destinatarios y canales: no hay backend donde guardarlos, así que se apagan en vez
+    // de fingir que se configuran (ver CeiboAPI.notifVals).
+    Object.assign(v, window.CeiboAPI.notifVals(v));
     // Parametría real: las filas salen del catálogo, así que un tipo nuevo aparece solo.
     if (this.state.cfgVenc) {
       v.cfgRows = this.state.cfgVenc.map((f) => ({
@@ -203,18 +206,22 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
     } catch (e) { console.error('[ceibo] prórroga', e); window.CeiboAPI.toast(e.message || String(e), 'error'); }
   };
   openAlta = () => {
-    this.setState({ modal: 'alta', altaEditId: null });
+    // `exento` es el toggle "Exento de marcación": estado del diseño, no un input del form.
+    // Se arranca apagado, o el alta heredaría el valor de la última ficha que se abrió.
+    this.setState({ modal: 'alta', altaEditId: null, exento: false });
     // Tras montar el modal: habilita empresa y fuerza elección consciente (opción vacía).
     setTimeout(() => window.CeiboAPI.prepareAlta(), 60);
   };
   openEdit = (id) => {
-    this.setState({ modal: 'alta', altaEditId: id });
     const emp = (this.state.empleados || []).find(e => e.id === id);
+    // Sembrar el toggle con el valor real: sin esto la ficha abría siempre en "no exento"
+    // y guardar apagaba la exención de alguien que sí la tenía.
+    this.setState({ modal: 'alta', altaEditId: id, exento: !!(emp && emp.exento_marcacion) });
     setTimeout(() => window.CeiboAPI.prefillAlta(emp), 60);
   };
   submitAlta = async () => {
     try {
-      await window.CeiboAPI.submitAlta(this.state.altaEditId, this.state.selEmp);
+      await window.CeiboAPI.submitAlta(this.state.altaEditId, this.state.exento);
       this.setState({ modal: null, altaEditId: null });
       await this.reloadEmpleados();
     } catch (e) { console.error('[ceibo] alta/edición', e); window.CeiboAPI.toast(e.message || String(e), 'error'); }
@@ -440,6 +447,34 @@ EDICIONES = [
     #  2026-07-15 y el diseño ya lo trae. El canvas calcula su propia fecha para verse solo;
     #  el valor real lo pisa CeiboAPI.alertasDiaVals.)
 
+    # --- reportes: el módulo es mock y se señaliza como tal ---
+    # Las series de Reportes (dotación, ausentismo por tipo, motivos de egreso) están
+    # inventadas en el canvas y no hay endpoints que las alimenten. Sin marca, Reportes
+    # informaba 134 activos mientras el Panel —que sí sale del backend— mostraba 12, y nada
+    # indicaba cuál creer. Se avisa arriba de todo y se saca el número grande de la portada.
+    (
+        '<sc-if value="{{ isRep }}" hint-placeholder-val="{{ false }}">',
+        '<sc-if value="{{ isRep }}" hint-placeholder-val="{{ false }}">\n'
+        '      <div style="display:flex;align-items:flex-start;gap:11px;background:var(--surface);'
+        'border:1px solid var(--warn);border-radius:12px;padding:13px 16px;margin-bottom:16px">'
+        '<div style="width:8px;height:8px;border-radius:50%;background:var(--warn);flex:none;margin-top:6px"></div>'
+        '<div><div style="font-size:13.5px;font-weight:600;color:var(--text)">Datos de demostración</div>'
+        '<div style="font-size:12px;color:var(--text3);line-height:1.5">Este módulo todavía no está '
+        'conectado al backend: las cifras son de ejemplo y no describen la dotación real. '
+        'Los números reales están en el Panel general.</div></div></div>',
+        "reportes: banner de datos de demostración",
+    ),
+    (
+        '<div style="font-family:\'Space Grotesk\',sans-serif;font-weight:600;font-size:22px;color:var(--text)">134 <span style="font-size:12px;color:var(--ok);font-weight:600">▲ 13,6%</span></div>',
+        '<div style="font-family:\'Space Grotesk\',sans-serif;font-weight:600;font-size:13px;color:var(--text3)">ejemplo</div>',
+        "reportes: quitar el total mock de dotación",
+    ),
+    # --- configuración: el bloque de destinatarios no persiste; se dice en el subtítulo ---
+    (
+        '<div style="font-size:12.5px;color:var(--text3);margin-bottom:18px">A quién y por dónde se envían los avisos de vencimiento.</div>',
+        '<div style="font-size:12.5px;color:var(--text3);margin-bottom:18px">{{ notifSubtitle }}</div>',
+        "config: subtítulo de destinatarios → notifSubtitle",
+    ),
     # --- dashboard: el ranking mide DÍAS (no cantidad de faltas); se aclara en el título ---
     (
         '<div style="font-weight:600;font-size:15px;color:var(--text)">Ranking de faltas</div>',
