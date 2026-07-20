@@ -127,6 +127,132 @@ def test_empleado_solo_ve_su_propia_ficha(cliente_rrhh, empresa, crear_usuario, 
     assert resp.data["results"][0]["legajo"] == "0001"
 
 
+# ---------- PII por rol (A3) ----------
+# El scope dice a QUIÉNES ve cada rol; esto dice CUÁNTO ve de cada uno. El Supervisor ve la
+# dotación entera, y eso no debería incluir el DNI y la dirección de cada persona.
+_PII = (
+    "dni",
+    "cuil",
+    "fecha_nacimiento",
+    "telefono",
+    "direccion",
+    "contacto_emergencia",
+    "obra_social",
+    "art",
+    "id_huella",
+    "observaciones",
+)
+
+
+@pytest.fixture
+def _alta_con_pii(cliente_rrhh, empresa):
+    """Un empleado con todos los campos PII cargados, para que ocultarlos se note."""
+    resp = cliente_rrhh.post(
+        "/api/v1/empleados/",
+        _payload_alta(
+            empresa,
+            cuil="20301112223",
+            fecha_nacimiento="1985-06-15",
+            telefono="3435551234",
+            direccion="Belgrano 742",
+            contacto_emergencia="María Pérez 3435559999",
+            obra_social="OSECAC",
+            art="Prevención",
+            id_huella="H-77",
+            observaciones="Cambió de turno en marzo",
+        ),
+        format="json",
+    )
+    assert resp.status_code == 201, resp.data
+    return Empleado.objects.get(legajo="0001")
+
+
+def _cliente_con_rol(crear_usuario, rol, username):
+    from rest_framework.test import APIClient
+
+    cliente = APIClient()
+    cliente.force_authenticate(crear_usuario(username=username, rol=rol))
+    return cliente
+
+
+def test_supervisor_ve_la_dotacion_pero_no_el_pii(_alta_con_pii, crear_usuario):
+    from common import roles
+
+    cliente = _cliente_con_rol(crear_usuario, roles.SUPERVISOR, "supervisor")
+
+    lista = cliente.get("/api/v1/empleados/")
+    assert lista.status_code == 200
+    assert lista.data["count"] == 1  # sigue viendo a toda la gente...
+    ficha = lista.data["results"][0]
+    for campo in _PII:
+        assert campo not in ficha, f"{campo} se filtró al Supervisor en la lista"
+    # ...y lo que necesita para operar sigue estando.
+    assert ficha["legajo"] == "0001"
+    assert ficha["nombre_completo"] == "Pérez, Juan"
+    assert ficha["relaciones"][0]["fecha_ingreso"] == "2024-01-10"
+
+    detalle = cliente.get(f"/api/v1/empleados/{_alta_con_pii.id}/")
+    assert detalle.status_code == 200
+    for campo in _PII:
+        assert campo not in detalle.data, f"{campo} se filtró al Supervisor en el detalle"
+
+
+def test_rrhh_sigue_viendo_el_pii_completo(_alta_con_pii, cliente_rrhh):
+    resp = cliente_rrhh.get(f"/api/v1/empleados/{_alta_con_pii.id}/")
+    assert resp.status_code == 200
+    for campo in _PII:
+        assert campo in resp.data, f"a RRHH le falta {campo}"
+    assert resp.data["dni"] == "30111222"
+    assert resp.data["direccion"] == "Belgrano 742"
+
+
+def test_el_empleado_ve_el_pii_de_su_propia_ficha(_alta_con_pii, crear_usuario, api_client):
+    """Ocultarle a alguien su propio DNI no protege a nadie y rompe la autoconsulta."""
+    from common import roles
+
+    usuario = crear_usuario(username="juan-titular", rol=roles.EMPLEADO)
+    _alta_con_pii.usuario = usuario
+    _alta_con_pii.save()
+    api_client.force_authenticate(usuario)
+
+    resp = api_client.get(f"/api/v1/empleados/{_alta_con_pii.id}/")
+    assert resp.status_code == 200
+    assert resp.data["dni"] == "30111222"
+    assert resp.data["contacto_emergencia"] == "María Pérez 3435559999"
+
+
+def test_el_pii_tambien_se_recorta_al_crear_y_editar(_alta_con_pii, cliente_rrhh):
+    """La respuesta de POST/PATCH pasa por el mismo serializer: si el recorte viviera solo
+    en `list`, el alta devolvería la ficha entera por la puerta de atrás. Acá el actor es
+    RRHH (nadie más puede escribir), así que lo que se verifica es que el contexto llegue
+    —sin él el serializer falla cerrado y RRHH vería su propia alta sin el DNI que acaba
+    de cargar."""
+    from apps.organizacion.models import Empresa
+
+    alta = cliente_rrhh.post(
+        "/api/v1/empleados/",
+        _payload_alta(Empresa.objects.first(), dni="30777888", telefono="3435550000"),
+        format="json",
+    )
+    assert alta.status_code == 201, alta.data
+    assert alta.data["dni"] == "30777888"
+
+    patch = cliente_rrhh.patch(
+        f"/api/v1/empleados/{_alta_con_pii.id}/", {"telefono": "3435557777"}, format="json"
+    )
+    assert patch.status_code == 200, patch.data
+    assert patch.data["telefono"] == "3435557777"
+
+
+def test_sin_request_en_contexto_el_serializer_falla_cerrado(_alta_con_pii):
+    """Un llamador que se olvide el contexto ve campos faltantes, no PII de más."""
+    from apps.empleados.api.serializers import EmpleadoSerializer
+
+    datos = EmpleadoSerializer(_alta_con_pii).data
+    for campo in _PII:
+        assert campo not in datos
+
+
 # ---------- Filtros ----------
 def test_filtro_empresa_y_estado_miran_la_misma_relacion(cliente_rrhh, empresa):
     """B1: con los filtros en .filter() separados, cada uno generaba su propio JOIN y podían

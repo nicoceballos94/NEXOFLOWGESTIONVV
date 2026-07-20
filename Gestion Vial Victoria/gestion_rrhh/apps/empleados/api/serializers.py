@@ -3,7 +3,7 @@ la entrada valida forma (R12); la escritura y las reglas viven en services.py.
 """
 from rest_framework import serializers
 
-from common import archivos
+from common import archivos, roles
 
 from ..models import (
     DocumentoEmpleado,
@@ -35,10 +35,64 @@ class RelacionLaboralSerializer(serializers.ModelSerializer):
         )
 
 
+# Campos que solo ven RRHH/Admin y el propio titular (A3). Tres familias: identidad
+# (dni/cuil/fecha_nacimiento), contacto personal (telefono/direccion/contacto_emergencia)
+# y datos sensibles (obra_social/art son salud; id_huella es biométrico). `observaciones`
+# entra porque es texto libre de RRHH: ahí termina lo que no cabe en ningún campo.
+# Fuera de la lista queda lo que un Supervisor necesita para operar: nombre, legajo, email,
+# educación, exento_marcacion, y toda la relación laboral (empresa/sector/puesto/ingreso).
+CAMPOS_PII = frozenset(
+    {
+        "dni",
+        "cuil",
+        "fecha_nacimiento",
+        "telefono",
+        "direccion",
+        "contacto_emergencia",
+        "obra_social",
+        "art",
+        "id_huella",
+        "observaciones",
+    }
+)
+
+
+def puede_ver_pii(*, usuario, empleado) -> bool:
+    """RRHH/Admin ven todo; el resto, solo su propia ficha.
+
+    El Supervisor ve la dotación entera (lo decide `selectors.empleados_visibles_para`),
+    pero verla no es lo mismo que ver el DNI y la dirección de cada persona: el scope dice
+    *a quiénes*, esto dice *cuánto* de cada uno. Al titular no se le oculta lo suyo —
+    esconderle su propio DNI no protege a nadie y rompe la autoconsulta.
+    """
+    if usuario is None or not usuario.is_authenticated:
+        return False
+    return usuario.tiene_rol(roles.ADMIN, roles.RRHH) or empleado.usuario_id == usuario.id
+
+
 class EmpleadoSerializer(serializers.ModelSerializer):
     relaciones = RelacionLaboralSerializer(many=True, read_only=True)
     nombre_completo = serializers.CharField(read_only=True)
     activo = serializers.BooleanField(read_only=True)
+
+    def to_representation(self, instance):
+        """Recorta el PII según el rol de quien pregunta (A3).
+
+        Se filtra acá y no con dos serializers distintos para que la lista de campos siga
+        siendo una sola: dos clases paralelas se desincronizan al primer campo nuevo, y el
+        que se olvide de agregar en la versión reducida se filtra sin que nadie lo note.
+
+        Falla cerrada: sin `request` en el contexto no hay a quién preguntarle el rol, así
+        que se oculta. Todas las views pasan el contexto; si aparece un llamador que no lo
+        hace, va a ver campos faltantes —ruidoso y del lado seguro— en vez de exponer PII.
+        """
+        datos = super().to_representation(instance)
+        usuario = getattr(self.context.get("request"), "user", None)
+        if puede_ver_pii(usuario=usuario, empleado=instance):
+            return datos
+        for campo in CAMPOS_PII:
+            datos.pop(campo, None)
+        return datos
 
     class Meta:
         model = Empleado

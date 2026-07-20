@@ -73,7 +73,11 @@ class EmpleadoViewSet(
 
     def list(self, request):
         page = self.paginate_queryset(self.get_queryset())
-        return self.get_paginated_response(EmpleadoSerializer(page, many=True).data)
+        # El contexto no es decorativo: `EmpleadoSerializer` recorta el PII según el rol de
+        # `request.user` (A3) y sin él falla cerrado, devolviendo la ficha sin esos campos.
+        return self.get_paginated_response(
+            EmpleadoSerializer(page, many=True, context=self.get_serializer_context()).data
+        )
 
     def create(self, request):
         entrada = CrearEmpleadoSerializer(data=request.data)
@@ -83,7 +87,10 @@ class EmpleadoViewSet(
         empleado = services.crear_empleado(
             actor=request.user, datos_empleado=datos, datos_relacion=datos_relacion
         )
-        return Response(EmpleadoSerializer(empleado).data, status=201)
+        return Response(
+            EmpleadoSerializer(empleado, context=self.get_serializer_context()).data,
+            status=201,
+        )
 
     def partial_update(self, request, pk=None):
         empleado = get_object_or_404(Empleado, pk=pk)
@@ -92,7 +99,9 @@ class EmpleadoViewSet(
         empleado = services.actualizar_empleado(
             actor=request.user, empleado=empleado, datos_empleado=dict(entrada.validated_data)
         )
-        return Response(EmpleadoSerializer(empleado).data)
+        return Response(
+            EmpleadoSerializer(empleado, context=self.get_serializer_context()).data
+        )
 
     @action(detail=True, methods=["get", "post"])
     def documentos(self, request, pk=None):

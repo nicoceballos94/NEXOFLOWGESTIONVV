@@ -23,6 +23,9 @@
   var _puestoByName = {}, _puestoById = {};
   var _rawEmpleados = [];
   var _empById = {};              // id → { name, empresa } (para adaptar novedades)
+  // relación laboral → nombre de empresa. La novedad guarda de QUÉ relación es, así que la
+  // etiqueta sale de ahí y no de la relación activa del empleado (ver adaptNov).
+  var _empresaByRelacionId = {};
   var _tipoNovByCodigo = {};      // codigo → tipo de novedad (con flags)
   var _novRawById = {};           // id → novedad cruda del backend (para precargar edición)
   var _tipoDocByNombre = {};      // nombre → tipo de documento (el select del modal da el nombre)
@@ -197,11 +200,16 @@
     return d + " → " + fmtISOtoDMY(hastaISO);
   }
 
+  // Dos fechas locales, nunca `new Date(iso)`: ese constructor interpreta "2026-07-16" como
+  // medianoche UTC, y restarle `new Date()` (hora local) mezclaba dos husos. En Argentina
+  // (UTC-3) la cuenta daba negativa el mismo día del vencimiento, así que un documento que
+  // vence HOY se pintaba VENCIDO en rojo durante todo el día, cuando todavía es válido.
+  // `diasEntreISO` es inclusive (hoy→hoy = 1), de ahí el −1 para tener la diferencia real.
   function docEstado(iso) {
     if (!iso) return "ok";
-    var dias = Math.floor((new Date(iso) - new Date()) / 86400000);
-    if (dias < 0) return "bad";
-    if (dias <= 30) return "warn";
+    var dias = diasEntreISO(todayISO(), iso) - 1;
+    if (dias < 0) return "bad";      // venció: ayer o antes
+    if (dias <= 30) return "warn";   // vence hoy o dentro del mes
     return "ok";
   }
 
@@ -263,7 +271,10 @@
       id: n.id,
       tipo: n.tipo_novedad_nombre,
       emp: emp.name || nombreNatural(n.empleado_nombre) || "—",
-      empresa: emp.empresa || "—",
+      // La empresa de la NOVEDAD, no la del empleado hoy: quien pasó de una empresa del
+      // grupo a la otra tenía sus novedades viejas etiquetadas con la actual. Se cae a la
+      // relación activa solo si la novedad no dice de qué relación es (dato opcional).
+      empresa: _empresaByRelacionId[n.relacion_laboral] || emp.empresa || "—",
       fecha: fmtRango(n.fecha_desde, n.fecha_hasta),
       estado: n.estado_display,
       clasif: CLASIF_REV[n.clasificacion] || "",
@@ -639,6 +650,14 @@
       var mapped = _rawEmpleados.map(adapt);
       _empById = {};
       mapped.forEach(function (m) { _empById[m.id] = { name: m.name, empresa: m.empresa }; });
+      // Índice relación → empresa: la ficha ya trae TODAS las relaciones (no solo la activa),
+      // así que no hace falta pedir nada más para etiquetar bien las novedades viejas.
+      _empresaByRelacionId = {};
+      _rawEmpleados.forEach(function (e) {
+        (e.relaciones || []).forEach(function (r) {
+          _empresaByRelacionId[r.id] = _empresaById[r.empresa] || "—";
+        });
+      });
       console.log("[ceibo] backend conectado: " + mapped.length + " empleados");
       return mapped;
     },
