@@ -79,6 +79,11 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
     v.submitAlta = this.submitAlta;
     v.altaTitle = this.state.altaEditId ? 'Editar empleado' : 'Alta de empleado';
     if (v.ficha) v.ficha.openEdit = () => this.openEdit(this.state.selEmp);
+    // El canvas define setRotM/setRotA en la clase pero nunca los expone en renderVals, así
+    // que el template los ata a undefined y los botones Mensual/Anual no hacían NADA: ni
+    // cambiaban de estilo ni recalculaban la rotación (el backend sí manda ambos períodos).
+    v.setRotM = this.setRotM;
+    v.setRotA = this.setRotA;
     v.submitNov = this.submitNov;
     v.submitProrroga = this.submitProrroga;
     v.submitDoc = this.submitDoc;
@@ -103,14 +108,49 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
     Object.assign(v, window.CeiboAPI.notifVals(v));
     // Parametría real: las filas salen del catálogo, así que un tipo nuevo aparece solo.
     if (this.state.cfgVenc) {
+      // Los aria van acá también: este override reemplaza a cfgRows del canvas, así que
+      // sin esto todos los botones se seguirían anunciando como "+" y "−" a secas.
       v.cfgRows = this.state.cfgVenc.map((f) => ({
         label: f.label, hint: f.hint, val: f.dias,
+        incAria: `Aumentar días de aviso para ${f.label}`,
+        decAria: `Reducir días de aviso para ${f.label}`,
         inc: () => this.cfgVencChange(f.clave, 5),
         dec: () => this.cfgVencChange(f.clave, -5),
       }));
     }
     return v;
   }
+  // ===== accesibilidad de los modales (BUG-12) =====
+  // El rol y el aria-modal los declara el canvas; el foco es comportamiento y va acá.
+  // Un solo punto de entrada por modal, llamado después de que el DOM ya montó.
+  _a11y = (sel) => setTimeout(() => window.CeiboAPI.a11yModal(sel), 80);
+  closeModal = () => {
+    this.setState({ modal: null, editNovId: null, editProrrogaIdx: null, docEditId: null, docArchivoNombre: '' });
+    window.CeiboAPI.a11yCerrar();   // el foco vuelve al botón que abrió el diálogo
+  };
+  // ===== listado de empleados: búsqueda, contador y alcance del buscador =====
+  // Normaliza para comparar: sin mayúsculas, sin tildes y sin puntos. "María" y "maria"
+  // son la misma persona, y quien busca no sabe cómo se cargó el acento.
+  normBusq = (s) => String(s || '').trim().toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\./g, '');
+  // El contador tiene que decir la verdad sobre lo que se está mirando: si el filtro es
+  // "Inactivos", el denominador son los inactivos y la palabra es "inactivos".
+  empCountLabel = (mostrados, todos, filtro) => {
+    const palabra = filtro === 'activo' ? 'activos'
+      : filtro === 'inactivo' ? 'inactivos' : 'empleados';
+    const total = filtro === 'todos' ? todos.length
+      : todos.filter((e) => e.estado === filtro).length;
+    const empresas = new Set(todos.map((e) => e.empresa).filter((x) => x && x !== '—')).size;
+    return `Mostrando ${mostrados.length} de ${total} ${palabra} · ` +
+      `${empresas} ${empresas === 1 ? 'empresa' : 'empresas'}`;
+  };
+  // El buscador solo filtra Empleados, pero el término quedaba escrito en el encabezado al
+  // navegar a Novedades o Alertas, como si esas pantallas estuvieran filtradas por él. Se
+  // limpia al salir de Empleados (y de la ficha, que es su detalle).
+  setView = (v) => {
+    const dejaEmpleados = v !== 'empleados' && v !== 'ficha';
+    this.setState(dejaEmpleados ? { view: v, empSearch: '' } : { view: v });
+  };
   // ===== parametría de alertas =====
   _cfgTimers = {};
   cfgVencChange = (clave, delta) => {
@@ -144,10 +184,12 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
   openAltaNov = () => {
     this.setState({ modal: 'altanov', editNovId: null, novFormTipo: 'Falta' });
     setTimeout(() => window.CeiboAPI.populateNovForm(), 60);
+    this._a11y('[data-modal="altanov"]');
   };
   openEditNov = (id) => {
     this.setState({ modal: 'altanov', editNovId: id, editProrrogaIdx: null, novFormTipo: window.CeiboAPI.novFormTipoFor(id) });
     setTimeout(() => window.CeiboAPI.prefillNovForm(id), 60);
+    this._a11y('[data-modal="altanov"]');
   };
   submitNov = async () => {
     try {
@@ -211,6 +253,7 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
     this.setState({ modal: 'alta', altaEditId: null, exento: false });
     // Tras montar el modal: habilita empresa y fuerza elección consciente (opción vacía).
     setTimeout(() => window.CeiboAPI.prepareAlta(), 60);
+    this._a11y('[data-modal="alta"]');
   };
   openEdit = (id) => {
     const emp = (this.state.empleados || []).find(e => e.id === id);
@@ -218,6 +261,7 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
     // y guardar apagaba la exención de alguien que sí la tenía.
     this.setState({ modal: 'alta', altaEditId: id, exento: !!(emp && emp.exento_marcacion) });
     setTimeout(() => window.CeiboAPI.prefillAlta(emp), 60);
+    this._a11y('[data-modal="alta"]');
   };
   submitAlta = async () => {
     try {
@@ -265,10 +309,12 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
     // Tras montar el modal: deja el select en el primer tipo libre (los ya cargados no
     // se pueden repetir: hay uno vigente por tipo y el POST fallaría con 400).
     setTimeout(() => window.CeiboAPI.prepareDoc(this.state.selEmp, null), 60);
+    this._a11y('[data-modal="doc"]');
   };
   openDocEdit = (id) => {
     this.setState({ modal: 'doc', docEditId: id, docArchivoNombre: '' });
     setTimeout(() => window.CeiboAPI.prepareDoc(this.state.selEmp, id), 60);
+    this._a11y('[data-modal="doc"]');
   };
   submitDoc = async () => {
     try {
@@ -301,6 +347,9 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
     // adjuntosDet en null mientras carga: el canvas mostraría su ejemplo, así que se
     // arranca en [] para que se vea el estado vacío y no un respaldo que no existe.
     this.setState({ modal: 'detnov', detNovId: id, adjuntosDet: [] });
+    // Este modal no lleva data-modal (no se leen inputs de él), así que se lo toma por su
+    // rol: solo hay un diálogo abierto por vez.
+    this._a11y('[role="dialog"]');
     this.recargarAdjuntos(id);
   };
   onAdjuntar = async (e) => {
@@ -447,6 +496,78 @@ EDICIONES = [
     #  2026-07-15 y el diseño ya lo trae. El canvas calcula su propia fecha para verse solo;
     #  el valor real lo pisa CeiboAPI.alertasDiaVals.)
 
+    # --- responsive: clases de anclaje para las media queries (BUG-05, BUG-06) ---
+    # Las grillas del canvas son estilos inline, así que el CSS solo las puede pisar con
+    # !important y necesita a qué agarrarse. Se marcan las tres filas con una clase.
+    (
+        '<div style="display:grid;grid-template-columns:2.2fr 1.3fr 1fr 1.1fr 0.9fr 42px;gap:14px;padding:13px 20px;border-bottom:1px solid var(--border);font-size:11px',
+        '<div class="ceibo-emp-head" style="display:grid;grid-template-columns:2.2fr 1.3fr 1fr 1.1fr 0.9fr 42px;gap:14px;padding:13px 20px;border-bottom:1px solid var(--border);font-size:11px',
+        "empleados: clase en la cabecera de la grilla",
+    ),
+    (
+        '<div onClick="{{ e.open }}" onKeyDown="{{ e.openKey }}" role="button" tabindex="0"',
+        '<div onClick="{{ e.open }}" onKeyDown="{{ e.openKey }}" class="ceibo-emp-row" role="button" tabindex="0"',
+        "empleados: clase en la fila",
+    ),
+    (
+        '<div style="display:flex;align-items:center;gap:16px;padding:14px 0;border-bottom:1px solid var(--border)">',
+        '<div class="ceibo-cfg-row" style="display:flex;align-items:center;gap:16px;padding:14px 0;border-bottom:1px solid var(--border)">',
+        "configuración: clase en la fila de parametría",
+    ),
+    # --- responsive: las media queries propiamente dichas ---
+    # El canvas trae un solo breakpoint y solo encoge la barra lateral: el contenido seguía
+    # con seis columnas dentro de ~264 px útiles, con el nombre, el DNI y la empresa
+    # encimados. En móvil cada fila pasa a ser una tarjeta con la etiqueta de cada dato.
+    (
+        "  @media(max-width:900px){ .ceibo-shell{grid-template-columns:66px 1fr !important}",
+        """  @media(max-width:900px){
+    .ceibo-emp-head{display:none !important}
+    .ceibo-emp-row{display:grid !important;grid-template-columns:1fr auto !important;
+      gap:7px 12px !important;padding:14px 16px !important;align-items:start !important}
+    .ceibo-emp-row > div::before{font-size:10.5px;font-weight:600;letter-spacing:.04em;
+      color:var(--text3);text-transform:uppercase;flex:none}
+    .ceibo-emp-row > div:nth-child(1){grid-column:1;grid-row:1;min-width:0}
+    .ceibo-emp-row > div:nth-child(6){grid-column:2;grid-row:1;align-self:center}
+    .ceibo-emp-row > div:nth-child(2),.ceibo-emp-row > div:nth-child(3),
+    .ceibo-emp-row > div:nth-child(4),.ceibo-emp-row > div:nth-child(5){
+      grid-column:1 / -1;display:flex;justify-content:space-between;align-items:center;gap:12px}
+    .ceibo-emp-row > div:nth-child(2)::before{content:"Empresa"}
+    .ceibo-emp-row > div:nth-child(3)::before{content:"Sector"}
+    .ceibo-emp-row > div:nth-child(4)::before{content:"Puesto"}
+    .ceibo-emp-row > div:nth-child(5)::before{content:"Estado"}
+  }
+  @media(max-width:600px){
+    /* La descripción quedaba con una palabra por línea porque los +/- se llevaban el ancho.
+       Apilada arriba y los controles abajo a la derecha, se lee de un renglón. */
+    .ceibo-cfg-row{flex-wrap:wrap !important;gap:10px !important}
+    .ceibo-cfg-row > div:first-child{flex:1 1 100% !important}
+    .ceibo-cfg-row > div:last-child{margin-left:auto}
+  }
+  @media(max-width:900px){ .ceibo-shell{grid-template-columns:66px 1fr !important}""",
+        "responsive: media queries de empleados y configuración",
+    ),
+    # --- empleados: buscar ignorando tildes (BUG-08) ---
+    # `toLowerCase().indexOf()` no normaliza: buscar "maria" encontraba "Maria Agust Cardoso"
+    # pero no "María Godoy" ni "María López", que es justo lo que se estaba buscando. El DNI
+    # se compara sin puntos para que "12.345.678" y "12345678" sean el mismo número.
+    (
+        "    const q = S.empSearch.trim().toLowerCase();",
+        "    const q = this.normBusq(S.empSearch);",
+        "empleados: normalizar el término de búsqueda",
+    ),
+    (
+        "      if(q && !(e.name.toLowerCase().indexOf(q)>=0 || e.dni.indexOf(q)>=0)) return false;",
+        "      if(q && !(this.normBusq(e.name).indexOf(q)>=0 || String(e.dni||'').replace(/\\./g,'').indexOf(q)>=0)) return false;",
+        "empleados: comparar sin tildes ni puntos",
+    ),
+    # --- empleados: el contador tiene que describir el filtro puesto (BUG-09) ---
+    # Con "Inactivos" seleccionado decía "Mostrando 0 de 12 activos": ni la palabra ni el
+    # denominador seguían al filtro. Y las empresas se cuentan, no se dan por dos.
+    (
+        "      empCountLbl:`Mostrando ${filteredEmployees.length} de ${totalActivos} activos · 2 empresas`,",
+        "      empCountLbl:this.empCountLabel(filteredEmployees, emps, S.empEstado),",
+        "empleados: contador según el filtro",
+    ),
     # --- reportes: el módulo es mock y se señaliza como tal ---
     # Las series de Reportes (dotación, ausentismo por tipo, motivos de egreso) están
     # inventadas en el canvas y no hay endpoints que las alimenten. Sin marca, Reportes

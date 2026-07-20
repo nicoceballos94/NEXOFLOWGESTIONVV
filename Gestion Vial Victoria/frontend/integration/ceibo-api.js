@@ -145,6 +145,18 @@
     var n = Math.floor(dias / 365);
     return n === 1 ? "1 año" : n + " años";
   }
+  // El backend expone `nombre_completo` como "Apellido, Nombre" (Empleado.nombre_completo),
+  // y por ahí llegan novedades, vencimientos y alertas del día. `adapt()`, en cambio, arma
+  // "Nombre Apellido". Convivían los dos formatos en la misma pantalla —"Carla Benítez"
+  // arriba y "Benítez, Carla" abajo— según de qué endpoint viniera el dato. Se normaliza
+  // todo a "Nombre Apellido" al entrar, que es como se lee a una persona.
+  function nombreNatural(s) {
+    s = (s || "").trim();
+    var i = s.indexOf(",");
+    if (i < 0) return s;
+    var apellido = s.slice(0, i).trim(), nombre = s.slice(i + 1).trim();
+    return nombre && apellido ? nombre + " " + apellido : s;
+  }
   function stripAccents(s) { return (s || "").normalize("NFD").replace(/[̀-ͯ]/g, ""); }
   function normLabel(s) { return stripAccents((s || "").replace(/\s*·\s*$/, "").trim().toLowerCase()); }
 
@@ -250,7 +262,7 @@
     var out = {
       id: n.id,
       tipo: n.tipo_novedad_nombre,
-      emp: emp.name || n.empleado_nombre || "—",
+      emp: emp.name || nombreNatural(n.empleado_nombre) || "—",
       empresa: emp.empresa || "—",
       fecha: fmtRango(n.fecha_desde, n.fecha_hasta),
       estado: n.estado_display,
@@ -324,6 +336,57 @@
     return map;
   }
   function readAltaForm() { return readModalForm('[data-modal="alta"]'); }
+
+  // ---------- accesibilidad de los modales (BUG-12) ----------
+  // El markup ya declara role="dialog"/aria-modal (eso vive en el canvas). Lo que no se
+  // puede declarar es el comportamiento: al abrir, el foco sigue en el botón que quedó
+  // detrás del overlay, así que un usuario de teclado tabula por la pantalla tapada. Acá
+  // se mueve el foco adentro, se lo encierra y se lo devuelve al cerrar.
+  var _focoPrevio = null, _trapHandler = null;
+  function focoAtrapado(sel) {
+    var m = document.querySelector(sel);
+    if (!m) return;
+    _focoPrevio = document.activeElement;
+    var focusables = function () {
+      return Array.prototype.filter.call(
+        m.querySelectorAll('a[href],button,input,select,textarea,[tabindex]:not([tabindex="-1"])'),
+        function (el) { return !el.disabled && el.offsetParent !== null; }
+      );
+    };
+    var f = focusables();
+    // El primer campo real, no la "✕": quien abre un alta quiere escribir, no cerrar.
+    var primero = f.find(function (el) { return /^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName); }) || f[0];
+    if (primero) primero.focus();
+    _trapHandler = function (e) {
+      if (e.key === "Escape") { var x = m.querySelector("button"); if (x) x.click(); return; }
+      if (e.key !== "Tab") return;
+      var lista = focusables();
+      if (!lista.length) return;
+      var ini = lista[0], fin = lista[lista.length - 1];
+      // Sin esto el Tab se escapa a la página de atrás y el usuario no encuentra el camino
+      // de vuelta al diálogo.
+      if (e.shiftKey && document.activeElement === ini) { e.preventDefault(); fin.focus(); }
+      else if (!e.shiftKey && document.activeElement === fin) { e.preventDefault(); ini.focus(); }
+    };
+    m.addEventListener("keydown", _trapHandler);
+  }
+  function focoDevuelto() {
+    if (_focoPrevio && _focoPrevio.focus) _focoPrevio.focus();
+    _focoPrevio = null;
+    _trapHandler = null;
+  }
+  // Red de seguridad para los nombres accesibles: el canvas rotula con <div>, no con
+  // <label for>, así que un lector de pantalla anunciaría "cuadro de edición" y nada más.
+  // Se copia la etiqueta visible al aria-label de cada control del modal.
+  function rotularCampos(sel) {
+    var m = document.querySelector(sel);
+    if (!m) return;
+    m.querySelectorAll("input,select,textarea").forEach(function (el) {
+      if (el.getAttribute("aria-label")) return;
+      var txt = labelFor(el).replace(/\s*·\s*$/, "").trim();
+      if (txt) el.setAttribute("aria-label", txt);
+    });
+  }
 
   // ---------- campos de la ficha que el guardado NO toca ----------
   // El PATCH de edición va contra ActualizarEmpleadoSerializer, que expone SOLO datos de la
@@ -532,6 +595,10 @@
   window.CeiboAPI = {
     toast: showToast,
 
+    // Se llama al abrir cada modal: rotula los campos y encierra el foco (ver arriba).
+    a11yModal(sel) { rotularCampos(sel); focoAtrapado(sel); },
+    a11yCerrar: focoDevuelto,
+
     async init() {
       var tk = await fetch(CONFIG.API + "/auth/token/", {
         method: "POST", headers: { "content-type": "application/json" },
@@ -617,7 +684,7 @@
           icon: icono,
           items: items.map(function (i) {
             return {
-              emp: i.empleado,
+              emp: nombreNatural(i.empleado),
               empresa: i.empresa,
               // Sin fecha cargada: el guion es el mismo que usa el canvas en su mock.
               fecha: i.fecha ? fmtISOtoDMY(i.fecha) : "—",
@@ -661,7 +728,12 @@
           return { label: r.label, chip: apagar(r.chip), toggle: avisar };
         }),
         canales: (v.canales || []).map(function (c) {
-          return { label: c.label, hint: c.hint, track: apagar(c.track), knob: c.knob, toggle: avisar };
+          // `on` se conserva: es lo que alimenta el aria-checked del role="switch". Sin él
+          // el switch se anuncia sin estado y un lector de pantalla no sabe si está activo.
+          return {
+            label: c.label, hint: c.hint, on: String(!!c.on),
+            track: apagar(c.track), knob: c.knob, toggle: avisar,
+          };
         }),
       };
     },
@@ -836,7 +908,7 @@
       var empEl = f["empleado"];
       if (empEl) {
         var ro = document.createElement("input");
-        ro.value = (_empById[n.empleado] && _empById[n.empleado].name) || n.empleado_nombre || "";
+        ro.value = (_empById[n.empleado] && _empById[n.empleado].name) || nombreNatural(n.empleado_nombre) || "";
         ro.disabled = true;
         ro.style.cssText = empEl.style.cssText + ";opacity:.65;cursor:not-allowed";
         empEl.parentNode.replaceChild(ro, empEl);

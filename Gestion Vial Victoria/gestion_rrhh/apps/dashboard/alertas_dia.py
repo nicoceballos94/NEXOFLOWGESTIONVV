@@ -108,7 +108,7 @@ def _certificados_pendientes(hoy: date) -> list[dict]:
     return [
         {
             "title": "Certificado pendiente",
-            "text": f"{n.empleado.nombre_completo} — {n.tipo_novedad.nombre.lower()} "
+            "text": f"{n.empleado.nombre_natural} — {n.tipo_novedad.nombre.lower()} "
             f"{_dmy(n.fecha_desde)} sin certificado",
             "estado": "bad",
             "_orden": n.fecha_desde,
@@ -123,7 +123,7 @@ def _cumpleanos(hoy: date) -> list[dict]:
     Se filtra por mes y día en la base (no en Python) para no traer la dotación entera.
     """
     nombres = [
-        e.nombre_completo
+        e.nombre_natural
         for e in Empleado.objects.filter(
             fecha_nacimiento__month=hoy.month,
             fecha_nacimiento__day=hoy.day,

@@ -34,7 +34,7 @@ class TipoNovedadSerializer(serializers.ModelSerializer):
 class NovedadSerializer(serializers.ModelSerializer):
     tipo_novedad_codigo = serializers.CharField(source="tipo_novedad.codigo", read_only=True)
     tipo_novedad_nombre = serializers.CharField(source="tipo_novedad.nombre", read_only=True)
-    empleado_nombre = serializers.CharField(source="empleado.nombre_completo", read_only=True)
+    empleado_nombre = serializers.CharField(source="empleado.nombre_natural", read_only=True)
     estado_display = serializers.CharField(source="get_estado_display", read_only=True)
     es_prorroga = serializers.BooleanField(read_only=True)
     cantidad_prorrogas = serializers.SerializerMethodField()

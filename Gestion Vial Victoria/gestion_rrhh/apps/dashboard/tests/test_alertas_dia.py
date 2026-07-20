@@ -118,7 +118,7 @@ def test_el_cumpleanos_es_del_dia_no_del_mes(empresa):
     _empleado("30444555", "SinFecha", empresa, nace=None)
 
     data = alertas_del_dia(hoy=HOY)
-    assert _textos(data) == ["Hoy, Test cumple años hoy"]
+    assert _textos(data) == ["Test Hoy cumple años hoy"]
 
 
 def test_varios_cumpleanos_se_resumen_en_una_linea(empresa):
@@ -126,7 +126,7 @@ def test_varios_cumpleanos_se_resumen_en_una_linea(empresa):
     for numero in range(3):
         _empleado(f"3011122{numero}", f"Emp{numero}", empresa, nace=date(1990, HOY.month, HOY.day))
     data = alertas_del_dia(hoy=HOY)
-    assert _textos(data) == ["Emp0, Test y 2 más cumplen años hoy"]
+    assert _textos(data) == ["Test Emp0 y 2 más cumplen años hoy"]
 
 
 def test_el_cumpleanos_de_un_egresado_no_se_saluda(empresa):
@@ -165,7 +165,7 @@ def test_avisa_del_certificado_que_falta(empresa, licencia):
     _novedad(emp, licencia, HOY - timedelta(days=17))
     data = alertas_del_dia(hoy=HOY)
     assert _titulos(data) == ["Certificado pendiente"]
-    assert _textos(data) == ["Ojeda, Test — licencia médica 28/06 sin certificado"]
+    assert _textos(data) == ["Test Ojeda — licencia médica 28/06 sin certificado"]
 
 
 def test_no_avisa_por_certificados_que_no_faltan(empresa, licencia, vacaciones):

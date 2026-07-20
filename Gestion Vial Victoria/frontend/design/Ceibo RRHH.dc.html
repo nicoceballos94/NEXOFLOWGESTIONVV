@@ -63,35 +63,35 @@
     <div style="padding:4px 12px 8px">
       <div style="font-size:10px;font-weight:600;letter-spacing:.09em;color:var(--text3);padding:8px 10px 6px" class="ceibo-navlbl">PRINCIPAL</div>
       <nav style="display:flex;flex-direction:column;gap:2px">
-        <div onClick="{{ goDash }}" style="{{ navDash }}" style-hover="background:var(--surface2);color:var(--text)">
+        <button type="button" onClick="{{ goDash }}" style="{{ navDash }}" style-hover="background:var(--surface2);color:var(--text)">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.6"/><rect x="14" y="3" width="7" height="7" rx="1.6"/><rect x="3" y="14" width="7" height="7" rx="1.6"/><rect x="14" y="14" width="7" height="7" rx="1.6"/></svg>
           <span class="ceibo-navlbl">Dashboard</span>
-        </div>
-        <div onClick="{{ goEmp }}" style="{{ navEmp }}" style-hover="background:var(--surface2);color:var(--text)">
+        </button>
+        <button type="button" onClick="{{ goEmp }}" style="{{ navEmp }}" style-hover="background:var(--surface2);color:var(--text)">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.1"/><path d="M3.5 20a5.5 5.5 0 0 1 11 0"/><path d="M16 5.4a3 3 0 0 1 0 5.2"/><path d="M18.5 20a5.5 5.5 0 0 0-2.8-4.8"/></svg>
           <span class="ceibo-navlbl">Empleados</span>
-        </div>
-        <div onClick="{{ goNov }}" style="{{ navNov }}" style-hover="background:var(--surface2);color:var(--text)">
+        </button>
+        <button type="button" onClick="{{ goNov }}" style="{{ navNov }}" style-hover="background:var(--surface2);color:var(--text)">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="4" width="14" height="17" rx="2.2"/><path d="M9 4.5V6a1.5 1.5 0 0 0 1.5 1.5h3A1.5 1.5 0 0 0 15 6V4.5"/><path d="M8.5 12h7M8.5 16h4.5"/></svg>
           <span class="ceibo-navlbl">Novedades</span>
           <span class="ceibo-navlbl" style="{{ novBadge }}">{{ novCount }}</span>
-        </div>
-        <div onClick="{{ goAle }}" style="{{ navAle }}" style-hover="background:var(--surface2);color:var(--text)">
+        </button>
+        <button type="button" onClick="{{ goAle }}" style="{{ navAle }}" style-hover="background:var(--surface2);color:var(--text)">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.3l8.6 15A1 1 0 0 1 19.7 20H4.3a1 1 0 0 1-.9-1.7l8.6-15z"/><path d="M12 9.5v4M12 16.6v.2"/></svg>
           <span class="ceibo-navlbl">Alertas y vencimientos</span>
-        </div>
+        </button>
       </nav>
 
       <div style="font-size:10px;font-weight:600;letter-spacing:.09em;color:var(--text3);padding:16px 10px 6px" class="ceibo-navlbl">ANÁLISIS</div>
       <nav style="display:flex;flex-direction:column;gap:2px">
-        <div onClick="{{ goRep }}" style="{{ navRep }}" style-hover="background:var(--surface2);color:var(--text)">
+        <button type="button" onClick="{{ goRep }}" style="{{ navRep }}" style-hover="background:var(--surface2);color:var(--text)">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16"/><rect x="5" y="11" width="3.4" height="7" rx="1"/><rect x="10.3" y="5" width="3.4" height="13" rx="1"/><rect x="15.6" y="9" width="3.4" height="9" rx="1"/></svg>
           <span class="ceibo-navlbl">Reportes y métricas</span>
-        </div>
-        <div onClick="{{ goCfg }}" style="{{ navCfg }}" style-hover="background:var(--surface2);color:var(--text)">
+        </button>
+        <button type="button" onClick="{{ goCfg }}" style="{{ navCfg }}" style-hover="background:var(--surface2);color:var(--text)">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="2.4" fill="var(--sidebar)"/><circle cx="15" cy="17" r="2.4" fill="var(--sidebar)"/></svg>
           <span class="ceibo-navlbl">Configuración</span>
-        </div>
+        </button>
       </nav>
     </div>
 
@@ -270,7 +270,7 @@
             <div>EMPLEADO</div><div>EMPRESA</div><div>SECTOR</div><div>PUESTO</div><div>ESTADO</div><div></div>
           </div>
           <sc-for list="{{ filteredEmployees }}" as="e" hint-placeholder-count="8">
-            <div onClick="{{ e.open }}" style="display:grid;grid-template-columns:2.2fr 1.3fr 1fr 1.1fr 0.9fr 42px;gap:14px;padding:13px 20px;border-bottom:1px solid var(--border);align-items:center;cursor:pointer" style-hover="background:var(--surface2)">
+            <div onClick="{{ e.open }}" onKeyDown="{{ e.openKey }}" role="button" tabindex="0" aria-label="{{ e.aria }}" style="display:grid;grid-template-columns:2.2fr 1.3fr 1fr 1.1fr 0.9fr 42px;gap:14px;padding:13px 20px;border-bottom:1px solid var(--border);align-items:center;cursor:pointer" style-hover="background:var(--surface2)">
               <div style="display:flex;align-items:center;gap:11px;min-width:0">
                 <div style="{{ e.avatar }}">{{ e.initials }}</div>
                 <div style="min-width:0">
@@ -489,7 +489,7 @@
           </div>
           <sc-for list="{{ filteredNov }}" as="n" hint-placeholder-count="6">
             <div>
-              <div onClick="{{ n.openDet }}" style="display:grid;grid-template-columns:1.6fr 1.4fr 1.2fr 1fr 1fr;gap:14px;padding:14px 20px;border-bottom:1px solid var(--border);align-items:center;cursor:pointer" style-hover="background:var(--surface2)">
+              <div onClick="{{ n.openDet }}" onKeyDown="{{ n.openDetKey }}" role="button" tabindex="0" aria-label="{{ n.aria }}" style="display:grid;grid-template-columns:1.6fr 1.4fr 1.2fr 1fr 1fr;gap:14px;padding:14px 20px;border-bottom:1px solid var(--border);align-items:center;cursor:pointer" style-hover="background:var(--surface2)">
                 <div style="display:flex;align-items:center;gap:10px;min-width:0">
                   <div style="{{ n.iconWrap }}"><span style="{{ n.icon }}"></span></div>
                   <div style="min-width:0">
@@ -645,9 +645,9 @@
                   <div style="font-size:11.5px;color:var(--text3)">{{ c.hint }}</div>
                 </div>
                 <div style="display:flex;align-items:center;gap:8px">
-                  <button onClick="{{ c.dec }}" style="width:30px;height:30px;border-radius:8px;border:1px solid var(--border2);background:var(--surface2);color:var(--text);font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center">−</button>
+                  <button type="button" onClick="{{ c.dec }}" aria-label="{{ c.decAria }}" style="width:30px;height:30px;border-radius:8px;border:1px solid var(--border2);background:var(--surface2);color:var(--text);font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center">−</button>
                   <div style="width:58px;text-align:center;font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:15px;color:var(--text)">{{ c.val }}<span style="font-size:11px;color:var(--text3);font-weight:400"> d</span></div>
-                  <button onClick="{{ c.inc }}" style="width:30px;height:30px;border-radius:8px;border:1px solid var(--border2);background:var(--surface2);color:var(--text);font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center">+</button>
+                  <button type="button" onClick="{{ c.inc }}" aria-label="{{ c.incAria }}" style="width:30px;height:30px;border-radius:8px;border:1px solid var(--border2);background:var(--surface2);color:var(--text);font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center">+</button>
                 </div>
               </div>
             </sc-for>
@@ -671,7 +671,7 @@
                   <div style="font-size:13.5px;font-weight:500;color:var(--text)">{{ c.label }}</div>
                   <div style="font-size:11.5px;color:var(--text3)">{{ c.hint }}</div>
                 </div>
-                <div onClick="{{ c.toggle }}" style="{{ c.track }}"><div style="{{ c.knob }}"></div></div>
+                <button type="button" role="switch" aria-checked="{{ c.on }}" aria-label="{{ c.label }}" onClick="{{ c.toggle }}" style="{{ c.track }}"><div style="{{ c.knob }}"></div></button>
               </div>
             </sc-for>
           </div>
@@ -685,7 +685,7 @@
   <!-- ===================== MODALES ===================== -->
   <sc-if value="{{ showAlta }}" hint-placeholder-val="{{ false }}">
     <div onClick="{{ closeModal }}" style="position:fixed;inset:0;background:rgba(4,8,16,.6);backdrop-filter:blur(3px);display:flex;align-items:flex-start;justify-content:center;padding:6vh 20px;z-index:50;animation:ov .2s ease both">
-      <div onClick="{{ stop }}" style="background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:720px;max-width:100%;box-shadow:0 30px 80px rgba(0,0,0,.5);animation:pop .28s cubic-bezier(.2,.9,.3,1) both;display:flex;flex-direction:column;max-height:88vh">
+      <div onClick="{{ stop }}" role="dialog" aria-modal="true" aria-label="Alta y edición de empleado" style="background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:720px;max-width:100%;box-shadow:0 30px 80px rgba(0,0,0,.5);animation:pop .28s cubic-bezier(.2,.9,.3,1) both;display:flex;flex-direction:column;max-height:88vh">
         <div style="display:flex;align-items:center;justify-content:space-between;padding:20px 24px;border-bottom:1px solid var(--border);flex:none">
           <div><div style="font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:17px;color:var(--text)">Alta de empleado</div><div style="font-size:12px;color:var(--text3)">Los campos con · son obligatorios</div></div>
           <button onClick="{{ closeModal }}" style="width:32px;height:32px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text2);cursor:pointer;font-size:16px">✕</button>
@@ -724,7 +724,7 @@
               <div><div style="{{ lblStyle }}">Jornada legal</div><select style="{{ inputStyle }}"><option value="">Seleccionar…</option><option>Completa (8 h)</option><option>Reducida (6 h)</option><option>Media jornada (4 h)</option><option>Turnos rotativos</option></select></div>
               <div style="grid-column:span 2"><div style="{{ lblStyle }}">Estado</div><select style="{{ inputStyle }}"><option>Activo</option><option>Inactivo</option></select></div>
               <div style="grid-column:span 2;display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:11px;background:var(--surface);border:1px solid var(--border2)">
-                <div onClick="{{ toggleExento }}" style="{{ exentoTrack }}"><div style="{{ exentoKnob }}"></div></div>
+                <button type="button" role="switch" aria-checked="{{ exentoOn }}" aria-label="Exento de marcación" onClick="{{ toggleExento }}" style="{{ exentoTrack }}"><div style="{{ exentoKnob }}"></div></button>
                 <div><div style="font-size:13px;font-weight:600;color:var(--text)">Exento de marcación</div><div style="font-size:11.5px;color:var(--text3)">El empleado no ficha entrada/salida (no genera ausencias ni tardanzas)</div></div>
               </div>
             </div>
@@ -754,7 +754,7 @@
 
   <sc-if value="{{ showAltaNov }}" hint-placeholder-val="{{ false }}">
     <div onClick="{{ closeModal }}" style="position:fixed;inset:0;background:rgba(4,8,16,.6);backdrop-filter:blur(3px);display:flex;align-items:flex-start;justify-content:center;padding:6vh 20px;z-index:50;animation:ov .2s ease both">
-      <div onClick="{{ stop }}" style="background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:680px;max-width:100%;box-shadow:0 30px 80px rgba(0,0,0,.5);animation:pop .28s cubic-bezier(.2,.9,.3,1) both;display:flex;flex-direction:column;max-height:88vh">
+      <div onClick="{{ stop }}" role="dialog" aria-modal="true" aria-label="Registrar novedad" style="background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:680px;max-width:100%;box-shadow:0 30px 80px rgba(0,0,0,.5);animation:pop .28s cubic-bezier(.2,.9,.3,1) both;display:flex;flex-direction:column;max-height:88vh">
         <div style="display:flex;align-items:center;justify-content:space-between;padding:20px 24px;border-bottom:1px solid var(--border);flex:none">
           <div><div style="font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:17px;color:var(--text)">{{ novFormTitle }}</div><div style="font-size:12px;color:var(--text3)">Los campos con · son obligatorios</div></div>
           <button onClick="{{ closeModal }}" style="width:32px;height:32px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text2);cursor:pointer;font-size:16px">✕</button>
@@ -783,7 +783,7 @@
           <sc-if value="{{ novNoHoras }}" hint-placeholder-val="{{ true }}">
           <div style="display:flex;flex-direction:column;gap:22px">
           <div style="display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:11px;background:var(--warn-dim);border:1px solid var(--border)">
-            <div onClick="{{ togglePraxis }}" style="{{ praxisTrack }}"><div style="{{ praxisKnob }}"></div></div>
+            <button type="button" role="switch" aria-checked="{{ praxisOn }}" aria-label="Requiere praxis" onClick="{{ togglePraxis }}" style="{{ praxisTrack }}"><div style="{{ praxisKnob }}"></div></button>
             <div><div style="font-size:13px;font-weight:600;color:var(--text)">Requiere praxis</div><div style="font-size:11.5px;color:var(--text3)">Marcar si interviene ART / seguimiento médico</div></div>
           </div>
 
@@ -827,7 +827,7 @@
 
   <sc-if value="{{ showDoc }}" hint-placeholder-val="{{ false }}">
     <div onClick="{{ closeModal }}" style="position:fixed;inset:0;background:rgba(4,8,16,.6);backdrop-filter:blur(3px);display:flex;align-items:center;justify-content:center;padding:20px;z-index:50;animation:ov .2s ease both">
-      <div onClick="{{ stop }}" style="background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:520px;max-width:100%;box-shadow:0 30px 80px rgba(0,0,0,.5);animation:pop .28s cubic-bezier(.2,.9,.3,1) both;padding:26px">
+      <div onClick="{{ stop }}" role="dialog" aria-modal="true" aria-label="Cargar documento" style="background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:520px;max-width:100%;box-shadow:0 30px 80px rgba(0,0,0,.5);animation:pop .28s cubic-bezier(.2,.9,.3,1) both;padding:26px">
         <div style="display:flex;align-items:center;gap:12px;margin-bottom:18px">
           <div style="width:40px;height:40px;border-radius:11px;background:var(--accent-dim);color:var(--accent);display:flex;align-items:center;justify-content:center;flex:none">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/></svg>
@@ -880,7 +880,7 @@
 
   <sc-if value="{{ showBaja }}" hint-placeholder-val="{{ false }}">
     <div onClick="{{ closeModal }}" style="position:fixed;inset:0;background:rgba(4,8,16,.6);backdrop-filter:blur(3px);display:flex;align-items:center;justify-content:center;padding:20px;z-index:50;animation:ov .2s ease both">
-      <div onClick="{{ stop }}" style="background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:440px;max-width:100%;box-shadow:0 30px 80px rgba(0,0,0,.5);animation:pop .28s cubic-bezier(.2,.9,.3,1) both;padding:26px">
+      <div onClick="{{ stop }}" role="dialog" aria-modal="true" aria-label="Dar de baja" style="background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:440px;max-width:100%;box-shadow:0 30px 80px rgba(0,0,0,.5);animation:pop .28s cubic-bezier(.2,.9,.3,1) both;padding:26px">
         <div style="width:48px;height:48px;border-radius:12px;background:var(--bad-dim);color:var(--bad);display:flex;align-items:center;justify-content:center;margin-bottom:16px">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.3l8.6 15A1 1 0 0 1 19.7 20H4.3a1 1 0 0 1-.9-1.7l8.6-15z"/><path d="M12 9.5v4M12 16.6v.2"/></svg>
         </div>
@@ -898,7 +898,7 @@
 
   <sc-if value="{{ showReingreso }}" hint-placeholder-val="{{ false }}">
     <div onClick="{{ closeModal }}" style="position:fixed;inset:0;background:rgba(4,8,16,.6);backdrop-filter:blur(3px);display:flex;align-items:center;justify-content:center;padding:20px;z-index:50;animation:ov .2s ease both">
-      <div onClick="{{ stop }}" style="background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:430px;max-width:100%;box-shadow:0 30px 80px rgba(0,0,0,.5);animation:pop .28s cubic-bezier(.2,.9,.3,1) both;padding:26px">
+      <div onClick="{{ stop }}" role="dialog" aria-modal="true" aria-label="Registrar reincorporación" style="background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:430px;max-width:100%;box-shadow:0 30px 80px rgba(0,0,0,.5);animation:pop .28s cubic-bezier(.2,.9,.3,1) both;padding:26px">
         <div style="width:48px;height:48px;border-radius:12px;background:var(--accent-dim);color:var(--accent);display:flex;align-items:center;justify-content:center;margin-bottom:16px">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6M22 11h-6"/></svg>
         </div>
@@ -915,7 +915,7 @@
 
   <sc-if value="{{ showDetNov }}" hint-placeholder-val="{{ false }}">
     <div onClick="{{ closeModal }}" style="position:fixed;inset:0;background:rgba(4,8,16,.6);backdrop-filter:blur(3px);display:flex;align-items:flex-start;justify-content:center;padding:6vh 20px;z-index:50;animation:ov .2s ease both">
-      <div onClick="{{ stop }}" style="background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:640px;max-width:100%;box-shadow:0 30px 80px rgba(0,0,0,.5);animation:pop .28s cubic-bezier(.2,.9,.3,1) both;display:flex;flex-direction:column;max-height:88vh">
+      <div onClick="{{ stop }}" role="dialog" aria-modal="true" aria-label="Detalle de la novedad" style="background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:640px;max-width:100%;box-shadow:0 30px 80px rgba(0,0,0,.5);animation:pop .28s cubic-bezier(.2,.9,.3,1) both;display:flex;flex-direction:column;max-height:88vh">
         <div style="display:flex;align-items:center;gap:14px;padding:20px 24px;border-bottom:1px solid var(--border);flex:none">
           <div style="{{ detNov.iconWrap }}"><span style="{{ detNov.icon }}"></span></div>
           <div style="flex:1;min-width:0">
@@ -1043,7 +1043,7 @@
 
   <sc-if value="{{ showProrroga }}" hint-placeholder-val="{{ false }}">
     <div onClick="{{ closeModal }}" style="position:fixed;inset:0;background:rgba(4,8,16,.6);backdrop-filter:blur(3px);display:flex;align-items:center;justify-content:center;padding:20px;z-index:51;animation:ov .2s ease both">
-      <div onClick="{{ stop }}" style="background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:460px;max-width:100%;box-shadow:0 30px 80px rgba(0,0,0,.5);animation:pop .28s cubic-bezier(.2,.9,.3,1) both;padding:24px 26px">
+      <div onClick="{{ stop }}" role="dialog" aria-modal="true" aria-label="Registrar prórroga" style="background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:460px;max-width:100%;box-shadow:0 30px 80px rgba(0,0,0,.5);animation:pop .28s cubic-bezier(.2,.9,.3,1) both;padding:24px 26px">
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
           <div style="width:40px;height:40px;border-radius:11px;background:var(--accent-dim);color:var(--accent);display:flex;align-items:center;justify-content:center;flex:none">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 4v4h4"/></svg>
@@ -1240,6 +1240,9 @@ class Component extends DCLogic {
   onNovEmp = (e)=> this.setState({novEmp:e.target.value});
 
   selectEmp = (id)=> this.setState({selEmp:id, view:'ficha'});
+  // Enter y Espacio tienen que abrir la ficha igual que el click: una fila con
+  // role=button que no responde al teclado es peor que una fila sin rol.
+  openEmpKey = (id)=> (e)=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); this.selectEmp(id); } };
   openAlta = ()=> this.setState({modal:'alta'});
   openAltaNov = ()=> this.setState({modal:'altanov', editNovId:null, novFormTipo:'Falta'});
   openBaja = (id)=> this.setState({modal:'baja', bajaId:id});
@@ -1276,6 +1279,8 @@ class Component extends DCLogic {
   toggleExento = ()=> this.setState(s=>({exento:!s.exento}));
   toggleExpandNov = (id)=> this.setState(s=>({expandedNov:s.expandedNov===id?null:id}));
   openDetNov = (id)=> this.setState({modal:'detnov', detNovId:id});
+  // Igual que las filas de empleado: con role=button hay que responder a Enter/Espacio.
+  openDetNovKey = (id)=> (e)=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); this.openDetNov(id); } };
   openProrroga = ()=> this.setState({modal:'prorroga'});
   backToDet = ()=> this.setState({modal:'detnov'});
   toggleProrrogaCert = ()=> this.setState(s=>({prorrogaCert:!s.prorrogaCert}));
@@ -1306,7 +1311,7 @@ class Component extends DCLogic {
 
   navStyle(v){
     const active = this.state.view===v || (v==='empleados'&&this.state.view==='ficha');
-    const base = 'display:flex;align-items:center;gap:11px;padding:9px 11px;border-radius:10px;font-size:13px;font-weight:500;cursor:pointer;transition:background .12s;';
+    const base = 'display:flex;align-items:center;gap:11px;padding:9px 11px;border-radius:10px;font-size:13px;font-weight:500;cursor:pointer;transition:background .12s;border:none;background:transparent;width:100%;text-align:left;font-family:inherit;';
     return base + (active ? 'background:var(--accent-dim);color:var(--accent)' : 'color:var(--text2)');
   }
   segStyle(active){
@@ -1317,7 +1322,7 @@ class Component extends DCLogic {
     return `border:1px solid ${active?'var(--accent)':'var(--border2)'};border-radius:20px;padding:7px 15px;font-size:12.5px;font-weight:600;cursor:pointer;`+
       (active?'background:var(--accent-dim);color:var(--accent)':'background:var(--surface);color:var(--text2)');
   }
-  switchTrack(on){ return `width:42px;height:24px;border-radius:20px;cursor:pointer;flex:none;transition:background .18s;background:${on?'var(--accent)':'var(--surface2)'};border:1px solid ${on?'var(--accent)':'var(--border2)'};position:relative`; }
+  switchTrack(on){ return `width:42px;height:24px;border-radius:20px;cursor:pointer;flex:none;padding:0;transition:background .18s;background:${on?'var(--accent)':'var(--surface2)'};border:1px solid ${on?'var(--accent)':'var(--border2)'};position:relative`; }
   switchKnob(on){ return `position:absolute;top:2px;left:${on?'20px':'2px'};width:18px;height:18px;border-radius:50%;background:#fff;transition:left .18s;box-shadow:0 1px 3px rgba(0,0,0,.3)`; }
 
   renderVals(){
@@ -1378,7 +1383,8 @@ class Component extends DCLogic {
       avatar:`width:38px;height:38px;border-radius:11px;background:var(--surface2);border:1px solid var(--border2);display:flex;align-items:center;justify-content:center;font-weight:600;font-size:13px;color:var(--accent);flex:none`,
       estadoLabel: e.estado==='activo'?'Activo':'Inactivo',
       estadoBadge: this.badge(e.estado==='activo'?'ok':'neutral'),
-      open: ()=>this.selectEmp(e.id)
+      aria: `Abrir ficha de ${e.name}`,
+      open: ()=>this.selectEmp(e.id), openKey: this.openEmpKey(e.id)
     }));
     const totalActivos = emps.filter(e=>e.estado==='activo').length;
 
@@ -1460,7 +1466,8 @@ class Component extends DCLogic {
         chevStyle:`display:inline-block;transition:transform .18s;transform:rotate(${expanded?90:0}deg);color:var(--text3)`,
         expandWrap:expanded?'padding:4px 20px 14px 62px;background:var(--surface2);border-bottom:1px solid var(--border)':'display:none',
         toggleExpand:(e)=>{e.stopPropagation();this.toggleExpandNov(n.id);},
-        openDet:()=>this.openDetNov(n.id)
+        aria:`Abrir novedad de ${n.emp} — ${n.tipo}`,
+        openDet:()=>this.openDetNov(n.id), openDetKey:this.openDetNovKey(n.id)
       };
     });
 
@@ -1567,7 +1574,7 @@ class Component extends DCLogic {
       {key:'apto', label:'Apto médico', hint:'Aviso antes del vencimiento del examen'},
       {key:'cnrt', label:'CNRT', hint:'Habilitación de transporte de carga'},
       {key:'contrato', label:'Contratos a plazo', hint:'Aviso antes del fin de contrato'}
-    ].map(r=>({label:r.label, hint:r.hint, val:S.cfg[r.key], inc:()=>this.cfgChange(r.key,5), dec:()=>this.cfgChange(r.key,-5)}));
+    ].map(r=>({label:r.label, hint:r.hint, val:S.cfg[r.key], incAria:`Aumentar días de aviso para ${r.label}`, decAria:`Reducir días de aviso para ${r.label}`, inc:()=>this.cfgChange(r.key,5), dec:()=>this.cfgChange(r.key,-5)}));
     const roles = [
       {k:'rrhh', label:'Referente RRHH'},{k:'admin', label:'Administración'},{k:'jefe', label:'Jefe de sector'}
     ].map(r=>({label:r.label, chip:this.chipStyle(S.roles[r.k]), toggle:()=>this.toggleRole(r.k)}));
@@ -1575,7 +1582,7 @@ class Component extends DCLogic {
       {k:'email', label:'Email', hint:'Resumen diario de vencimientos'},
       {k:'sistema', label:'Notificación en el sistema', hint:'Alertas en el panel al ingresar'},
       {k:'whatsapp', label:'WhatsApp', hint:'Aviso al referente asignado'}
-    ].map(c=>({label:c.label, hint:c.hint, track:this.switchTrack(S.canales[c.k]), knob:this.switchKnob(S.canales[c.k]), toggle:()=>this.toggleCanal(c.k)}));
+    ].map(c=>({label:c.label, hint:c.hint, on:!!S.canales[c.k], track:this.switchTrack(S.canales[c.k]), knob:this.switchKnob(S.canales[c.k]), toggle:()=>this.toggleCanal(c.k)}));
 
     const titles = {dashboard:['Panel general','Resumen operativo de RRHH'],empleados:['Empleados','Legajos y relación laboral'],ficha:['Ficha de empleado','Legajo completo'],novedades:['Novedades','Accidentes, faltas, licencias y vacaciones'],alertas:['Alertas y vencimientos','Control de documentación'],reportes:['Reportes y métricas','Análisis de dotación y ausentismo'],config:['Configuración','Parametría de alertas']};
     const t = titles[S.view]||titles.dashboard;

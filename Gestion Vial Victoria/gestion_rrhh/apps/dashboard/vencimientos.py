@@ -92,7 +92,7 @@ def _items_de_documentos(hoy: date) -> dict[str, list[dict]]:
         grupos.setdefault(doc.tipo_documento.nombre, []).append(
             {
                 "empleado_id": doc.empleado_id,
-                "empleado": doc.empleado.nombre_completo,
+                "empleado": doc.empleado.nombre_natural,
                 "empresa": empresas.get(doc.empleado_id, "—"),
                 "fecha": doc.fecha_vencimiento,
                 "estado": _estado(doc.fecha_vencimiento, hoy, doc.tipo_documento.dias_aviso),
@@ -113,7 +113,7 @@ def _items_de_contratos(hoy: date, dias_aviso: int) -> list[dict]:
     return [
         {
             "empleado_id": rel.empleado_id,
-            "empleado": rel.empleado.nombre_completo,
+            "empleado": rel.empleado.nombre_natural,
             "empresa": rel.empresa.nombre,
             "fecha": rel.fecha_vencimiento_contrato,
             "estado": _estado(rel.fecha_vencimiento_contrato, hoy, dias_aviso),

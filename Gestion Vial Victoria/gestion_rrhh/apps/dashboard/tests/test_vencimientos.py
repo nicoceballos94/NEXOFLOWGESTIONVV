@@ -57,7 +57,7 @@ def _items(data, tipo):
 
 
 def _apellidos(items):
-    return {i["empleado"].split(",")[0]: i for i in items}
+    return {i["empleado"].split()[-1]: i for i in items}
 
 
 def test_el_semaforo_marca_vencido_por_vencer_y_al_dia(empresa, apto):
@@ -92,7 +92,7 @@ def test_no_alerta_por_quien_ya_no_trabaja(empresa, apto):
         )
 
     data = vencimientos_de_la_dotacion(hoy=HOY)
-    assert [i["empleado"] for i in _items(data, "Apto médico")] == ["Activo, Test"]
+    assert [i["empleado"] for i in _items(data, "Apto médico")] == ["Test Activo"]
     assert data["resumen"]["vencidos"] == 1
 
 
@@ -122,7 +122,7 @@ def test_el_indeterminado_no_vence_pero_el_plazo_fijo_sin_fecha_alerta(empresa):
     assert (por_apellido["SinFecha"]["estado"], por_apellido["SinFecha"]["fecha"]) == ("bad", None)
     assert por_apellido["ConFecha"]["estado"] == "warn"
     # Lo que no tiene fecha va primero: es lo más urgente de revisar.
-    assert items[0]["empleado"].startswith("SinFecha")
+    assert items[0]["empleado"].endswith("SinFecha")
 
 
 def test_cada_tipo_avisa_con_su_propia_anticipacion(empresa, apto):

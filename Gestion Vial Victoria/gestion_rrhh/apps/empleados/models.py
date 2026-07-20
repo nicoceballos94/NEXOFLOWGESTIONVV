@@ -102,7 +102,18 @@ class Empleado(ModeloBase):
 
     @property
     def nombre_completo(self) -> str:
+        """Formato de fichero: "Apellido, Nombre". Ordena y busca bien, se lee mal."""
         return f"{self.apellido}, {self.nombre}"
+
+    @property
+    def nombre_natural(self) -> str:
+        """Cómo se nombra a una persona. Va en todo lo que se le muestra al usuario.
+
+        El panel mezclaba los dos formatos en la misma pantalla —la lista de empleados
+        decía "Carla Benítez" y la tarjeta de alertas "Benítez, Carla"— porque cada
+        endpoint elegía por su cuenta. `nombre_completo` queda para orden y admin.
+        """
+        return f"{self.nombre} {self.apellido}"
 
     @property
     def relacion_activa(self) -> "RelacionLaboral | None":
