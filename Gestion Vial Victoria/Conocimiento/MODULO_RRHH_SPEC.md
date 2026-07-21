@@ -100,7 +100,7 @@ Recorre `RELACION_LABORAL` con `ESTADO=ACTIVA`, calcula años desde `FECHA INGRE
 | Item | Qué es en concreto | Depende de |
 |---|---|---|
 | Medidas disciplinarias | Tabla nueva: apercibimientos/suspensiones ligada a `ID_PERSONA`, con motivo y fecha | Nada, se puede armar ya |
-| Carga de documentación | Google Drive por empleado (carpeta con ID_PERSONA) + link en `EMPLEADOS` | Google Drive (ya tenés conector) |
+| ~~Carga de documentación~~ **✅ HECHO en MVP1** | Se implementó con almacenamiento propio (no Drive): `DocumentoEmpleado` con archivo de respaldo (PDF/imagen) + `fecha_vencimiento`, y adjuntos de novedades. Ver `CASOS_DE_USO_MVP2.md`. | — |
 | API control de llegadas tarde | Definir fuente: reloj biométrico existente (¿el `ID_HUELLA` que ya está en tu Excel es de un sistema de fichada?), o app de geolocalización, o integración con reloj físico | Definir qué hardware/sistema de fichada tenés hoy |
 | Firma digital recibos de sueldo | Servicio de firma (ej. DocuSign/Firmafy) + envío automático por Telegram/mail | Elegir proveedor de firma |
 | Envío de datos a tesorería/contable | Export automático (Excel/CSV) de novedades liquidables (faltas, licencias) hacia el sistema contable | Definir qué sistema usa contable (¿Dux también?) |
