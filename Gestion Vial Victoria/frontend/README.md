@@ -53,8 +53,9 @@ algo — conviene correrlo después de promover un export:
 python frontend/tests/test_invariantes_diseno.py
 ```
 
-## Qué está cableado (contra la API de empleados)
+## Qué está cableado (contra la API real de Postgres)
 
+**Empleados**
 - **Lista + filtros** (empresa / sector / estado / búsqueda) y **ficha** (datos,
   historial de relación laboral, documentos) → datos reales de Postgres.
 - **Alta** de empleado (crea empleado + relación ACTIVA).
@@ -62,14 +63,29 @@ python frontend/tests/test_invariantes_diseno.py
 - **Dar de baja** (baja lógica: finaliza la relación con fecha + motivo).
 - **Reingreso** (nueva relación ACTIVA).
 
-**Mock / pendiente de backend:** Dashboard (KPIs), Novedades, alertas y reportes
-usan datos de ejemplo hasta que existan esas apps en el backend. El alta de
-documentos no tiene UI en el diseño (los documentos se muestran, no se cargan).
+**Documentos** — alta, edición, borrado, subida y descarga de archivo, con
+estado de vencimiento, desde la ficha del empleado.
+
+**Novedades** — cargar, editar, aprobar / rechazar / anular, **prórroga** de
+licencias y certificados / adjuntos.
+
+**Dashboard, reportes y alertas** — el panel (KPIs y ranking de faltas), los
+reportes de **dotación / ausentismo / rotación** y las **alertas del día**
+(vencimientos, cumpleaños, aniversarios, certificados pendientes) salen del
+backend real (`apps/dashboard`). De los mocks del canvas solo se reutilizan los
+íconos SVG, nunca los datos.
+
+**Configuración** — alta / edición y baja lógica de empresas y sectores.
+
+**Pendiente de backend (fuera de lo cableado hoy):** auditoría consultable
+(historial de "quién hizo qué y cuándo") e importación inicial desde Excel.
 
 ## Notas
 
-- **Login dev único** embebido en `ceibo-api.js` (usuario `admin`). Se reemplaza
-  por login real por usuario más adelante.
+- **Login real por usuario:** cada persona abre sesión con sus credenciales
+  contra `/auth/token/` (JWT), y el rol del backend define qué acciones de
+  escritura ve (capacidades servidas en `/mi/perfil/`). El front usa las
+  capacidades solo para esconder botones; la seguridad real es el 403 del backend.
 - El `legajo` se autogenera en el alta (el diseño no tiene ese campo).
 - Si `build.py` corta con "ancla no encontrada", el diseño cambió de forma que
   rompió un anclaje: revisar la edición señalada en `build.py`.
