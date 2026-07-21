@@ -634,6 +634,28 @@
     };
   }
 
+  // El input "Archivo certificado" del canvas es un <input type=file> pelado: sin `accept`
+  // el explorador ofrece cualquier cosa y el rechazo llega recién del backend. Se acota
+  // acá (comportamiento, no diseño) a lo mismo que aceptan los otros respaldos.
+  function prepararInputCertificado(f) {
+    var el = f["archivo certificado"];
+    if (!el || el.type !== "file") return;
+    el.setAttribute("accept", ".pdf,.jpg,.jpeg,.png,.webp,.heic");
+  }
+
+  // Sube el certificado elegido en el form de novedad como respaldo de la novedad recién
+  // guardada. La novedad YA existe cuando esto corre: si el archivo falla, hay que decir
+  // con todas las letras que el registro se guardó, o el usuario reintenta el alta y
+  // termina con la novedad duplicada (mismo criterio que la transición de estado).
+  async function adjuntarCertificado(novId, file, hechoTxt) {
+    try {
+      await window.CeiboAPI.subirAdjunto(novId, file);
+    } catch (e) {
+      throw new Error(hechoTxt + ", pero el certificado no se pudo adjuntar: " + e.message +
+        ". No la cargues de nuevo: subí el archivo desde el detalle de la novedad.");
+    }
+  }
+
   window.CeiboAPI = {
     toast: showToast,
 
@@ -932,6 +954,7 @@
         empEl.parentNode.replaceChild(input, empEl);
         input.parentNode.appendChild(dl);
       }
+      prepararInputCertificado(f);
       // Estado: solo los que el backend sabe aplicar (ver podarEstadosNov).
       podarEstadosNov(f["estado"]);
       // Fecha de la novedad: por defecto hoy (si está vacía).
@@ -952,6 +975,11 @@
     async submitNov(editNovId) {
       var f = readModalForm('[data-modal="altanov"]');
       var g = function (k) { var el = f[k]; return el ? el.value.trim() : ""; };
+      // "Archivo certificado" venía del diseño sin cablear: el archivo se elegía y se
+      // perdía en silencio. Se sube DESPUÉS de que la novedad exista, porque el endpoint
+      // de respaldos cuelga de su id (/novedades/{id}/adjuntos/).
+      var certEl = f["archivo certificado"];
+      var cert = certEl && certEl.files && certEl.files[0];
       var codigo = TIPONOV[g("tipo")] || "";
       var tipo = _tipoNovByCodigo[codigo];
       if (!tipo) throw new Error("Tipo de novedad inválido");
@@ -990,6 +1018,7 @@
       }
       if (editNovId) {
         await jsend("PATCH", "/novedades/" + editNovId + "/", payload);  // empleado/estado no se tocan
+        if (cert) await adjuntarCertificado(editNovId, cert, "Los cambios se guardaron");
         showToast("Novedad actualizada", "ok");
         return;
       }
@@ -1017,6 +1046,7 @@
             '": ' + e.message + ". No la cargues de nuevo: cambiale el estado desde el detalle.");
         }
       }
+      if (cert) await adjuntarCertificado(nov.id, cert, "La novedad se registró");
       showToast("Novedad registrada", "ok");
     },
 
@@ -1082,6 +1112,7 @@
       set("fecha fin estimada", n.fecha_fin_estimada);
       set("fecha reintegro", n.fecha_reintegro);
       set("fecha certificado recibido", n.certificado_recibido_en);
+      prepararInputCertificado(f);
     },
 
     // Prórroga: lee el modal, POST /novedades/{id}/prorrogar/.
