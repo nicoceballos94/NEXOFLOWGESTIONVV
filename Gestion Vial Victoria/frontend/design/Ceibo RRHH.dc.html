@@ -358,7 +358,25 @@
         </button>
 
         <div style="background:var(--surface);border:1px solid var(--border);border-radius:18px;padding:24px 26px;box-shadow:var(--shadow);display:flex;align-items:center;gap:20px;flex-wrap:wrap">
-          <div style="{{ ficha.avatarBig }}">{{ ficha.initials }}</div>
+          <div style="display:flex;flex-direction:column;align-items:center;gap:9px;flex:none">
+            <div style="position:relative">
+              <sc-if value="{{ ficha.tieneFotoView }}" hint-placeholder-val="{{ false }}">
+                <img src="{{ ficha.fotoUrl }}" alt="Foto de perfil" style="width:74px;height:74px;border-radius:20px;object-fit:cover;border:1px solid var(--border2);display:block"/>
+              </sc-if>
+              <sc-if value="{{ ficha.sinFoto }}" hint-placeholder-val="{{ true }}">
+                <div style="{{ ficha.avatarBig }}">{{ ficha.initials }}</div>
+              </sc-if>
+              <sc-if value="{{ ficha.puedeFoto }}" hint-placeholder-val="{{ true }}">
+                <label title="Cambiar foto" aria-label="Cambiar foto" style="position:absolute;right:-7px;bottom:-7px;width:30px;height:30px;border-radius:10px;background:var(--accent);border:2px solid var(--surface);color:#04201C;display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 3px 10px rgba(0,0,0,.35)" style-hover="filter:brightness(1.05)">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+                  <input data-foto="input" type="file" accept="image/*" onChange="{{ ficha.onFotoInput }}" style="display:none"/>
+                </label>
+              </sc-if>
+            </div>
+            <sc-if value="{{ ficha.mostrarQuitarFoto }}" hint-placeholder-val="{{ false }}">
+              <button onClick="{{ ficha.quitarFoto }}" style="background:none;border:none;color:var(--bad);font-size:11.5px;font-weight:600;cursor:pointer;padding:0" style-hover="text-decoration:underline">Quitar foto</button>
+            </sc-if>
+          </div>
           <div style="min-width:0;flex:1">
             <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
               <div style="font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:24px;letter-spacing:-.01em;color:var(--text)">{{ ficha.name }}</div>
@@ -1659,6 +1677,10 @@ class Component extends DCLogic {
       name:raw.name, initials:this.initials(raw.name), puesto:raw.puesto, empresa:raw.empresa,
       ingreso:raw.ingreso, antiguedad:raw.antig, email:raw.email, tel:raw.tel, domicilio:raw.domicilio,
       avatarBig:`width:74px;height:74px;border-radius:20px;background:var(--surface2);border:1px solid var(--border2);display:flex;align-items:center;justify-content:center;font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:26px;color:var(--accent);flex:none`,
+      // Foto de perfil: en el canvas la ficha va sin foto (avatar de iniciales); el repo la
+      // conecta al backend (blob autenticado) pisando estos campos en build.py.
+      fotoUrl:'', tieneFotoView:false, sinFoto:true, puedeFoto:true, mostrarQuitarFoto:false,
+      onFotoInput:()=>{}, quitarFoto:()=>{},
       estadoLabel: fEstado==='activo'?'Activo':'Inactivo',
       estadoBadge: this.badge(fEstado==='activo'?'ok':'neutral'),
       bajaLbl: fEstado==='activo'?'Dar de baja':'Reingresar',

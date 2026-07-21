@@ -191,7 +191,20 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
     }
     v.submitAlta = this.submitAlta;
     v.altaTitle = this.state.altaEditId ? 'Editar empleado' : 'Alta de empleado';
-    if (v.ficha) v.ficha.openEdit = () => this.openEdit(this.state.selEmp);
+    if (v.ficha) {
+      v.ficha.openEdit = () => this.openEdit(this.state.selEmp);
+      // Foto de perfil: el objectURL real (blob autenticado, no la URL de la API) vive en el
+      // estado; el canvas deja la ficha con avatar de iniciales. Los controles reusan la
+      // capacidad de escritura de empleados (el backend acota foto a RRHH/Admin igual que el ABM).
+      var _fUrl = (this.state.fotoUrlByEmp || {})[this.state.selEmp] || '';
+      v.ficha.fotoUrl = _fUrl;
+      v.ficha.tieneFotoView = !!_fUrl;
+      v.ficha.sinFoto = !_fUrl;
+      v.ficha.puedeFoto = !!v.puedeEscribirEmpleado;
+      v.ficha.mostrarQuitarFoto = !!_fUrl && !!v.puedeEscribirEmpleado;
+      v.ficha.onFotoInput = this.onFotoInput;
+      v.ficha.quitarFoto = this.quitarFotoFicha;
+    }
     // El canvas define setRotM/setRotA en la clase pero nunca los expone en renderVals, así
     // que el template los ata a undefined y los botones Mensual/Anual no hacían NADA: ni
     // cambiaban de estilo ni recalculaban la rotación (el backend sí manda ambos períodos).
@@ -418,6 +431,40 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
   selectEmp = (id) => {
     this.setState({ selEmp: id, view: 'ficha' });
     this.recargarDocs(id);
+    this.ensureFoto(id);
+  };
+  // ===== foto de perfil de la ficha (el canvas la deja en avatar de iniciales) =====
+  // La foto se descarga como blob con Authorization (media/ no es público), así que no puede
+  // ir directo en <img src> a la API: se cachea un objectURL en el estado por empleado.
+  // fotoUrlByEmp[id] === undefined => todavía no se intentó; '' => se intentó y no hay.
+  ensureFoto = (id) => {
+    if (id == null) return;
+    if ((this.state.fotoUrlByEmp || {})[id] !== undefined) return;   // ya cargada o ya intentada
+    const emp = (this.state.empleados || []).find((e) => e.id === id);
+    if (!emp || !emp.tieneFoto) return;                              // sin foto: se queda con iniciales
+    window.CeiboAPI.fotoObjectURL(id).then((url) => {
+      this.setState((s) => ({ fotoUrlByEmp: Object.assign({}, s.fotoUrlByEmp, { [id]: url || '' }) }));
+    }).catch((e) => console.warn('[ceibo] foto', e));
+  };
+  onFotoInput = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';   // permite volver a elegir el mismo archivo tras un error
+    if (!file) return;
+    const id = this.state.selEmp;
+    try {
+      await window.CeiboAPI.subirFoto(id, file);
+      const url = await window.CeiboAPI.fotoObjectURL(id);
+      this.setState((s) => ({ fotoUrlByEmp: Object.assign({}, s.fotoUrlByEmp, { [id]: url || '' }) }));
+      await this.reloadEmpleados();   // refresca tieneFoto en la lista
+    } catch (err) { console.error('[ceibo] subir foto', err); window.CeiboAPI.toast(err.message || String(err), 'error'); }
+  };
+  quitarFotoFicha = async () => {
+    const id = this.state.selEmp;
+    try {
+      await window.CeiboAPI.quitarFoto(id);
+      this.setState((s) => { const m = Object.assign({}, s.fotoUrlByEmp); delete m[id]; return { fotoUrlByEmp: m }; });
+      await this.reloadEmpleados();
+    } catch (err) { console.error('[ceibo] quitar foto', err); window.CeiboAPI.toast(err.message || String(err), 'error'); }
   };
   // ===== documentos de la ficha (el canvas los deja en mock; acá van al backend) =====
   recargarDocs = (id) => {
