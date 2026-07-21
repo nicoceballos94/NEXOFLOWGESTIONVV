@@ -11,7 +11,7 @@ from rest_framework.views import APIView
 from common import roles
 from common.permissions import RolRequerido
 
-from .. import alertas_dia, selectors, vencimientos
+from .. import alertas_dia, reportes, selectors, vencimientos
 
 _VeDotacion = RolRequerido(roles.ADMIN, roles.RRHH, roles.SUPERVISOR)
 
@@ -21,6 +21,15 @@ class DashboardMetricasView(APIView):
 
     def get(self, request):
         return Response(selectors.metricas_dashboard())
+
+
+class ReportesMetricasView(APIView):
+    """Dotación en el tiempo, ausentismo por tipo y motivos de egreso (pantalla Reportes)."""
+
+    permission_classes = [IsAuthenticated, _VeDotacion]
+
+    def get(self, request):
+        return Response(reportes.metricas_reportes())
 
 
 class VencimientosView(APIView):

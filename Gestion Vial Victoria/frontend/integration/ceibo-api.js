@@ -687,6 +687,75 @@
     };
   }
 
+  // ---------- adaptador reportes (API → vars del diseño) ----------
+  // Sparkline de dotación sobre el viewBox 0 0 560 200 del canvas (x: 20→540; el valor
+  // más bajo cae en y=150 y el más alto en y=50, dentro de las líneas guía). El área se
+  // cierra en y=180 (debajo del piso visible) para que el degradé llegue al borde.
+  function repDotacion(dot) {
+    var serie = (dot && dot.serie) || [];
+    var vals = serie.map(function (p) { return p.valor; });
+    var vmin = vals.length ? Math.min.apply(null, vals) : 0;
+    var vmax = vals.length ? Math.max.apply(null, vals) : 0;
+    var range = (vmax - vmin) || 1, n = serie.length || 1;
+    var pts = serie.map(function (p, i) {
+      var x = 20 + (n > 1 ? i * (520 / (n - 1)) : 0);
+      var y = 150 - ((p.valor - vmin) / range) * 100;
+      return { x: Math.round(x * 10) / 10, y: Math.round(y * 10) / 10 };
+    });
+    var pointsStr = pts.map(function (p) { return p.x + "," + p.y; }).join(" ");
+    var first = pts[0] || { x: 20, y: 100 }, last = pts[pts.length - 1] || { x: 540, y: 100 };
+    var area = "M" + first.x + ",180 L" + pts.map(function (p) { return p.x + "," + p.y; }).join(" L") +
+      " L" + last.x + ",180 Z";
+    var dp = (dot && dot.delta_pct) || 0, same = !dp, up = dp > 0;
+    var color = same ? "var(--text3)" : (up ? "var(--ok)" : "var(--bad)");
+    var deltaTxt = same ? "sin cambios" : ((up ? "▲ " : "▼ ") + fmtNum1(Math.abs(dp)) + "%");
+    return {
+      repDotTotal: String((dot && dot.total) || 0),
+      repDotDelta: deltaTxt,
+      repDotDeltaStyle: "font-size:12px;color:" + color + ";font-weight:600",
+      repDotPoints: pointsStr, repDotArea: area, repDotX: last.x, repDotY: last.y,
+      repDotLabels: serie.map(function (p) { return { label: p.label }; }),
+    };
+  }
+  // Barras de ausentismo: el ancho es relativo al tipo más frecuente; el número es el %.
+  function repAusentismo(aus) {
+    var items = (aus && aus.items) || [];
+    var max = items.reduce(function (a, it) { return Math.max(a, it.cantidad); }, 0) || 1;
+    return items.map(function (it) {
+      return {
+        label: it.label, pct: it.pct + "%",
+        bar: "height:100%;width:" + Math.round(it.cantidad / max * 100) +
+          "%;border-radius:6px;background:var(--accent)",
+      };
+    });
+  }
+  // Dona de motivos de egreso. El canvas dibuja arcos sobre r=54 (circunferencia ≈339.29)
+  // con `stroke-dasharray="<arco> <resto>"` y un `dashoffset` acumulado negativo. El arco
+  // se calcula con la fracción exacta (cantidad/total), no con el % redondeado, así la dona
+  // no queda con una ranura por el redondeo. La leyenda comparte el color por posición.
+  var _PALETA_EGRESO = ["var(--accent)", "var(--accent2)", "var(--bad)", "var(--warn)",
+    "var(--text3)", "var(--ok)"];
+  function repEgresos(egr) {
+    var items = (egr && egr.items) || [], total = (egr && egr.total) || 0;
+    var C = 2 * Math.PI * 54, resto = Math.ceil(C + 1), cum = 0;
+    var arcs = [], legend = [];
+    items.forEach(function (it, i) {
+      var color = _PALETA_EGRESO[i % _PALETA_EGRESO.length];
+      var arco = total ? (it.cantidad / total) * C : 0;
+      arcs.push({
+        color: color,
+        dash: (Math.round(arco * 10) / 10) + " " + resto,
+        offset: "-" + (Math.round(cum * 10) / 10),
+      });
+      cum += arco;
+      legend.push({
+        label: it.label, pct: it.pct + "%",
+        dot: "width:10px;height:10px;border-radius:3px;background:" + color + ";flex:none",
+      });
+    });
+    return { repEgresoArcs: arcs, egresos: legend };
+  }
+
   // El input "Archivo certificado" del canvas es un <input type=file> pelado: sin `accept`
   // el explorador ofrece cualquier cosa y el rechazo llega recién del backend. Se acota
   // acá (comportamiento, no diseño) a lo mismo que aceptan los otros respaldos.
@@ -861,6 +930,23 @@
     dashboardVals(d, rotState, mockMetrics) {
       var out = { metrics: dashMetrics(d, mockMetrics), rankFaltas: dashRank(d) };
       return Object.assign(out, dashRotacion(d, rotState || "m"));
+    },
+
+    // Métricas de Reportes (dotación en el tiempo, ausentismo por tipo, motivos de egreso).
+    // Igual que el dashboard: dict crudo del backend, o null si el rol no ve la dotación.
+    async loadReportes() {
+      try { return await jget("/reportes/metricas/"); }
+      catch (e) { console.warn("[ceibo] reportes no disponibles", e); return null; }
+    },
+    // Traduce la respuesta a las vars del diseño: dotación (sparkline + total + variación),
+    // ausentismo (barras) y egresos (dona + leyenda).
+    reportesVals(d) {
+      d = d || {};
+      return Object.assign(
+        {}, repDotacion(d.dotacion || {}),
+        { ausentismo: repAusentismo(d.ausentismo || {}) },
+        repEgresos(d.egresos || {}),
+      );
     },
 
     // Vencimientos de toda la dotación (documentos + contratos). Como el dashboard:

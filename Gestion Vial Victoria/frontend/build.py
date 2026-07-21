@@ -37,6 +37,10 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
     const d = await window.CeiboAPI.loadDashboard();
     this.setState({ dashboard: d });
   };
+  reloadReportes = async () => {
+    const r = await window.CeiboAPI.loadReportes();
+    this.setState({ reportes: r });
+  };
   reloadVencimientos = async () => {
     const v = await window.CeiboAPI.loadVencimientos();
     this.setState({ vencimientos: v });
@@ -69,6 +73,7 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
       await this.reloadEmpleados();
       await this.reloadNovedades();
       await this.reloadDashboard();
+      await this.reloadReportes();
       await this.reloadVencimientos();
       await this.reloadAlertasDia();
       await this.reloadConfigVenc();
@@ -110,7 +115,7 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
     this.setState({
       sesion: false, loginUsuario: '', loginClave: '', loginError: '', loginOcupado: false,
       view: 'dashboard', cargaInicial: 'cargando', apiErr: null,
-      empleados: null, novedades: null, dashboard: null, vencimientos: null,
+      empleados: null, novedades: null, dashboard: null, reportes: null, vencimientos: null,
       alertasDiaData: null, cfgVenc: null, tiposDoc: null,
       // Los blobs de foto los revocó CeiboAPI.logout(); hay que soltar también sus URLs acá,
       // o ensureFoto ve la entrada vieja y no rebaja la foto → <img> a un blob muerto (rota).
@@ -222,6 +227,11 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
     // Dashboard con datos reales: reemplaza las métricas mock del canvas.
     if (this.state.dashboard) {
       Object.assign(v, window.CeiboAPI.dashboardVals(this.state.dashboard, this.state.rot, v.metrics));
+    }
+    // Reportes con datos reales: dotación en el tiempo, ausentismo por tipo y motivos de
+    // egreso. Reemplazan las series inventadas del canvas (y con ellas el banner de demo).
+    if (this.state.reportes) {
+      Object.assign(v, window.CeiboAPI.reportesVals(this.state.reportes));
     }
     // Vencimientos reales: reemplazan los 4 grupos mock del canvas.
     if (this.state.vencimientos) {
@@ -645,7 +655,7 @@ EDICIONES = [
     # --- state: campos nuevos ---
     (
         "theme: 'dark', view: 'dashboard', selEmp: 1,",
-        "theme: 'dark', view: 'dashboard', selEmp: 1,\n    empleados: null, novedades: null, dashboard: null, apiErr: null, altaEditId: null, tiposDoc: null, vencimientos: null, alertasDiaData: null, cfgVenc: null,\n    empresasCfgData: null, sectoresCfgData: null, fotoUrlByEmp: {},\n    cargaInicial: 'cargando',",
+        "theme: 'dark', view: 'dashboard', selEmp: 1,\n    empleados: null, novedades: null, dashboard: null, reportes: null, apiErr: null, altaEditId: null, tiposDoc: null, vencimientos: null, alertasDiaData: null, cfgVenc: null,\n    empresasCfgData: null, sectoresCfgData: null, fotoUrlByEmp: {},\n    cargaInicial: 'cargando',",
         "state: campos de integración",
     ),
     # --- novBase(): usar datos reales si están cargados ---
@@ -809,27 +819,52 @@ EDICIONES = [
         "      empCountLbl:this.empCountLabel(filteredEmployees, emps, S.empEstado),",
         "empleados: contador según el filtro",
     ),
-    # --- reportes: el módulo es mock y se señaliza como tal ---
-    # Las series de Reportes (dotación, ausentismo por tipo, motivos de egreso) están
-    # inventadas en el canvas y no hay endpoints que las alimenten. Sin marca, Reportes
-    # informaba 134 activos mientras el Panel —que sí sale del backend— mostraba 12, y nada
-    # indicaba cuál creer. Se avisa arriba de todo y se saca el número grande de la portada.
-    (
-        '<sc-if value="{{ isRep }}" hint-placeholder-val="{{ false }}">',
-        '<sc-if value="{{ isRep }}" hint-placeholder-val="{{ false }}">\n'
-        '      <div style="display:flex;align-items:flex-start;gap:11px;background:var(--surface);'
-        'border:1px solid var(--warn);border-radius:12px;padding:13px 16px;margin-bottom:16px">'
-        '<div style="width:8px;height:8px;border-radius:50%;background:var(--warn);flex:none;margin-top:6px"></div>'
-        '<div><div style="font-size:13.5px;font-weight:600;color:var(--text)">Datos de demostración</div>'
-        '<div style="font-size:12px;color:var(--text3);line-height:1.5">Este módulo todavía no está '
-        'conectado al backend: las cifras son de ejemplo y no describen la dotación real. '
-        'Los números reales están en el Panel general.</div></div></div>',
-        "reportes: banner de datos de demostración",
-    ),
+    # --- reportes: las tres métricas salen del backend (/reportes/metricas/) ---
+    # Antes el módulo era mock: series inventadas en el canvas, un banner de "datos de
+    # demostración" y el número grande fijo en 134 mientras el Panel mostraba la dotación
+    # real. Ahora `reportesVals` alimenta las tres visualizaciones, así que el número, la
+    # variación, el sparkline, las barras de ausentismo y la dona describen la dotación real.
+    # El total y la variación de dotación (número grande de la portada).
     (
         '<div style="font-family:\'Space Grotesk\',sans-serif;font-weight:600;font-size:22px;color:var(--text)">134 <span style="font-size:12px;color:var(--ok);font-weight:600">▲ 13,6%</span></div>',
-        '<div style="font-family:\'Space Grotesk\',sans-serif;font-weight:600;font-size:13px;color:var(--text3)">ejemplo</div>',
-        "reportes: quitar el total mock de dotación",
+        '<div style="font-family:\'Space Grotesk\',sans-serif;font-weight:600;font-size:22px;color:var(--text)">{{ repDotTotal }} <span style="{{ repDotDeltaStyle }}">{{ repDotDelta }}</span></div>',
+        "reportes: total y variación de dotación reales",
+    ),
+    # El área bajo la curva del sparkline de dotación.
+    (
+        '<path d="M20,170 L20,142 L67.3,135 L114.5,131.5 L161.8,121 L209.1,124.5 L256.4,114 L303.6,107 L350.9,110.5 L398.2,100 L445.5,96.5 L492.7,89.5 L540,86 L540,170 Z" fill="url(#dotG)"/>',
+        '<path d="{{ repDotArea }}" fill="url(#dotG)"/>',
+        "reportes: área del sparkline de dotación",
+    ),
+    # La línea del sparkline.
+    (
+        '<polyline points="20,142 67.3,135 114.5,131.5 161.8,121 209.1,124.5 256.4,114 303.6,107 350.9,110.5 398.2,100 445.5,96.5 492.7,89.5 540,86" fill="none" stroke="var(--accent)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>',
+        '<polyline points="{{ repDotPoints }}" fill="none" stroke="var(--accent)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>',
+        "reportes: línea del sparkline de dotación",
+    ),
+    # El punto final del sparkline (último mes).
+    (
+        '<circle cx="540" cy="86" r="4" fill="var(--accent)" stroke="var(--surface)" stroke-width="2.5"/>',
+        '<circle cx="{{ repDotX }}" cy="{{ repDotY }}" r="4" fill="var(--accent)" stroke="var(--surface)" stroke-width="2.5"/>',
+        "reportes: punto final del sparkline",
+    ),
+    # Las etiquetas de meses del eje x (12 meses reales, no los fijos Ago…Jul).
+    (
+        '<span>Ago</span><span>Sep</span><span>Oct</span><span>Nov</span><span>Dic</span><span>Ene</span><span>Feb</span><span>Mar</span><span>Abr</span><span>May</span><span>Jun</span><span>Jul</span>',
+        '<sc-for list="{{ repDotLabels }}" as="l" hint-placeholder-count="12"><span>{{ l.label }}</span></sc-for>',
+        "reportes: etiquetas de meses del sparkline",
+    ),
+    # Los arcos de la dona de motivos de egreso: se reemplazan los 5 fijos por un sc-for
+    # sobre repEgresoArcs (el círculo de fondo, gris, queda como está). React resuelve el
+    # namespace SVG de los <circle> del sc-for por el tag, igual que con cualquier elemento.
+    (
+        '                <circle cx="70" cy="70" r="54" fill="none" stroke="var(--accent)" stroke-width="18" stroke-dasharray="142.5 400"/>\n'
+        '                <circle cx="70" cy="70" r="54" fill="none" stroke="var(--accent2)" stroke-width="18" stroke-dasharray="95 400" stroke-dashoffset="-142.5"/>\n'
+        '                <circle cx="70" cy="70" r="54" fill="none" stroke="var(--bad)" stroke-width="18" stroke-dasharray="40.7 400" stroke-dashoffset="-237.5"/>\n'
+        '                <circle cx="70" cy="70" r="54" fill="none" stroke="var(--warn)" stroke-width="18" stroke-dasharray="33.9 400" stroke-dashoffset="-278.2"/>\n'
+        '                <circle cx="70" cy="70" r="54" fill="none" stroke="var(--text3)" stroke-width="18" stroke-dasharray="27.1 400" stroke-dashoffset="-312.1"/>',
+        '                <sc-for list="{{ repEgresoArcs }}" as="a" hint-placeholder-count="5"><circle cx="70" cy="70" r="54" fill="none" stroke="{{ a.color }}" stroke-width="18" stroke-dasharray="{{ a.dash }}" stroke-dashoffset="{{ a.offset }}"/></sc-for>',
+        "reportes: arcos de la dona de egresos",
     ),
     # --- configuración: el bloque de destinatarios no persiste; se dice en el subtítulo ---
     (
