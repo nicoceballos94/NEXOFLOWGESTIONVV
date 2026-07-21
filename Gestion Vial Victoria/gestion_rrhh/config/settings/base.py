@@ -109,6 +109,12 @@ MEDIA_ROOT = env("MEDIA_ROOT", default=str(BASE_DIR / "media"))
 DOCUMENTO_MAX_BYTES = env.int("DOCUMENTO_MAX_BYTES", default=10 * 1024 * 1024)  # 10 MB
 DOCUMENTO_EXTENSIONES = ("pdf", "jpg", "jpeg", "png", "webp", "heic")
 
+# Foto de perfil del empleado: solo imágenes raster (sin PDF ni SVG). Se sirve inline por el
+# mismo tipo de endpoint protegido que los documentos; el SVG queda afuera porque se ejecuta
+# como HTML en el navegador y esta imagen sí se muestra en vez de descargarse.
+FOTO_MAX_BYTES = env.int("FOTO_MAX_BYTES", default=5 * 1024 * 1024)  # 5 MB
+FOTO_EXTENSIONES = ("jpg", "jpeg", "png", "webp", "heic")
+
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "rest_framework_simplejwt.authentication.JWTAuthentication",

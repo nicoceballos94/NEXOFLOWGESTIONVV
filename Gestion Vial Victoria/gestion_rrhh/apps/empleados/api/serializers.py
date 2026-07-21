@@ -74,6 +74,18 @@ class EmpleadoSerializer(serializers.ModelSerializer):
     relaciones = RelacionLaboralSerializer(many=True, read_only=True)
     nombre_completo = serializers.CharField(read_only=True)
     activo = serializers.BooleanField(read_only=True)
+    tiene_foto = serializers.SerializerMethodField()
+    foto_url = serializers.SerializerMethodField()
+
+    def get_tiene_foto(self, obj) -> bool:
+        return bool(obj.foto)
+
+    def get_foto_url(self, obj) -> str | None:
+        """Endpoint protegido, no la ruta del disco. La cara no es PII (§A3): un supervisor
+        ve a su dotación, igual que ve el nombre. Fuera de `CAMPOS_PII` a propósito."""
+        if not obj.foto:
+            return None
+        return f"/api/v1/empleados/{obj.id}/foto/archivo/"
 
     def to_representation(self, instance):
         """Recorta el PII según el rol de quien pregunta (A3).
@@ -117,6 +129,8 @@ class EmpleadoSerializer(serializers.ModelSerializer):
             "observaciones",
             "usuario",
             "activo",
+            "tiene_foto",
+            "foto_url",
             "relaciones",
         )
 
@@ -241,6 +255,18 @@ def _validar_archivo(archivo):
     if error:
         raise serializers.ValidationError(error)
     return archivo
+
+
+class SubirFotoSerializer(serializers.Serializer):
+    """Entrada de la foto de perfil (multipart). Valida solo forma (R12: imagen, tamaño)."""
+
+    foto = serializers.FileField()
+
+    def validate_foto(self, foto):
+        error = archivos.errores_de_foto(foto)
+        if error:
+            raise serializers.ValidationError(error)
+        return foto
 
 
 class CrearDocumentoSerializer(serializers.ModelSerializer):

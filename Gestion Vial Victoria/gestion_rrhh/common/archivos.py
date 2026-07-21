@@ -52,3 +52,30 @@ def errores_de_archivo(archivo) -> str | None:
             f"Si es una foto, sacala con menos resolución o escaneala como PDF."
         )
     return None
+
+
+def errores_de_foto(archivo) -> str | None:
+    """Como `errores_de_archivo`, pero para la foto de perfil: solo imágenes raster.
+
+    Se separa del respaldo de documentos porque son dos reglas distintas: el respaldo acepta
+    PDF y se descarga como adjunto (nunca se renderiza); la foto se **muestra** en la ficha,
+    así que no puede ser un PDF ni un SVG (un SVG se ejecuta como HTML en el navegador). El
+    tope es más chico: un avatar no necesita 10 MB.
+    """
+    if archivo in (None, ""):
+        return None
+    nombre = getattr(archivo, "name", "") or ""
+    extension = nombre.rsplit(".", 1)[-1].lower() if "." in nombre else ""
+    if extension not in settings.FOTO_EXTENSIONES:
+        return (
+            f"Formato no admitido ('{extension or 'sin extensión'}'). "
+            f"La foto tiene que ser una imagen: {', '.join(settings.FOTO_EXTENSIONES)}."
+        )
+    if archivo.size > settings.FOTO_MAX_BYTES:
+        tope_mb = settings.FOTO_MAX_BYTES / (1024 * 1024)
+        real_mb = archivo.size / (1024 * 1024)
+        return (
+            f"La foto pesa {real_mb:.1f} MB y el máximo es {tope_mb:.0f} MB. "
+            f"Sacala con menos resolución."
+        )
+    return None

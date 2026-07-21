@@ -25,6 +25,7 @@ from .serializers import (
     EmpleadoSerializer,
     FinalizarRelacionSerializer,
     RelacionLaboralSerializer,
+    SubirFotoSerializer,
     TipoDocumentoSerializer,
 )
 
@@ -42,7 +43,8 @@ class EmpleadoViewSet(
         # Lectura: cualquier autenticado (el selector recorta el scope).
         # Escritura y acciones que mutan: RRHH/Admin.
         if (
-            self.action in ("list", "retrieve", "documentos", "archivo_documento")
+            self.action
+            in ("list", "retrieve", "documentos", "archivo_documento", "foto_archivo")
             and self.request.method == "GET"
         ):
             return [IsAuthenticated()]
@@ -179,6 +181,46 @@ class EmpleadoViewSet(
             actor=request.user, relacion=relacion, **entrada.validated_data
         )
         return Response(RelacionLaboralSerializer(relacion).data)
+
+    @action(detail=True, methods=["post", "delete"], url_path="foto")
+    def foto(self, request, pk=None):
+        """Setea (POST, multipart) o quita (DELETE) la foto de perfil. Solo RRHH/Admin.
+
+        La escritura cae en `_SoloRRHH` por `get_permissions`; el scope de lectura no aplica
+        acá porque solo RRHH/Admin llegan, y ellos ven a todos. Se resuelve el empleado sin
+        el selector para no confundir "no está en tu scope" (404) con "no existe".
+        """
+        empleado = get_object_or_404(Empleado, pk=pk)
+        if request.method == "DELETE":
+            services.eliminar_foto_empleado(actor=request.user, empleado=empleado)
+            return Response(status=204)
+        entrada = SubirFotoSerializer(data=request.data)
+        entrada.is_valid(raise_exception=True)
+        empleado = services.guardar_foto_empleado(
+            actor=request.user, empleado=empleado, foto=entrada.validated_data["foto"]
+        )
+        return Response(
+            EmpleadoSerializer(empleado, context=self.get_serializer_context()).data
+        )
+
+    @action(detail=True, methods=["get"], url_path=r"foto/archivo")
+    def foto_archivo(self, request, pk=None):
+        """Sirve la foto de perfil. Como los documentos, es la única puerta al binario (§7):
+        `media/` no se sirve como estático, así que acá hay login y scope.
+
+        Va inline (`as_attachment=False`) porque esta imagen se **muestra** en la ficha; es
+        seguro porque el serializer solo aceptó imágenes raster (ni PDF ni SVG).
+        """
+        empleado = self._empleado_en_scope(pk)
+        if not empleado.foto:
+            raise Http404("El empleado no tiene foto de perfil cargada.")
+        extension = empleado.foto.name.rsplit(".", 1)[-1]
+        nombre = slugify(f"foto-{empleado.apellido}-{empleado.legajo}")
+        return FileResponse(
+            empleado.foto.open("rb"),
+            as_attachment=False,
+            filename=f"{nombre}.{extension}",
+        )
 
     @action(detail=True, methods=["post"], url_path="relaciones")
     def crear_relacion(self, request, pk=None):

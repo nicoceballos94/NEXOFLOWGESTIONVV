@@ -132,6 +132,31 @@ def actualizar_documento(*, actor, documento: DocumentoEmpleado, **datos) -> Doc
 
 
 @transaction.atomic
+def guardar_foto_empleado(*, actor, empleado: Empleado, foto) -> Empleado:
+    """Setea (o reemplaza) la foto de perfil. La anterior se borra al confirmar.
+
+    Reemplazar deja el binario viejo sin quien lo nombre; se libera con la misma red que los
+    documentos (`borrar_archivo_al_confirmar`), después del commit y no antes.
+    """
+    foto_vieja = empleado.foto if empleado.foto else None
+    empleado.foto = foto
+    empleado.save(update_fields=["foto", "actualizado_en"])
+    if foto_vieja and foto_vieja != empleado.foto:
+        borrar_archivo_al_confirmar(foto_vieja)
+    return empleado
+
+
+@transaction.atomic
+def eliminar_foto_empleado(*, actor, empleado: Empleado) -> Empleado:
+    """Quita la foto de perfil y borra el binario al confirmar."""
+    foto = empleado.foto if empleado.foto else None
+    empleado.foto = None
+    empleado.save(update_fields=["foto", "actualizado_en"])
+    borrar_archivo_al_confirmar(foto)
+    return empleado
+
+
+@transaction.atomic
 def eliminar_documento(*, actor, documento: DocumentoEmpleado) -> None:
     """DELETE físico: un documento cargado por error no es un hecho del dominio que preservar
     (a diferencia de la relación laboral, R10). Libera el UNIQUE para recargarlo bien.

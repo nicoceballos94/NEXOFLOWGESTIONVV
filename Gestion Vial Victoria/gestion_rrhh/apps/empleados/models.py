@@ -50,10 +50,20 @@ class EstadoRelacion(models.TextChoices):
     FINALIZADA = "FINALIZADA", "Finalizada"
 
 
+def ruta_archivo_foto(instance: "Empleado", filename: str) -> str:
+    return archivos.ruta_con_uuid("fotos", instance.pk or "nuevo", filename)
+
+
 class Empleado(ModeloBase):
     """Persona única a nivel grupo (P1). El PII (dni/cuil) se expone solo a RRHH/Admin."""
 
     legajo = models.CharField(max_length=20, unique=True)
+    foto = models.FileField(
+        upload_to=ruta_archivo_foto,
+        blank=True,
+        help_text="Foto de perfil (imagen raster). Se sirve por endpoint protegido, no por "
+        "URL directa. FileField y no ImageField para no atar el repo a Pillow.",
+    )
     dni = models.CharField(max_length=15, unique=True, db_index=True)
     cuil = models.CharField(max_length=15, unique=True, null=True, blank=True)
     nombre = models.CharField(max_length=100)

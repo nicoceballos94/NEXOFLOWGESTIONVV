@@ -515,6 +515,140 @@ def test_el_empleado_no_descarga_documentos_ajenos(
     assert cliente.get(f"/api/v1/empleados/{propio.id}/documentos/").status_code == 200
 
 
+# ---------- Foto de perfil ----------
+def _imagen(nombre="foto.png", contenido=b"\x89PNG imagen de prueba", tipo="image/png"):
+    from django.core.files.uploadedfile import SimpleUploadedFile
+
+    return SimpleUploadedFile(nombre, contenido, content_type=tipo)
+
+
+def _empleado(cliente_rrhh, empresa):
+    cliente_rrhh.post("/api/v1/empleados/", _payload_alta(empresa), format="json")
+    return Empleado.objects.get(dni="30111222")
+
+
+def test_foto_se_sube_y_se_sirve(cliente_rrhh, empresa, media_temporal):
+    empleado = _empleado(cliente_rrhh, empresa)
+    resp = cliente_rrhh.post(
+        f"/api/v1/empleados/{empleado.id}/foto/", {"foto": _imagen()}, format="multipart"
+    )
+    assert resp.status_code == 200, resp.data
+    assert resp.data["tiene_foto"] is True
+    assert resp.data["foto_url"] == f"/api/v1/empleados/{empleado.id}/foto/archivo/"
+
+    empleado.refresh_from_db()
+    # El nombre original se descarta (UUID); la ruta cuelga del id del empleado.
+    assert "foto" not in empleado.foto.name.rsplit("/", 1)[-1].replace(".png", "")
+    assert empleado.foto.name.startswith(f"fotos/{empleado.id}/")
+
+    servida = cliente_rrhh.get(resp.data["foto_url"])
+    assert servida.status_code == 200
+    assert b"".join(servida.streaming_content) == b"\x89PNG imagen de prueba"
+    # Se muestra inline (no adjunto): es una imagen de la ficha, no una descarga.
+    assert "attachment" not in servida.get("Content-Disposition", "")
+
+
+def test_reemplazar_foto_borra_la_vieja(
+    cliente_rrhh, empresa, media_temporal, django_capture_on_commit_callbacks
+):
+    empleado = _empleado(cliente_rrhh, empresa)
+    cliente_rrhh.post(
+        f"/api/v1/empleados/{empleado.id}/foto/",
+        {"foto": _imagen("vieja.png", b"vieja")},
+        format="multipart",
+    )
+    empleado.refresh_from_db()
+    ruta_vieja = media_temporal / empleado.foto.name
+    assert ruta_vieja.exists()
+
+    with django_capture_on_commit_callbacks(execute=True):
+        cliente_rrhh.post(
+            f"/api/v1/empleados/{empleado.id}/foto/",
+            {"foto": _imagen("nueva.png", b"nueva")},
+            format="multipart",
+        )
+    empleado.refresh_from_db()
+    assert not ruta_vieja.exists(), "la foto vieja quedó huérfana en MEDIA_ROOT"
+    assert (media_temporal / empleado.foto.name).read_bytes() == b"nueva"
+
+
+def test_eliminar_foto_se_lleva_el_archivo(
+    cliente_rrhh, empresa, media_temporal, django_capture_on_commit_callbacks
+):
+    empleado = _empleado(cliente_rrhh, empresa)
+    cliente_rrhh.post(
+        f"/api/v1/empleados/{empleado.id}/foto/", {"foto": _imagen()}, format="multipart"
+    )
+    empleado.refresh_from_db()
+    ruta = media_temporal / empleado.foto.name
+
+    with django_capture_on_commit_callbacks(execute=True):
+        resp = cliente_rrhh.delete(f"/api/v1/empleados/{empleado.id}/foto/")
+    assert resp.status_code == 204
+    empleado.refresh_from_db()
+    assert not empleado.foto
+    assert not ruta.exists()
+    # Sin foto, la descarga da 404.
+    assert cliente_rrhh.get(f"/api/v1/empleados/{empleado.id}/foto/archivo/").status_code == 404
+
+
+def test_la_foto_solo_acepta_imagenes(cliente_rrhh, empresa, media_temporal, settings):
+    empleado = _empleado(cliente_rrhh, empresa)
+    url = f"/api/v1/empleados/{empleado.id}/foto/"
+
+    # Un PDF sirve como respaldo de documento, pero no como foto (se muestra, no se descarga).
+    resp = cliente_rrhh.post(
+        url, {"foto": _imagen("doc.pdf", b"%PDF", "application/pdf")}, format="multipart"
+    )
+    assert resp.status_code == 400
+    assert "pdf" in str(resp.data)
+
+    settings.FOTO_MAX_BYTES = 1024
+    resp = cliente_rrhh.post(
+        url, {"foto": _imagen("grande.png", b"x" * 2048)}, format="multipart"
+    )
+    assert resp.status_code == 400
+    assert "MB" in str(resp.data)
+
+
+def test_empleado_no_puede_subir_foto(cliente_rrhh, empresa, crear_usuario, media_temporal):
+    from rest_framework.test import APIClient
+
+    from common import roles
+
+    empleado = _empleado(cliente_rrhh, empresa)
+    cliente = APIClient()
+    cliente.force_authenticate(crear_usuario(username="peon", rol=roles.EMPLEADO))
+    resp = cliente.post(
+        f"/api/v1/empleados/{empleado.id}/foto/", {"foto": _imagen()}, format="multipart"
+    )
+    assert resp.status_code == 403
+
+
+def test_la_foto_ajena_no_se_descarga(cliente_rrhh, empresa, crear_usuario, media_temporal):
+    """El serve está scopeado igual que los documentos (A2): un empleado no baja la foto de
+    otro, pero sí la suya."""
+    from rest_framework.test import APIClient
+
+    from common import roles
+
+    ajeno = _empleado(cliente_rrhh, empresa)
+    cliente_rrhh.post(
+        f"/api/v1/empleados/{ajeno.id}/foto/", {"foto": _imagen()}, format="multipart"
+    )
+
+    propio = Empleado.objects.create(legajo="0500", dni="33444555", nombre="Otro", apellido="Tipo")
+    usuario = crear_usuario(username="curioso2", rol=roles.EMPLEADO)
+    propio.usuario = usuario
+    propio.save()
+    cliente = APIClient()
+    cliente.force_authenticate(usuario)
+
+    assert cliente.get(f"/api/v1/empleados/{ajeno.id}/foto/archivo/").status_code == 404
+    # La suya (sin foto) da 404 por "no tiene", no por scope: llega al empleado.
+    assert cliente.get(f"/api/v1/empleados/{propio.id}/foto/archivo/").status_code == 404
+
+
 # ---------- Legajo (lo asigna el backend, no el cliente) ----------
 def test_el_legajo_lo_asigna_el_backend_ignorando_al_cliente(cliente_rrhh, empresa):
     """Antes lo calculaba el navegador con max+1 sobre lo que tenía cargado: dos altas
