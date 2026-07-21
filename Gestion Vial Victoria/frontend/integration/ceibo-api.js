@@ -688,6 +688,14 @@
     hayToken() { return !!_token; },
     perfil() { return _perfil; },
 
+    // Capacidades del rol (A5): qué acciones de escritura habilita, calculadas por el
+    // backend (common/capacidades.py) y servidas en /mi/perfil/. El front las usa SOLO
+    // para esconder botones; la seguridad real es el 403 del backend. Default restrictivo:
+    // sin perfil o sin el objeto (token viejo, rol sin permisos), todo en false, así que
+    // Empleado/Servicio no ven acciones de escritura en vez de verlas y comerse un 403.
+    capacidades() { return (_perfil && _perfil.capacidades) || {}; },
+    puede(clave) { return !!this.capacidades()[clave]; },
+
     async login(usuario, clave) {
       var r = await fetch(CONFIG.API + "/auth/token/", {
         method: "POST", headers: { "content-type": "application/json" },

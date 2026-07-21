@@ -153,6 +153,36 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
       v.userRol = p.rol;
       v.userIniciales = (p.nombre || '').trim().split(/\s+/).slice(0, 2)
         .map(x => x.charAt(0).toUpperCase()).join('') || '·';
+      // Capacidades del rol (A5): el canvas expone los hooks puedeX con default true para
+      // poder diseñarse sin sesión; acá se pisan con lo que el backend habilita de verdad
+      // (CeiboAPI.puede, restrictivo por defecto). Esto ESCONDE botones; la seguridad real
+      // sigue siendo el 403 del backend. Solo con sesión: es cuando perfilVals ya garantiza
+      // que CeiboAPI está cargado (mismo patrón que userRol, arriba).
+      v.puedeEscribirEmpleado = window.CeiboAPI.puede('empleados_escribir');
+      v.puedeCargarNovedad = window.CeiboAPI.puede('novedades_cargar');
+      v.puedeDecidirNovedad = window.CeiboAPI.puede('novedades_decidir');
+      v.puedeConfig = window.CeiboAPI.puede('config_escribir');
+      // El detalle de novedad ya trae sc-if por ESTADO (canAprobar = ¿está en un estado
+      // aprobable?). Eso responde "¿se puede?" por la máquina de estados, no por el rol.
+      // Acá se le suma el rol: un botón se muestra solo si el estado lo permite Y el rol
+      // puede ejecutarlo. Decidir (aprobar/rechazar/anular) es RRHH+ (R11); editar,
+      // prorrogar y adjuntar son operativos (Supervisor+).
+      if (v.detNov) {
+        var dn = v.detNov;
+        dn.puedeAdjuntar = v.puedeCargarNovedad;   // era fijo en true en el canvas
+        dn.canEdit = dn.canEdit && v.puedeCargarNovedad;
+        dn.puedeProrrogar = dn.puedeProrrogar && v.puedeCargarNovedad;
+        dn.canAprobar = dn.canAprobar && v.puedeDecidirNovedad;
+        dn.canRechazar = dn.canRechazar && v.puedeDecidirNovedad;
+        dn.canAnular = dn.canAnular && v.puedeDecidirNovedad;
+        // Cada eslabón de la cadena (madre + prórrogas) repite las mismas acciones por fila.
+        if (Array.isArray(dn.timeline)) dn.timeline.forEach(function (t) {
+          t.canEdit = t.canEdit && v.puedeCargarNovedad;
+          t.canAprobar = t.canAprobar && v.puedeDecidirNovedad;
+          t.canRechazar = t.canRechazar && v.puedeDecidirNovedad;
+          t.canAnular = t.canAnular && v.puedeDecidirNovedad;
+        });
+      }
     }
     v.apiErrMsg = this.state.apiErr || '';
     if (carga !== 'lista') {
