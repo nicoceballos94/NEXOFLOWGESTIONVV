@@ -3,12 +3,13 @@
 **Alcance:** backend `gestion_rrhh/` (Django + DRF + Postgres) y frontend `frontend/`
 (canvas de Claude Design + capa de integración `ceibo-api.js` + `build.py`).
 **Origen:** relevamiento del 2026-07-14, rama `fase-0-verificada`.
-**Última actualización:** 2026-07-20 — se verificó **cada hallazgo abierto contra el
-código** y se depuró el documento: los cerrados salieron del cuerpo (queda el registro
-mínimo en el apéndice). Lo que sigue acá es **solo lo pendiente**. En la misma jornada se
-cerraron **A1, A3, A4 y D9**; la suite corre en verde contra Postgres (125 tests, 5
-nuevos). Con el login real, la sección A pasa de cuatro hallazgos abiertos a uno (**A5**,
-nuevo: la UI todavía no distingue roles).
+**Última actualización:** 2026-07-20 — se cerró **A5**: la UI ahora oculta por rol las
+acciones de escritura (una sola matriz en `common/capacidades.py`, servida por
+`/mi/perfil/`, consumida por el front; contrato en `test_capacidades.py`). Con eso la
+**sección A (seguridad) no tiene hallazgos abiertos**. En la misma jornada se habían
+cerrado A1, A3, A4 y D9, y se agregó `seed_usuarios_demo` (un usuario por rol) para poder
+ejercer roles en dev. Lo que sigue en el cuerpo es **solo lo pendiente** (sección D). La
+suite corre en verde contra Postgres (135 tests, 10 nuevos de contrato de capacidades).
 
 Cada hallazgo tiene un ID (A = seguridad, D = mejoras) y referencia a archivo y línea.
 Al final hay una tabla de prioridades.
@@ -22,25 +23,9 @@ y buscar desde la raíz (`NEXOFLOWGESTIONVV/`), no desde `Gestion Vial Victoria/
 
 ## A. Seguridad
 
-### A5 — La UI no distingue roles 🟠
-`frontend/` (canvas + `build.py`) — abierto desde el 2026-07-20
-
-Con A1 cerrado, cada persona entra con sus credenciales y el backend aplica su rol. Pero
-**la UI sigue mostrando todo a todos**: un Supervisor ve "Nuevo empleado", "Aprobar" y
-"Editar", y recién al hacer click se come un 403. No es un agujero de seguridad —el
-backend rechaza igual— pero es una promesa que la app no cumple.
-
-El diseño ya lo tenía previsto: `Ceibo RRHH.dc.html` documenta que *"el canvas no lo sabe
-(no hay sesión) y asume que sí. El cableado lo corrige con el rol real"*, y expone el hook
-`puedeAdjuntar`. Los roles reales ya llegan al front: `CeiboAPI.perfilVals()` los lee de
-`/mi/perfil/` y hoy solo se usan para el pie del sidebar.
-
-**Fix:** ocultar por rol las acciones de escritura (altas, aprobar/rechazar, editar,
-adjuntar), usando el rol de `/mi/perfil/`. Toca markup → entra por el canvas.
-
-**Nota para probarlo:** la base de dev tiene **un solo usuario** (`admin`, superusuario,
-sin grupos). No hay con qué probar la vista de un Supervisor ni el recorte de PII de A3
-hasta que existan usuarios de prueba con cada rol.
+**Sin hallazgos abiertos.** A1–A5 cerrados (ver apéndice). El backend aplica el rol
+(devuelve 403) y ahora la UI lo acompaña: oculta por rol las acciones de escritura que no
+corresponden, en vez de mostrarlas y dejar que el click se coma el 403.
 
 ---
 
@@ -92,22 +77,26 @@ cambio de Claude Design.
 
 | Prioridad | ID | Hallazgo | Esfuerzo |
 |---|---|---|---|
-| 🟠 1 | A5 | Ocultar por rol las acciones que el backend rechaza | Medio |
-| 🟢 2 | D2 | Auditoría (RP8) | Alto |
-| 🟢 — | resto | D1, D5, D6 (el `<select>` del canvas) | según roadmap |
+| 🟢 1 | D2 | Auditoría (RP8) | Alto |
+| 🟢 2 | D1 | Estados de novedad inalcanzables (`/tomar/`, `/cerrar/`) o quitarlos del enum | Bajo |
+| 🟢 — | resto | D5, D6 (el `<select>` del canvas) | según roadmap |
 
-**Lo próximo, sin vueltas:** con A1 cerrado, el recorte de PII de A3 **recién ahora hace
-algo**: hasta hoy el front entraba siempre como superusuario y todo visitante veía todo.
-Lo que queda de seguridad es A5, que es de coherencia, no de exposición — el backend ya
-rechaza lo que no corresponde. Antes de eso conviene **crear usuarios de prueba por rol**:
-sin ellos no hay forma de ver funcionando ni A3 ni A5.
+**Lo próximo, sin vueltas:** cerrada toda la sección de seguridad (A1–A5), lo que queda es
+funcional. El `seed_usuarios_demo` ya permite ver A3 y A5 funcionando con cada rol. El
+siguiente peso real es **D2 (auditoría)**; **D1** es más chico y conviene resolverlo (o
+quitar del enum los dos estados que hoy no tienen transición).
+
+**Alcance de A5, para no dar por hecho de más:** se ocultaron las acciones de *escritura*.
+Quedan como fase aparte (1) la navegación de autoservicio del rol **Empleado** —hoy ve
+módulos como Dashboard/Alertas que le dan 403— y (2) la UI del rol **Servicio**, que por
+estos endpoints no ve nada (entra por token, no por login).
 
 ---
 
 ## Apéndice — cerrados (registro mínimo)
 
 Se sacaron del cuerpo. Todos se constataron contra el código en `fase-0-verificada` y la
-suite corre en verde contra Postgres (120 tests, `docker compose exec api pytest`).
+suite corre en verde contra Postgres (135 tests, `docker compose exec api pytest`).
 
 | ID | Qué era | Cerrado |
 |---|---|---|
@@ -115,6 +104,7 @@ suite corre en verde contra Postgres (120 tests, `docker compose exec api pytest
 | A2 | Fuga de scope en documentos de empleado | 2026-07-16 (`_empleado_en_scope()`) |
 | A3 | PII de toda la dotación visible para el Supervisor | 2026-07-20 |
 | A4 | `SECRET_KEY` con default inseguro heredado por prod | 2026-07-20 |
+| A5 | La UI mostraba a todos las acciones que el backend rechaza (403) | 2026-07-20 (`common/capacidades.py` + `sc-if` por rol) |
 | D9 | Menores del front (huso en `docEstado`, empresa en `adaptNov`) | 2026-07-20 |
 | B1–B6 | Correctitud e integridad de datos | 2026-07-15 |
 | C1–C5 | Robustez y rendimiento | 2026-07-15 |
@@ -159,6 +149,17 @@ contexto que hay que tener a mano al tocar ese código):
 - **A4 hace que prod no arranque sin `SECRET_KEY`.** Es lo buscado, pero el día del primer
   deploy la variable tiene que estar antes de levantar el proceso. En dev no cambia nada:
   `base.py` conserva el default y `docker-compose.yml` la inyecta.
+- **Los permisos del front salen de UNA matriz** (A5, `common/capacidades.py`), servida por
+  `/mi/perfil/` como `capacidades` y espejada de las permission classes. El front **no
+  replica** lógica de rol: consume booleanos y esconde botones (el 403 sigue siendo la
+  seguridad real; ocultar es honestidad visual). Al cambiar un permiso hay que tocar la
+  matriz, y `test_capacidades.py` ata las capacidades al 403 real por rol: si se separan,
+  se pone rojo. En el detalle de novedad, `build.py` combina la capacidad con el estado
+  (un botón se muestra si el estado lo permite **y** el rol puede); los `sc-if` de los
+  botones globales viven en el canvas (`Ceibo RRHH.dc.html`).
+- **`is_superuser` cortocircuita `tiene_rol()`**: el `admin` de dev ve y puede todo sin
+  pasar por grupos, así que **no sirve para probar roles**. Para eso está `seed_usuarios_demo`
+  (un usuario por rol, `demo_*`, pass `demo1234`); es solo-dev y no debe correrse en prod.
 - **`docEstado()` corrigió un segundo off-by-one no registrado en el análisis:** además del
   documento que vence HOY (que se pintaba vencido), **"vence en 31 días" caía en amarillo**
   por el mismo corrimiento de huso. Ahora el umbral de 30 días es exacto.
