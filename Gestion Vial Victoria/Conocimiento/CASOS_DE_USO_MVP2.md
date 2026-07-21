@@ -112,6 +112,43 @@ cargada, usando RAG.
 - *Depende de:* la documentación cargada (**ya disponible desde el MVP 1**).
 - *Bloqueado por decisión:* no (encaja con el canal que se elija en CU-23).
 
+### E. Ingreso y egreso de personas
+
+**CU-29 — Onboarding (proceso de ingreso)**
+Guiar todo el proceso de ingreso de un empleado nuevo con un **checklist** que se
+completa paso a paso, para que no quede ningún trámite sin hacer y quede
+constancia de quién lo hizo y cuándo.
+- *Checklist de ejemplo:*
+  - ☐ Alta AFIP/ARCA
+  - ☐ Declaración jurada
+  - ☐ Uniforme
+  - ☐ Email
+  - ☐ Usuario ERP
+  - ☐ Capacitación
+  - ☐ Firma contrato
+  - ☐ Foto
+  - ☐ Entrega EPP
+- *Depende de:* el legajo del empleado (**ya disponible desde el MVP 1**). Cada
+  ítem puede enlazar con lo ya cargado (p. ej. contrato y foto en documentación).
+- *Bloqueado por decisión:* no (sí definir el checklist definitivo por empresa —
+  Vial Victoria y Premocor pueden diferir).
+
+**CU-30 — Offboarding (proceso de egreso)**
+El espejo del anterior: cuando alguien se va, un **checklist** de baja asegura que
+se recupere todo lo entregado y se cierren los trámites, con constancia.
+- *Checklist de ejemplo:*
+  - ☐ Baja AFIP/ARCA
+  - ☐ Devolución notebook
+  - ☐ Devolución celular
+  - ☐ Uniforme
+  - ☐ Llaves
+  - ☐ Credencial
+  - ☐ Liquidación final
+  - ☐ Entrevista de salida
+- *Depende de:* el legajo y la baja lógica (**ya disponible desde el MVP 1**). Se
+  dispara al registrar la baja del empleado.
+- *Bloqueado por decisión:* no (sí definir el checklist definitivo por empresa).
+
 ---
 
 ## 3. Resumen de prioridad y bloqueos
@@ -120,6 +157,8 @@ cargada, usando RAG.
 |---|---|---|---|
 | CU-25 | Medidas disciplinarias | Nada | No — **listo para arrancar** |
 | CU-24 | Portal de autogestión | Nada nuevo | No (definir alcance) |
+| CU-29 | Onboarding (checklist ingreso) | Legajo (ya está) | No (definir checklist por empresa) |
+| CU-30 | Offboarding (checklist egreso) | Legajo/baja (ya está) | No (definir checklist por empresa) |
 | CU-28 | Bot de consultas (RAG) | Documentación (ya está) | No |
 | CU-20 | Asistencia / fichada | Fuente de fichada | **Sí** — qué hardware hay hoy |
 | CU-21 | Faltas/tardanzas automáticas | CU-20 | Hereda de CU-20 |
@@ -139,7 +178,8 @@ cargada, usando RAG.
 
 1. Cerrar el arrastre del MVP 1: **CU-19 (importar Excel)** primero, **CU-17
    (auditoría)** en paralelo.
-2. Lo que no tiene bloqueos: **CU-25 (disciplina)** y **CU-24 (autogestión)**.
+2. Lo que no tiene bloqueos: **CU-25 (disciplina)**, **CU-24 (autogestión)** y
+   **CU-29 / CU-30 (onboarding / offboarding)**.
 3. En cuanto se defina el hardware: **CU-20 → CU-21 → CU-22** (asistencia).
 4. Definido el canal: **CU-23 (avisos)** y **CU-28 (bot)**.
 5. Con proveedores elegidos: **CU-26 (firma)** y **CU-27 (export contable)**.
