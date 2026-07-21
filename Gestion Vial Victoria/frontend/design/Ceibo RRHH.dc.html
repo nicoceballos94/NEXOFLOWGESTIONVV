@@ -743,6 +743,70 @@
             </sc-for>
           </div>
         </div>
+
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;box-shadow:var(--shadow);margin-top:16px;overflow:hidden">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;padding:20px 24px 16px">
+            <div>
+              <div style="font-weight:600;font-size:15px;color:var(--text)">Empresas del grupo</div>
+              <div style="font-size:12.5px;color:var(--text3)">Alta, edición y baja de las empresas. La baja es lógica: no se elimina el historial.</div>
+            </div>
+            <sc-if value="{{ puedeConfig }}" hint-placeholder-val="{{ true }}">
+            <button onClick="{{ openEmpresaNueva }}" style="background:var(--accent);border:none;color:#04201C;font-weight:600;font-size:12.5px;border-radius:10px;padding:0 15px;height:36px;cursor:pointer;white-space:nowrap">+ Nueva empresa</button>
+            </sc-if>
+          </div>
+          <div style="overflow-x:auto">
+            <div style="min-width:560px">
+              <div style="display:grid;grid-template-columns:1.4fr 1.7fr 1fr .7fr 150px;gap:12px;padding:10px 24px;border-top:1px solid var(--border);border-bottom:1px solid var(--border);font-size:11px;font-weight:600;letter-spacing:.04em;color:var(--text3);background:var(--surface2)">
+                <div>NOMBRE</div><div>RAZÓN SOCIAL</div><div>CUIT</div><div>ESTADO</div><div></div>
+              </div>
+              <sc-for list="{{ empresasCfg }}" as="e" hint-placeholder-count="2">
+                <div style="display:grid;grid-template-columns:1.4fr 1.7fr 1fr .7fr 150px;gap:12px;padding:13px 24px;border-bottom:1px solid var(--border);align-items:center;font-size:13px">
+                  <div style="{{ e.nombreStyle }}">{{ e.nombre }}</div>
+                  <div style="color:var(--text2)">{{ e.razon_social }}</div>
+                  <div style="color:var(--text2);font-variant-numeric:tabular-nums">{{ e.cuit }}</div>
+                  <div><span style="{{ e.estadoBadge }}">{{ e.estadoLabel }}</span></div>
+                  <sc-if value="{{ puedeConfig }}" hint-placeholder-val="{{ true }}">
+                  <div style="display:flex;gap:7px;justify-content:flex-end">
+                    <button onClick="{{ e.editar }}" style="{{ e.editStyle }}">Editar</button>
+                    <button onClick="{{ e.toggle }}" style="{{ e.toggleStyle }}">{{ e.toggleLbl }}</button>
+                  </div>
+                  </sc-if>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </div>
+
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;box-shadow:var(--shadow);margin-top:16px;overflow:hidden">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;padding:20px 24px 16px">
+            <div>
+              <div style="font-weight:600;font-size:15px;color:var(--text)">Sectores</div>
+              <div style="font-size:12.5px;color:var(--text3)">Catálogo transversal al grupo (RRHH, Obra, Administración…). Baja lógica.</div>
+            </div>
+            <sc-if value="{{ puedeConfig }}" hint-placeholder-val="{{ true }}">
+            <button onClick="{{ openSectorNuevo }}" style="background:var(--accent);border:none;color:#04201C;font-weight:600;font-size:12.5px;border-radius:10px;padding:0 15px;height:36px;cursor:pointer;white-space:nowrap">+ Nuevo sector</button>
+            </sc-if>
+          </div>
+          <div style="overflow-x:auto">
+            <div style="min-width:420px">
+              <div style="display:grid;grid-template-columns:1.8fr .7fr 150px;gap:12px;padding:10px 24px;border-top:1px solid var(--border);border-bottom:1px solid var(--border);font-size:11px;font-weight:600;letter-spacing:.04em;color:var(--text3);background:var(--surface2)">
+                <div>NOMBRE</div><div>ESTADO</div><div></div>
+              </div>
+              <sc-for list="{{ sectoresCfg }}" as="s" hint-placeholder-count="4">
+                <div style="display:grid;grid-template-columns:1.8fr .7fr 150px;gap:12px;padding:13px 24px;border-bottom:1px solid var(--border);align-items:center;font-size:13px">
+                  <div style="{{ s.nombreStyle }}">{{ s.nombre }}</div>
+                  <div><span style="{{ s.estadoBadge }}">{{ s.estadoLabel }}</span></div>
+                  <sc-if value="{{ puedeConfig }}" hint-placeholder-val="{{ true }}">
+                  <div style="display:flex;gap:7px;justify-content:flex-end">
+                    <button onClick="{{ s.editar }}" style="{{ s.editStyle }}">Editar</button>
+                    <button onClick="{{ s.toggle }}" style="{{ s.toggleStyle }}">{{ s.toggleLbl }}</button>
+                  </div>
+                  </sc-if>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </div>
       </div>
       </sc-if>
 
@@ -980,6 +1044,44 @@
     </div>
   </sc-if>
 
+  <sc-if value="{{ showEmpresaModal }}" hint-placeholder-val="{{ false }}">
+    <div onClick="{{ closeModal }}" style="position:fixed;inset:0;background:rgba(4,8,16,.6);backdrop-filter:blur(3px);display:flex;align-items:flex-start;justify-content:center;padding:8vh 20px;z-index:50;animation:ov .2s ease both">
+      <div onClick="{{ stop }}" role="dialog" aria-modal="true" aria-label="Alta y edición de empresa" style="background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:480px;max-width:100%;box-shadow:0 30px 80px rgba(0,0,0,.5);animation:pop .28s cubic-bezier(.2,.9,.3,1) both">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:20px 24px;border-bottom:1px solid var(--border)">
+          <div><div style="font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:17px;color:var(--text)">{{ empModalTitle }}</div><div style="font-size:12px;color:var(--text3)">Los campos con · son obligatorios</div></div>
+          <button onClick="{{ closeModal }}" style="width:32px;height:32px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text2);cursor:pointer;font-size:16px">✕</button>
+        </div>
+        <div style="padding:20px 24px;display:flex;flex-direction:column;gap:14px">
+          <div><div style="{{ lblStyle }}">Nombre ·</div><input data-org="nombre" placeholder="Ej. VIAL VICTORIA" style="{{ inputStyle }}"/></div>
+          <div><div style="{{ lblStyle }}">Razón social</div><input data-org="razon_social" placeholder="Ej. Vial Victoria S.A." style="{{ inputStyle }}"/></div>
+          <div><div style="{{ lblStyle }}">CUIT</div><input data-org="cuit" placeholder="30-00000000-0" style="{{ inputStyle }}"/></div>
+        </div>
+        <div style="display:flex;justify-content:flex-end;gap:10px;padding:16px 24px;border-top:1px solid var(--border)">
+          <button onClick="{{ closeModal }}" style="background:var(--surface);border:1px solid var(--border2);color:var(--text);font-weight:600;font-size:13px;border-radius:10px;padding:0 18px;height:40px;cursor:pointer">Cancelar</button>
+          <button onClick="{{ submitEmpresa }}" style="background:var(--accent);border:none;color:#04201C;font-weight:600;font-size:13px;border-radius:10px;padding:0 20px;height:40px;cursor:pointer;box-shadow:0 4px 14px rgba(45,212,191,.28)">Guardar empresa</button>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ showSectorModal }}" hint-placeholder-val="{{ false }}">
+    <div onClick="{{ closeModal }}" style="position:fixed;inset:0;background:rgba(4,8,16,.6);backdrop-filter:blur(3px);display:flex;align-items:flex-start;justify-content:center;padding:8vh 20px;z-index:50;animation:ov .2s ease both">
+      <div onClick="{{ stop }}" role="dialog" aria-modal="true" aria-label="Alta y edición de sector" style="background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:400px;max-width:100%;box-shadow:0 30px 80px rgba(0,0,0,.5);animation:pop .28s cubic-bezier(.2,.9,.3,1) both">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:20px 24px;border-bottom:1px solid var(--border)">
+          <div><div style="font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:17px;color:var(--text)">{{ secModalTitle }}</div><div style="font-size:12px;color:var(--text3)">El sector es transversal al grupo</div></div>
+          <button onClick="{{ closeModal }}" style="width:32px;height:32px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text2);cursor:pointer;font-size:16px">✕</button>
+        </div>
+        <div style="padding:20px 24px">
+          <div><div style="{{ lblStyle }}">Nombre ·</div><input data-org="nombre" placeholder="Ej. Mantenimiento" style="{{ inputStyle }}"/></div>
+        </div>
+        <div style="display:flex;justify-content:flex-end;gap:10px;padding:16px 24px;border-top:1px solid var(--border)">
+          <button onClick="{{ closeModal }}" style="background:var(--surface);border:1px solid var(--border2);color:var(--text);font-weight:600;font-size:13px;border-radius:10px;padding:0 18px;height:40px;cursor:pointer">Cancelar</button>
+          <button onClick="{{ submitSector }}" style="background:var(--accent);border:none;color:#04201C;font-weight:600;font-size:13px;border-radius:10px;padding:0 20px;height:40px;cursor:pointer;box-shadow:0 4px 14px rgba(45,212,191,.28)">Guardar sector</button>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
   <sc-if value="{{ showDetNov }}" hint-placeholder-val="{{ false }}">
     <div onClick="{{ closeModal }}" style="position:fixed;inset:0;background:rgba(4,8,16,.6);backdrop-filter:blur(3px);display:flex;align-items:flex-start;justify-content:center;padding:6vh 20px;z-index:50;animation:ov .2s ease both">
       <div onClick="{{ stop }}" role="dialog" aria-modal="true" aria-label="Detalle de la novedad" style="background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:640px;max-width:100%;box-shadow:0 30px 80px rgba(0,0,0,.5);animation:pop .28s cubic-bezier(.2,.9,.3,1) both;display:flex;flex-direction:column;max-height:88vh">
@@ -1193,6 +1295,7 @@ class Component extends DCLogic {
     novTipo: 'todos', novEstado: 'todos', novEmp: '',
     rot: 'm',
     modal: null, bajaId: null, reingresoId: null, bajaSet: [],
+    orgEditId: null, orgArchivoNombre: '',
     docEditId: null, docArchivoNombre: '',
     adjuntosDet: null,
     cfg: { carnet: 30, apto: 15, cnrt: 30, contrato: 45 },
@@ -1380,6 +1483,34 @@ class Component extends DCLogic {
   openAltaNov = ()=> this.setState({modal:'altanov', editNovId:null, novFormTipo:'Falta'});
   openBaja = (id)=> this.setState({modal:'baja', bajaId:id});
   openReingreso = (id)=> this.setState({modal:'reingreso', reingresoId:id});
+
+  // ---------- ABM de empresas y sectores (Configuración) ----------
+  // Mock del canvas para verse solo; el CRUD real (POST/PATCH a la API) lo inyecta build.py.
+  empresasCfgBase(){
+    return [
+      { id:1, nombre:'PREMOCOR', razon_social:'Premoldeados Corrientes S.R.L.', cuit:'30-70998877-2', activa:true },
+      { id:2, nombre:'VIAL VICTORIA', razon_social:'Vial Victoria S.A.', cuit:'30-71012345-6', activa:true }
+    ];
+  }
+  sectoresCfgBase(){
+    return [
+      { id:1, nombre:'RRHH', activo:true }, { id:2, nombre:'Administración', activo:true },
+      { id:3, nombre:'Obra', activo:true }, { id:4, nombre:'Logística', activo:true }
+    ];
+  }
+  orgName(id){
+    const S=this.state;
+    if(S.modal==='sector'){ const s=this.sectoresCfgBase().find(x=>x.id===id); return s?s.nombre:''; }
+    const e=this.empresasCfgBase().find(x=>x.id===id); return e?e.nombre:'';
+  }
+  openEmpresaNueva = ()=> this.setState({modal:'empresa', orgEditId:null});
+  openEmpresaEdit = (id)=> this.setState({modal:'empresa', orgEditId:id});
+  submitEmpresa = ()=> this.setState({modal:null, orgEditId:null});
+  toggleEmpresaCfg = (id)=> this.setState({});
+  openSectorNuevo = ()=> this.setState({modal:'sector', orgEditId:null});
+  openSectorEdit = (id)=> this.setState({modal:'sector', orgEditId:id});
+  submitSector = ()=> this.setState({modal:null, orgEditId:null});
+  toggleSectorCfg = (id)=> this.setState({});
   docEnEdicionTieneArchivo(){
     const S=this.state; if(!S.docEditId) return false;
     const emp=this.base().find(e=>e.id===S.selEmp);
@@ -1717,6 +1848,23 @@ class Component extends DCLogic {
       {k:'whatsapp', label:'WhatsApp', hint:'Aviso al referente asignado'}
     ].map(c=>({label:c.label, hint:c.hint, on:!!S.canales[c.k], track:this.switchTrack(S.canales[c.k]), knob:this.switchKnob(S.canales[c.k]), toggle:()=>this.toggleCanal(c.k)}));
 
+    // ABM de empresas y sectores (Configuración)
+    const orgActionBtn = (color)=>`display:inline-flex;align-items:center;justify-content:center;height:30px;padding:0 11px;font-size:11.5px;font-weight:600;border-radius:8px;cursor:pointer;border:1px solid ${color==='bad'?'var(--bad)':'var(--border2)'};background:${color==='bad'?'transparent':'var(--surface2)'};color:${color==='bad'?'var(--bad)':'var(--text)'}`;
+    const empresasCfg = this.empresasCfgBase().map(e=>({
+      id:e.id, nombre:e.nombre, razon_social:e.razon_social||'—', cuit:e.cuit||'—', activa:e.activa,
+      estadoBadge:this.badge(e.activa?'ok':'neutral'), estadoLabel:e.activa?'Activa':'Inactiva',
+      nombreStyle:'font-weight:600;color:'+(e.activa?'var(--text)':'var(--text3)'),
+      toggleLbl:e.activa?'Baja':'Reactivar', toggleStyle:orgActionBtn(e.activa?'bad':'ghost'), editStyle:orgActionBtn('ghost'),
+      editar:()=>this.openEmpresaEdit(e.id), toggle:()=>this.toggleEmpresaCfg(e.id)
+    }));
+    const sectoresCfg = this.sectoresCfgBase().map(s=>({
+      id:s.id, nombre:s.nombre, activo:s.activo,
+      estadoBadge:this.badge(s.activo?'ok':'neutral'), estadoLabel:s.activo?'Activo':'Inactivo',
+      nombreStyle:'font-weight:600;color:'+(s.activo?'var(--text)':'var(--text3)'),
+      toggleLbl:s.activo?'Baja':'Reactivar', toggleStyle:orgActionBtn(s.activo?'bad':'ghost'), editStyle:orgActionBtn('ghost'),
+      editar:()=>this.openSectorEdit(s.id), toggle:()=>this.toggleSectorCfg(s.id)
+    }));
+
     const titles = {dashboard:['Panel general','Resumen operativo de RRHH'],empleados:['Empleados','Legajos y relación laboral'],ficha:['Ficha de empleado','Legajo completo'],novedades:['Novedades','Accidentes, faltas, licencias y vacaciones'],alertas:['Alertas y vencimientos','Control de documentación'],reportes:['Reportes y métricas','Análisis de dotación y ausentismo'],config:['Configuración','Parametría de alertas']};
     const t = titles[S.view]||titles.dashboard;
 
@@ -1766,6 +1914,12 @@ class Component extends DCLogic {
       vencGroups, vencResumen,
       ausentismo, egresos,
       cfgRows, roles, canales,
+      empresasCfg, sectoresCfg,
+      showEmpresaModal:S.modal==='empresa', showSectorModal:S.modal==='sector',
+      empModalTitle: S.orgEditId!=null ? 'Editar empresa' : 'Nueva empresa',
+      secModalTitle: S.orgEditId!=null ? 'Editar sector' : 'Nuevo sector',
+      openEmpresaNueva:this.openEmpresaNueva, submitEmpresa:this.submitEmpresa,
+      openSectorNuevo:this.openSectorNuevo, submitSector:this.submitSector,
       showAlta:S.modal==='alta', showAltaNov:S.modal==='altanov', showBaja:S.modal==='baja', showReingreso:S.modal==='reingreso',
       showDoc:S.modal==='doc', openDocNuevo:this.openDocNuevo, onDocArchivo:this.onDocArchivo,
       docTitle:S.docEditId?'Editar documento':'Agregar documento',

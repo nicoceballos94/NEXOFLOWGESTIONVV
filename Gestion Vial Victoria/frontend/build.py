@@ -309,7 +309,7 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
       await this.reloadConfigVenc();   // el server manda: se descarta lo optimista
     }
   };
-  goCfg = () => { this.setView('config'); this.reloadConfigVenc(); };
+  goCfg = () => { this.setView('config'); this.reloadConfigVenc(); this.reloadEmpresasCfg(); this.reloadSectoresCfg(); };
   openAltaNov = () => {
     this.setState({ modal: 'altanov', editNovId: null, novFormTipo: 'Falta' });
     setTimeout(() => window.CeiboAPI.populateNovForm(), 60);
@@ -500,6 +500,75 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
       await this.recargarAdjuntos(this.state.detNovId);
     } catch (e) { console.error('[ceibo] quitar respaldo', e); window.CeiboAPI.toast(e.message || String(e), 'error'); }
   };
+  // ===== ABM de empresas y sectores (el canvas los deja en mock; acá van al backend) =====
+  // El catálogo del ABM lista TODOS (activos e inactivos) para poder reactivar; el dropdown
+  // del alta usa otra lista (solo activos), que mantiene CeiboAPI aparte.
+  reloadEmpresasCfg = async () => {
+    try { this.setState({ empresasCfgData: await window.CeiboAPI.listEmpresas() }); }
+    catch (e) { console.warn('[ceibo] empresas cfg', e); }
+  };
+  reloadSectoresCfg = async () => {
+    try { this.setState({ sectoresCfgData: await window.CeiboAPI.listSectores() }); }
+    catch (e) { console.warn('[ceibo] sectores cfg', e); }
+  };
+  _readOrg = (campo) => {
+    const el = document.querySelector('[data-modal="' + this._orgModal() + '"] [data-org="' + campo + '"]');
+    return el ? el.value.trim() : '';
+  };
+  _orgModal = () => (this.state.modal === 'sector' ? 'sector' : 'empresa');
+  _prefillOrg = (valores) => setTimeout(() => {
+    const m = document.querySelector('[data-modal="' + this._orgModal() + '"]');
+    if (!m) return;
+    m.querySelectorAll('[data-org]').forEach((el) => { el.value = valores[el.getAttribute('data-org')] || ''; });
+  }, 60);
+  openEmpresaNueva = () => { this.setState({ modal: 'empresa', orgEditId: null }); this._prefillOrg({}); this._a11y('[data-modal="empresa"]'); };
+  openEmpresaEdit = (id) => {
+    const e = (this.state.empresasCfgData || []).find((x) => x.id === id) || {};
+    this.setState({ modal: 'empresa', orgEditId: id });
+    this._prefillOrg({ nombre: e.nombre, razon_social: e.razon_social, cuit: e.cuit });
+    this._a11y('[data-modal="empresa"]');
+  };
+  submitEmpresa = async () => {
+    try {
+      const datos = { nombre: this._readOrg('nombre'), razon_social: this._readOrg('razon_social'), cuit: this._readOrg('cuit') };
+      if (this.state.orgEditId != null) await window.CeiboAPI.editarEmpresa(this.state.orgEditId, datos);
+      else await window.CeiboAPI.crearEmpresa(datos);
+      this.setState({ modal: null, orgEditId: null });
+      await this.reloadEmpresasCfg();
+    } catch (e) { console.error('[ceibo] empresa', e); window.CeiboAPI.toast(e.message || String(e), 'error'); }
+  };
+  toggleEmpresaCfg = async (id) => {
+    try {
+      const e = (this.state.empresasCfgData || []).find((x) => x.id === id);
+      if (!e) return;
+      await window.CeiboAPI.toggleEmpresaActiva(id, !e.activa);
+      await this.reloadEmpresasCfg();
+    } catch (err) { console.error('[ceibo] baja empresa', err); window.CeiboAPI.toast(err.message || String(err), 'error'); }
+  };
+  openSectorNuevo = () => { this.setState({ modal: 'sector', orgEditId: null }); this._prefillOrg({}); this._a11y('[data-modal="sector"]'); };
+  openSectorEdit = (id) => {
+    const s = (this.state.sectoresCfgData || []).find((x) => x.id === id) || {};
+    this.setState({ modal: 'sector', orgEditId: id });
+    this._prefillOrg({ nombre: s.nombre });
+    this._a11y('[data-modal="sector"]');
+  };
+  submitSector = async () => {
+    try {
+      const datos = { nombre: this._readOrg('nombre') };
+      if (this.state.orgEditId != null) await window.CeiboAPI.editarSector(this.state.orgEditId, datos);
+      else await window.CeiboAPI.crearSector(datos);
+      this.setState({ modal: null, orgEditId: null });
+      await this.reloadSectoresCfg();
+    } catch (e) { console.error('[ceibo] sector', e); window.CeiboAPI.toast(e.message || String(e), 'error'); }
+  };
+  toggleSectorCfg = async (id) => {
+    try {
+      const s = (this.state.sectoresCfgData || []).find((x) => x.id === id);
+      if (!s) return;
+      await window.CeiboAPI.toggleSectorActivo(id, !s.activo);
+      await this.reloadSectoresCfg();
+    } catch (err) { console.error('[ceibo] baja sector', err); window.CeiboAPI.toast(err.message || String(err), 'error'); }
+  };
 }
 """
 
@@ -526,7 +595,7 @@ EDICIONES = [
     # --- state: campos nuevos ---
     (
         "theme: 'dark', view: 'dashboard', selEmp: 1,",
-        "theme: 'dark', view: 'dashboard', selEmp: 1,\n    empleados: null, novedades: null, dashboard: null, apiErr: null, altaEditId: null, tiposDoc: null, vencimientos: null, alertasDiaData: null, cfgVenc: null,\n    cargaInicial: 'cargando',",
+        "theme: 'dark', view: 'dashboard', selEmp: 1,\n    empleados: null, novedades: null, dashboard: null, apiErr: null, altaEditId: null, tiposDoc: null, vencimientos: null, alertasDiaData: null, cfgVenc: null,\n    empresasCfgData: null, sectoresCfgData: null, fotoUrlByEmp: {},\n    cargaInicial: 'cargando',",
         "state: campos de integración",
     ),
     # --- novBase(): usar datos reales si están cargados ---
@@ -540,6 +609,17 @@ EDICIONES = [
         "  base() {\n    return [",
         "  base() {\n    if (this.state.empleados) return this.state.empleados;\n    return [",
         "base(): guard de datos reales",
+    ),
+    # --- empresasCfgBase()/sectoresCfgBase(): datos reales del ABM si están cargados ---
+    (
+        "  empresasCfgBase(){\n    return [",
+        "  empresasCfgBase(){\n    if (this.state.empresasCfgData) return this.state.empresasCfgData;\n    return [",
+        "empresasCfgBase(): guard de datos reales",
+    ),
+    (
+        "  sectoresCfgBase(){\n    return [",
+        "  sectoresCfgBase(){\n    if (this.state.sectoresCfgData) return this.state.sectoresCfgData;\n    return [",
+        "sectoresCfgBase(): guard de datos reales",
     ),
     # --- renderVals → renderValsBase (para poder envolverlo) ---
     (
@@ -589,6 +669,16 @@ EDICIONES = [
         "style=\"background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:520px;max-width:100%",
         "data-modal=\"doc\" style=\"background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:520px;max-width:100%",
         "modal documento: data-modal",
+    ),
+    (
+        "style=\"background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:480px;max-width:100%",
+        "data-modal=\"empresa\" style=\"background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:480px;max-width:100%",
+        "modal empresa: data-modal",
+    ),
+    (
+        "style=\"background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:400px;max-width:100%",
+        "data-modal=\"sector\" style=\"background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:400px;max-width:100%",
+        "modal sector: data-modal",
     ),
     # --- template: botón Guardar empleado → submitAlta ---
     (
