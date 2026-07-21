@@ -128,10 +128,20 @@ constancia de quién lo hizo y cuándo.
   - ☐ Firma contrato
   - ☐ Foto
   - ☐ Entrega EPP
-- *Depende de:* el legajo del empleado (**ya disponible desde el MVP 1**). Cada
-  ítem puede enlazar con lo ya cargado (p. ej. contrato y foto en documentación).
+- *Dos tipos de ítem:* los de **acción** se tildan a mano (uniforme, entrega de
+  EPP, alta de usuario ERP); los **documentales** están enlazados a un documento
+  del legajo (declaración jurada, firma de contrato, foto). El ítem documental
+  **no se tilda por separado**: queda "hecho" cuando ese documento está cargado
+  **con el archivo escaneado adjunto**. Así hay una sola fuente de verdad (el
+  documento) y el checklist lo refleja, sin dato duplicado que pueda contradecirse.
+- *Cómo se usa:* se accede **desde la ficha del empleado** (no es una pantalla
+  aparte). Es una tarjeta con barra de avance; los ítems documentales abren el
+  mismo "Cargar documento" que ya existe. Al completarse, la tarjeta **colapsa a
+  una línea** ("Onboarding completo ✓"), dejando la constancia sin ocupar espacio.
+- *Depende de:* el legajo y la documentación del empleado (**ya disponibles desde
+  el MVP 1**).
 - *Bloqueado por decisión:* no (sí definir el checklist definitivo por empresa —
-  Vial Victoria y Premocor pueden diferir).
+  Vial Victoria y Premocor pueden diferir, y cuáles ítems son documentales).
 
 **CU-30 — Offboarding (proceso de egreso)**
 El espejo del anterior: cuando alguien se va, un **checklist** de baja asegura que
@@ -145,9 +155,32 @@ se recupere todo lo entregado y se cierren los trámites, con constancia.
   - ☐ Credencial
   - ☐ Liquidación final
   - ☐ Entrevista de salida
+- *Mismo mecanismo que CU-29:* ítems de acción (devolución de notebook, celular,
+  llaves, credencial) que se tildan a mano, y documentales enlazados al legajo
+  (p. ej. liquidación final) que quedan "hechos" al cargar el documento con su
+  archivo adjunto.
+- *Cómo se usa:* misma tarjeta en la ficha, que **aparece al usar "Dar de baja"**
+  y colapsa al completarse, igual que CU-29.
 - *Depende de:* el legajo y la baja lógica (**ya disponible desde el MVP 1**). Se
   dispara al registrar la baja del empleado.
 - *Bloqueado por decisión:* no (sí definir el checklist definitivo por empresa).
+
+### F. Configuración y catálogos
+
+**CU-31 — Gestión de tipos de documento desde Configuración**
+Que RRHH pueda **agregar y quitar tipos de documento** (carnet, apto médico, CNRT,
+declaración jurada…) desde la pantalla de Configuración, sin depender de soporte
+técnico. Hoy los tipos se listan para configurar sus días de aviso, pero el alta
+de un tipo nuevo solo se hace por herramientas internas.
+- *Cómo funciona el "quitar":* es una **baja lógica** (se desactiva el tipo), no
+  un borrado físico. Un tipo desactivado desaparece de las pantallas pero **no
+  rompe los documentos ya cargados** que lo usan; se puede reactivar.
+- *Depende de:* el motor ya existe en el backend (endpoint de tipos de documento
+  con alta/baja restringido a Admin/RRHH). Falta **exponerlo en la UI**, junto al
+  ABM de empresas y sectores que ya está en Configuración.
+- *Bloqueado por decisión:* no — **listo para arrancar** (es trabajo de front).
+- *Habilita:* los ítems documentales del onboarding/offboarding (CU-29 / CU-30),
+  que se enlazan a estos tipos.
 
 ---
 
@@ -156,6 +189,7 @@ se recupere todo lo entregado y se cierren los trámites, con constancia.
 | CU | Ítem | Depende de | ¿Decisión externa pendiente? |
 |---|---|---|---|
 | CU-25 | Medidas disciplinarias | Nada | No — **listo para arrancar** |
+| CU-31 | Tipos de documento en Configuración | Backend ya está (solo UI) | No — **listo para arrancar** |
 | CU-24 | Portal de autogestión | Nada nuevo | No (definir alcance) |
 | CU-29 | Onboarding (checklist ingreso) | Legajo (ya está) | No (definir checklist por empresa) |
 | CU-30 | Offboarding (checklist egreso) | Legajo/baja (ya está) | No (definir checklist por empresa) |
@@ -178,8 +212,9 @@ se recupere todo lo entregado y se cierren los trámites, con constancia.
 
 1. Cerrar el arrastre del MVP 1: **CU-19 (importar Excel)** primero, **CU-17
    (auditoría)** en paralelo.
-2. Lo que no tiene bloqueos: **CU-25 (disciplina)**, **CU-24 (autogestión)** y
-   **CU-29 / CU-30 (onboarding / offboarding)**.
+2. Lo que no tiene bloqueos: **CU-25 (disciplina)**, **CU-31 (tipos de documento
+   en Configuración, solo front)**, **CU-24 (autogestión)** y **CU-29 / CU-30
+   (onboarding / offboarding)**.
 3. En cuanto se defina el hardware: **CU-20 → CU-21 → CU-22** (asistencia).
 4. Definido el canal: **CU-23 (avisos)** y **CU-28 (bot)**.
 5. Con proveedores elegidos: **CU-26 (firma)** y **CU-27 (export contable)**.
