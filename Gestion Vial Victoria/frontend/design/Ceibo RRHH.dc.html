@@ -716,9 +716,15 @@
       <sc-if value="{{ isCfg }}" hint-placeholder-val="{{ false }}">
       <div style="animation:fin .35s ease both;max-width:760px">
         <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:22px 24px;box-shadow:var(--shadow)">
-          <div style="font-weight:600;font-size:15px;color:var(--text)">Parametría de alertas</div>
-          <div style="font-size:12.5px;color:var(--text3);margin-bottom:18px">Definí con cuántos días de anticipación el sistema avisa antes de cada vencimiento.</div>
-          <div style="display:flex;flex-direction:column">
+          <div onClick="{{ cfgUI.alertas.toggle }}" style="display:flex;align-items:flex-start;gap:12px;cursor:pointer;user-select:none">
+            <div style="flex:1">
+              <div style="font-weight:600;font-size:15px;color:var(--text)">Parametría de alertas</div>
+              <div style="font-size:12.5px;color:var(--text3)">Definí con cuántos días de anticipación el sistema avisa antes de cada vencimiento.</div>
+            </div>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="{{ cfgUI.alertas.chevron }};margin-top:3px"><path d="m6 9 6 6 6-6"/></svg>
+          </div>
+          <sc-if value="{{ cfgUI.alertas.abierta }}" hint-placeholder-val="{{ true }}">
+          <div style="display:flex;flex-direction:column;margin-top:18px">
             <sc-for list="{{ cfgRows }}" as="c" hint-placeholder-count="4">
               <div class="ceibo-cfg-row" style="display:flex;align-items:center;gap:16px;padding:14px 0;border-bottom:1px solid var(--border)">
                 <div style="flex:1">
@@ -737,11 +743,18 @@
               </div>
             </sc-for>
           </div>
+          </sc-if>
         </div>
 
         <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:22px 24px;box-shadow:var(--shadow);margin-top:16px">
-          <div style="font-weight:600;font-size:15px;color:var(--text)">Destinatarios y canales</div>
-          <div style="font-size:12.5px;color:var(--text3);margin-bottom:18px">A quién y por dónde se envían los avisos de vencimiento.</div>
+          <div onClick="{{ cfgUI.notif.toggle }}" style="display:flex;align-items:flex-start;gap:12px;cursor:pointer;user-select:none">
+            <div style="flex:1">
+              <div style="font-weight:600;font-size:15px;color:var(--text)">Destinatarios y canales</div>
+              <div style="font-size:12.5px;color:var(--text3);margin-bottom:18px">A quién y por dónde se envían los avisos de vencimiento.</div>
+            </div>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="{{ cfgUI.notif.chevron }};margin-top:3px"><path d="m6 9 6 6 6-6"/></svg>
+          </div>
+          <sc-if value="{{ cfgUI.notif.abierta }}" hint-placeholder-val="{{ true }}">
           <div style="font-size:11px;font-weight:600;letter-spacing:.05em;color:var(--text3);margin-bottom:10px">NOTIFICAR A</div>
           <div style="display:flex;gap:9px;flex-wrap:wrap;margin-bottom:20px">
             <sc-for list="{{ roles }}" as="r" hint-placeholder-count="3">
@@ -760,18 +773,23 @@
               </div>
             </sc-for>
           </div>
+          </sc-if>
         </div>
 
         <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;box-shadow:var(--shadow);margin-top:16px;overflow:hidden">
           <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;padding:20px 24px 16px">
-            <div>
-              <div style="font-weight:600;font-size:15px;color:var(--text)">Empresas del grupo</div>
-              <div style="font-size:12.5px;color:var(--text3)">Alta, edición y baja de las empresas. La baja es lógica: no se elimina el historial.</div>
+            <div onClick="{{ cfgUI.empresas.toggle }}" style="display:flex;align-items:center;gap:12px;cursor:pointer;user-select:none;flex:1;min-width:0">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="{{ cfgUI.empresas.chevron }}"><path d="m6 9 6 6 6-6"/></svg>
+              <div style="min-width:0">
+                <div style="font-weight:600;font-size:15px;color:var(--text)">Empresas del grupo</div>
+                <div style="font-size:12.5px;color:var(--text3)">Alta, edición y baja de las empresas. La baja es lógica: no se elimina el historial.</div>
+              </div>
             </div>
             <sc-if value="{{ puedeConfig }}" hint-placeholder-val="{{ true }}">
             <button onClick="{{ openEmpresaNueva }}" style="background:var(--accent);border:none;color:#04201C;font-weight:600;font-size:12.5px;border-radius:10px;padding:0 15px;height:36px;cursor:pointer;white-space:nowrap">+ Nueva empresa</button>
             </sc-if>
           </div>
+          <sc-if value="{{ cfgUI.empresas.abierta }}" hint-placeholder-val="{{ true }}">
           <div style="overflow-x:auto">
             <div style="min-width:560px">
               <div style="display:grid;grid-template-columns:1.4fr 1.7fr 1fr .7fr 150px;gap:12px;padding:10px 24px;border-top:1px solid var(--border);border-bottom:1px solid var(--border);font-size:11px;font-weight:600;letter-spacing:.04em;color:var(--text3);background:var(--surface2)">
@@ -793,18 +811,23 @@
               </sc-for>
             </div>
           </div>
+          </sc-if>
         </div>
 
         <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;box-shadow:var(--shadow);margin-top:16px;overflow:hidden">
           <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;padding:20px 24px 16px">
-            <div>
-              <div style="font-weight:600;font-size:15px;color:var(--text)">Sectores</div>
-              <div style="font-size:12.5px;color:var(--text3)">Catálogo transversal al grupo (RRHH, Obra, Administración…). Baja lógica.</div>
+            <div onClick="{{ cfgUI.sectores.toggle }}" style="display:flex;align-items:center;gap:12px;cursor:pointer;user-select:none;flex:1;min-width:0">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="{{ cfgUI.sectores.chevron }}"><path d="m6 9 6 6 6-6"/></svg>
+              <div style="min-width:0">
+                <div style="font-weight:600;font-size:15px;color:var(--text)">Sectores</div>
+                <div style="font-size:12.5px;color:var(--text3)">Catálogo transversal al grupo (RRHH, Obra, Administración…). Baja lógica.</div>
+              </div>
             </div>
             <sc-if value="{{ puedeConfig }}" hint-placeholder-val="{{ true }}">
             <button onClick="{{ openSectorNuevo }}" style="background:var(--accent);border:none;color:#04201C;font-weight:600;font-size:12.5px;border-radius:10px;padding:0 15px;height:36px;cursor:pointer;white-space:nowrap">+ Nuevo sector</button>
             </sc-if>
           </div>
+          <sc-if value="{{ cfgUI.sectores.abierta }}" hint-placeholder-val="{{ true }}">
           <div style="overflow-x:auto">
             <div style="min-width:420px">
               <div style="display:grid;grid-template-columns:1.8fr .7fr 150px;gap:12px;padding:10px 24px;border-top:1px solid var(--border);border-bottom:1px solid var(--border);font-size:11px;font-weight:600;letter-spacing:.04em;color:var(--text3);background:var(--surface2)">
@@ -824,6 +847,7 @@
               </sc-for>
             </div>
           </div>
+          </sc-if>
         </div>
       </div>
       </sc-if>
@@ -1317,6 +1341,7 @@ class Component extends DCLogic {
     docEditId: null, docArchivoNombre: '',
     adjuntosDet: null,
     cfg: { carnet: 30, apto: 15, cnrt: 30, contrato: 45 },
+    cfgOpen: { alertas: true, notif: true, empresas: false, sectores: false },
     roles: { rrhh: true, admin: true, jefe: false },
     canales: { email: true, sistema: true, whatsapp: false },
     praxis: true,
@@ -1480,6 +1505,8 @@ class Component extends DCLogic {
   goRep = ()=> this.setView('reportes');
   goCfg = ()=> this.setView('config');
   toggleTheme = ()=> this.setState(s=>({theme:s.theme==='dark'?'light':'dark'}));
+  // Colapsar/expandir una sección de Configuración (solo UI, sin backend).
+  toggleCfgSec = (k)=> this.setState(s=>({cfgOpen: Object.assign({}, s.cfgOpen, {[k]: !(s.cfgOpen||{})[k]})}));
   onSearch = (e)=> this.setState({empSearch:e.target.value, view:'empleados'});
   setRotM = ()=> this.setState({rot:'m'});
   setRotA = ()=> this.setState({rot:'a'});
@@ -1887,6 +1914,16 @@ class Component extends DCLogic {
       editar:()=>this.openSectorEdit(s.id), toggle:()=>this.toggleSectorCfg(s.id)
     }));
 
+    // Colapso de las secciones de Configuración: cada header alterna la visibilidad de su
+    // cuerpo para que la página no quede tan larga. Es estado de UI, no va al backend.
+    const _cfgOpen = S.cfgOpen || {};
+    const cfgSec = (k)=>({
+      abierta: !!_cfgOpen[k],
+      toggle: ()=>this.toggleCfgSec(k),
+      chevron: 'width:18px;height:18px;flex:none;color:var(--text3);transition:transform .2s ease;transform:rotate('+(_cfgOpen[k]?'0':'-90')+'deg)',
+    });
+    const cfgUI = { alertas:cfgSec('alertas'), notif:cfgSec('notif'), empresas:cfgSec('empresas'), sectores:cfgSec('sectores') };
+
     const titles = {dashboard:['Panel general','Resumen operativo de RRHH'],empleados:['Empleados','Legajos y relación laboral'],ficha:['Ficha de empleado','Legajo completo'],novedades:['Novedades','Accidentes, faltas, licencias y vacaciones'],alertas:['Alertas y vencimientos','Control de documentación'],reportes:['Reportes y métricas','Análisis de dotación y ausentismo'],config:['Configuración','Parametría de alertas']};
     const t = titles[S.view]||titles.dashboard;
 
@@ -1936,7 +1973,10 @@ class Component extends DCLogic {
       vencGroups, vencResumen,
       ausentismo, egresos,
       cfgRows, roles, canales,
-      empresasCfg, sectoresCfg,
+      empresasCfg, sectoresCfg, cfgUI,
+      // El canvas expone los hooks puede* con default true para poder diseñarse sin sesión;
+      // en la app build.py los pisa con lo que el backend habilita de verdad (A5).
+      puedeEscribirEmpleado:true, puedeCargarNovedad:true, puedeDecidirNovedad:true, puedeConfig:true,
       showEmpresaModal:S.modal==='empresa', showSectorModal:S.modal==='sector',
       empModalTitle: S.orgEditId!=null ? 'Editar empresa' : 'Nueva empresa',
       secModalTitle: S.orgEditId!=null ? 'Editar sector' : 'Nuevo sector',
