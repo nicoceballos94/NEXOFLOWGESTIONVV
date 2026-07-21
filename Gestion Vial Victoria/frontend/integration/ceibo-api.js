@@ -45,6 +45,11 @@
   var _empresaByName = {}, _empresaById = {};
   var _sectorByName = {}, _sectorById = {};
   var _puestoByName = {}, _puestoById = {};
+  // Catálogo con el flag `activa/activo`: los dropdowns de alta ofrecen SOLO los activos (una
+  // empresa/sector dado de baja no se puede elegir para una relación nueva), pero el ABM de
+  // Configuración lista todos para poder reactivarlos. Los mapas de arriba resuelven nombre↔id.
+  var _empresasCat = [];          // [{ id, nombre, activa }]
+  var _sectoresCat = [];          // [{ id, nombre, activo }]
   var _rawEmpleados = [];
   var _empById = {};              // id → { name, empresa } (para adaptar novedades)
   // relación laboral → nombre de empresa. La novedad guarda de QUÉ relación es, así que la
@@ -54,6 +59,17 @@
   var _novRawById = {};           // id → novedad cruda del backend (para precargar edición)
   var _tipoDocByNombre = {};      // nombre → tipo de documento (el select del modal da el nombre)
   var _docsByEmp = {};            // empleado id → documentos crudos (para precargar la edición)
+  var _fotoUrls = {};             // empleado id → objectURL de su foto (blob cacheado, se revoca)
+
+  // El blob de la foto se descarga con Authorization (media/ no es público), así que no puede
+  // ir directo en <img src>: hay que traerlo por fetch y envolverlo en un objectURL. Estos se
+  // revocan a mano (al reemplazar y al desloguear) o quedan retenidos en memoria para siempre.
+  function revocarFoto(empId) {
+    if (_fotoUrls[empId]) { URL.revokeObjectURL(_fotoUrls[empId]); delete _fotoUrls[empId]; }
+  }
+  function revocarTodasLasFotos() {
+    Object.keys(_fotoUrls).forEach(revocarFoto);
+  }
 
   // ---------- HTTP ----------
   function auth() { return { Authorization: "Bearer " + _token }; }
@@ -283,7 +299,9 @@
       educacion: e.educacion || "", exento_marcacion: !!e.exento_marcacion,
       jornada_legal: activa.jornada_legal || "",
       historial: historial, docs: [],
+      tieneFoto: !!e.tiene_foto,
       // metadatos para el cableado:
+      _fotoUrl: e.foto_url || null,
       _relacionActivaId: activa.id || null, _empresaId: activa.empresa || null,
       _sectorId: activa.sector || null, _puestoId: activa.puesto || null,
       _jornadaLegal: activa.jornada_legal || "", _tipoContrato: activa.tipo_contrato || "",
@@ -504,6 +522,41 @@
     if (!m) return;
     m.querySelectorAll("[data-ceibo-nota]").forEach(function (n) { n.remove(); });
   }
+  // Reconstruye las <option> de un <select> desde el catálogo, en vez de las hardcodeadas del
+  // canvas. Sin esto, una empresa/sector creado por el ABM no aparecía para elegir en el alta.
+  // `incluir` mete un valor extra aunque esté inactivo (para que la edición muestre el actual).
+  function poblarSelectDesde(sel, nombres, incluir) {
+    if (!sel || sel.tagName !== "SELECT") return;
+    var lista = nombres.slice();
+    if (incluir && incluir !== "—" && lista.indexOf(incluir) < 0) lista.push(incluir);
+    sel.innerHTML = "";
+    lista.forEach(function (n) {
+      var o = document.createElement("option");
+      o.value = n; o.textContent = n;
+      sel.appendChild(o);
+    });
+  }
+  function poblarSelectEmpresas(sel, incluir) {
+    poblarSelectDesde(sel, _empresasCat.filter(function (e) { return e.activa; })
+      .map(function (e) { return e.nombre; }), incluir);
+  }
+  function poblarSelectSectores(sel, incluir) {
+    poblarSelectDesde(sel, _sectoresCat.filter(function (s) { return s.activo; })
+      .map(function (s) { return s.nombre; }), incluir);
+  }
+  // Mantiene el catálogo en memoria tras un alta/edición/baja, para que el dropdown de alta
+  // refleje el cambio sin recargar toda la app.
+  function _upsertEmpresaCat(e) {
+    var row = { id: e.id, nombre: e.nombre, activa: !!e.activa };
+    var i = _empresasCat.findIndex(function (x) { return x.id === e.id; });
+    if (i >= 0) _empresasCat[i] = row; else _empresasCat.push(row);
+  }
+  function _upsertSectorCat(s) {
+    var row = { id: s.id, nombre: s.nombre, activo: !!s.activo };
+    var i = _sectoresCat.findIndex(function (x) { return x.id === s.id; });
+    if (i >= 0) _sectoresCat[i] = row; else _sectoresCat.push(row);
+  }
+
   function unlockEmpresa(el) {
     unlockCampo(el);
     if (!el) return;
@@ -760,8 +813,10 @@
       _empresaByName = {}; _empresaById = {};
       _sectorByName = {}; _sectorById = {};
       _puestoByName = {}; _puestoById = {};
+      _empresasCat = []; _sectoresCat = [];
       _rawEmpleados = []; _empById = {}; _empresaByRelacionId = {};
       _tipoNovByCodigo = {}; _novRawById = {}; _tipoDocByNombre = {}; _docsByEmp = {};
+      revocarTodasLasFotos();   // los blobs de foto del usuario anterior no sobreviven al logout
     },
 
     async init() {
@@ -770,6 +825,8 @@
       var pue = await getAllPages("/puestos/?page_size=100");
       emp.forEach(function (x) { _empresaByName[x.nombre] = x.id; _empresaById[x.id] = x.nombre; });
       sec.forEach(function (x) { _sectorByName[x.nombre] = x.id; _sectorById[x.id] = x.nombre; });
+      _empresasCat = emp.map(function (x) { return { id: x.id, nombre: x.nombre, activa: !!x.activa }; });
+      _sectoresCat = sec.map(function (x) { return { id: x.id, nombre: x.nombre, activo: !!x.activo }; });
       pue.forEach(function (x) { _puestoByName[x.nombre.toLowerCase()] = x.id; _puestoById[x.id] = x.nombre; });
       var tipos = await getAllPages("/tipos-novedad/?page_size=100");
       tipos.forEach(function (t) { _tipoNovByCodigo[t.codigo] = t; });
@@ -902,6 +959,97 @@
           };
         }),
       };
+    },
+
+    // ---------- Empresas (ABM en Configuración) ----------
+    // El backend ya soporta alta (POST), edición (PATCH) y baja lógica (activa=false); no hay
+    // DELETE físico a propósito. Solo RRHH/Admin escriben (el 403 es la seguridad real; el
+    // canvas esconde los botones por capacidad, igual que el resto).
+    // Trae TODAS las empresas (activas e inactivas) para poder reactivar una dada de baja.
+    async listEmpresas() {
+      var rows = await getAllPages("/empresas/?page_size=100");
+      rows.forEach(function (x) { _empresaByName[x.nombre] = x.id; _empresaById[x.id] = x.nombre; });
+      _empresasCat = rows.map(function (x) { return { id: x.id, nombre: x.nombre, activa: !!x.activa }; });
+      return rows.map(function (e) {
+        return {
+          id: e.id,
+          nombre: e.nombre,
+          razon_social: e.razon_social || "",
+          cuit: e.cuit || "",
+          activa: !!e.activa,
+        };
+      });
+    },
+
+    // `datos`: { nombre, razon_social, cuit }. Solo `nombre` es obligatorio (lo pide el modelo).
+    async crearEmpresa(datos) {
+      var nombre = (datos && datos.nombre || "").trim();
+      if (!nombre) throw new Error("El nombre de la empresa es obligatorio.");
+      var body = { nombre: nombre, razon_social: (datos.razon_social || "").trim(), cuit: (datos.cuit || "").trim() };
+      var e = await jsend("POST", "/empresas/", body);
+      _empresaByName[e.nombre] = e.id; _empresaById[e.id] = e.nombre;   // el dropdown de alta la ve al toque
+      _upsertEmpresaCat(e);
+      showToast("Empresa creada", "ok");
+      return e;
+    },
+
+    async editarEmpresa(id, datos) {
+      var body = {};
+      ["nombre", "razon_social", "cuit"].forEach(function (k) {
+        if (datos && datos[k] != null) body[k] = String(datos[k]).trim();
+      });
+      if (body.nombre === "") throw new Error("El nombre de la empresa no puede quedar vacío.");
+      var e = await jsend("PATCH", "/empresas/" + id + "/", body);
+      _empresaById[e.id] = e.nombre; _empresaByName[e.nombre] = e.id;
+      _upsertEmpresaCat(e);
+      showToast("Empresa actualizada", "ok");
+      return e;
+    },
+
+    // Baja/reactivación lógica: no borra, solo apaga la empresa (activa=false). Las relaciones
+    // laborales viejas la siguen nombrando; una empresa inactiva no se ofrece para altas nuevas.
+    async toggleEmpresaActiva(id, activa) {
+      var e = await jsend("PATCH", "/empresas/" + id + "/", { activa: !!activa });
+      _upsertEmpresaCat(e);
+      showToast(activa ? "Empresa reactivada" : "Empresa dada de baja", "ok");
+      return e;
+    },
+
+    // ---------- Sectores (ABM en Configuración) ----------
+    // Mismo patrón que empresa: el SectorViewSet ya soporta POST/PATCH y baja lógica (activo).
+    // El sector es transversal al grupo (no cuelga de una empresa). Solo tiene nombre y estado.
+    async listSectores() {
+      var rows = await getAllPages("/sectores/?page_size=100");
+      rows.forEach(function (x) { _sectorByName[x.nombre] = x.id; _sectorById[x.id] = x.nombre; });
+      _sectoresCat = rows.map(function (x) { return { id: x.id, nombre: x.nombre, activo: !!x.activo }; });
+      return rows.map(function (s) { return { id: s.id, nombre: s.nombre, activo: !!s.activo }; });
+    },
+
+    async crearSector(datos) {
+      var nombre = (datos && datos.nombre || "").trim();
+      if (!nombre) throw new Error("El nombre del sector es obligatorio.");
+      var s = await jsend("POST", "/sectores/", { nombre: nombre });
+      _sectorByName[s.nombre] = s.id; _sectorById[s.id] = s.nombre;
+      _upsertSectorCat(s);
+      showToast("Sector creado", "ok");
+      return s;
+    },
+
+    async editarSector(id, datos) {
+      var nombre = (datos && datos.nombre != null) ? String(datos.nombre).trim() : "";
+      if (!nombre) throw new Error("El nombre del sector no puede quedar vacío.");
+      var s = await jsend("PATCH", "/sectores/" + id + "/", { nombre: nombre });
+      _sectorById[s.id] = s.nombre; _sectorByName[s.nombre] = s.id;
+      _upsertSectorCat(s);
+      showToast("Sector actualizado", "ok");
+      return s;
+    },
+
+    async toggleSectorActivo(id, activo) {
+      var s = await jsend("PATCH", "/sectores/" + id + "/", { activo: !!activo });
+      _upsertSectorCat(s);
+      showToast(activo ? "Sector reactivado" : "Sector dado de baja", "ok");
+      return s;
     },
 
     // Novedades con cadenas expandidas: se agrupan las prórrogas bajo su madre
@@ -1220,6 +1368,10 @@
       set("fecha de ingreso", emp.ingreso);
       if (f["educacion"] && emp.educacion) f["educacion"].value = EDU_REV[emp.educacion] || f["educacion"].value;
       if (f["jornada legal"] && emp.jornada_legal) f["jornada legal"].value = JORNADA_REV[emp.jornada_legal] || f["jornada legal"].value;
+      // La empresa/sector actual puede estar inactiva: se incluye igual para que se muestre
+      // (el campo queda bloqueado en edición, así que no se puede cambiar por otra inactiva).
+      poblarSelectEmpresas(f["empresa"], emp.empresa);
+      poblarSelectSectores(f["sector"], emp.sector);
       if (f["empresa"] && emp.empresa !== "—") f["empresa"].value = emp.empresa;
       if (f["sector"] && emp.sector !== "—") f["sector"].value = emp.sector;
       if (f["puesto"]) f["puesto"].value = emp.puesto === "—" ? "" : emp.puesto;
@@ -1238,6 +1390,10 @@
     prepareAlta() {
       var f = readAltaForm();
       quitarNotaEdicion();          // el modal es el mismo que el de edición
+      // Opciones reales del catálogo (solo activos): reemplazan las hardcodeadas del canvas,
+      // así una empresa/sector creado desde Configuración aparece acá sin recargar.
+      poblarSelectEmpresas(f["empresa"]);
+      poblarSelectSectores(f["sector"]);
       unlockEmpresa(f["empresa"]);
       unlockCampo(f["dni"]);
       CAMPOS_RELACION.forEach(function (k) { unlockCampo(f[k]); });
@@ -1394,6 +1550,44 @@
       var r = await authedFetch(CONFIG.API + "/empleados/" + empId + "/documentos/" + docId + "/", { method: "DELETE" });
       if (!r.ok) throw new Error("No se pudo quitar el documento (" + r.status + ")");
       showToast("Documento quitado", "ok");
+    },
+
+    // ---------- Foto de perfil del empleado ----------
+    // Devuelve un objectURL para poner en <img src>, o null si el empleado no tiene foto.
+    // No sirve un <img src> a la URL de la API: exige Authorization y el media/ no es público.
+    async fotoObjectURL(empId) {
+      var r = await authedFetch(CONFIG.API + "/empleados/" + empId + "/foto/archivo/", {});
+      if (r.status === 404) return null;         // sin foto cargada: el canvas muestra el avatar por defecto
+      if (!r.ok) throw new Error("No se pudo cargar la foto (" + r.status + ")");
+      var blob = await r.blob();
+      revocarFoto(empId);                        // si había una vieja cacheada, se libera antes de pisarla
+      _fotoUrls[empId] = URL.createObjectURL(blob);
+      return _fotoUrls[empId];
+    },
+
+    // Sube/reemplaza la foto (multipart). El browser arma el boundary; no se fija content-type.
+    async subirFoto(empId, file) {
+      if (!file) throw new Error("Elegí una imagen.");
+      var fd = new FormData();
+      fd.append("foto", file);
+      var r = await authedFetch(CONFIG.API + "/empleados/" + empId + "/foto/", { method: "POST", body: fd });
+      var data = await r.json().catch(function () { return {}; });
+      if (!r.ok) {
+        var msg = (data.campos && Object.keys(data.campos).length)
+          ? flattenErrs(data.campos).join(" · ")
+          : (data.detalle || ("Error " + r.status));
+        throw new Error(msg);
+      }
+      revocarFoto(empId);                        // el objectURL viejo apunta a la imagen anterior
+      showToast("Foto actualizada", "ok");
+      return data;                               // trae tiene_foto/foto_url ya actualizados
+    },
+
+    async quitarFoto(empId) {
+      var r = await authedFetch(CONFIG.API + "/empleados/" + empId + "/foto/", { method: "DELETE" });
+      if (!r.ok) throw new Error("No se pudo quitar la foto (" + r.status + ")");
+      revocarFoto(empId);
+      showToast("Foto quitada", "ok");
     },
 
     // ---------- Adjuntos de novedad (la bitácora del hecho) ----------
