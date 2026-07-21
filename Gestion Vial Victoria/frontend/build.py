@@ -112,6 +112,9 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
       view: 'dashboard', cargaInicial: 'cargando', apiErr: null,
       empleados: null, novedades: null, dashboard: null, vencimientos: null,
       alertasDiaData: null, cfgVenc: null, tiposDoc: null,
+      // Los blobs de foto los revocó CeiboAPI.logout(); hay que soltar también sus URLs acá,
+      // o ensureFoto ve la entrada vieja y no rebaja la foto → <img> a un blob muerto (rota).
+      empresasCfgData: null, sectoresCfgData: null, fotoUrlByEmp: {},
     });
   };
   async componentDidMount() {
