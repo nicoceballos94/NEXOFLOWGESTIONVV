@@ -1101,6 +1101,25 @@ EDICIONES = [
         '<img src="{{ ficha.fotoUrl }}" alt="Foto de perfil" width="74" height="74" style="width:74px;height:74px;border-radius:20px;object-fit:cover;border:1px solid var(--border2);display:block"/>',
         "MEDIO: foto width/height (CLS)",
     ),
+
+    # ===== pulido tipográfico (auditoría 2026-07-22, tanda BAJA) =====
+
+    # --- MENOR: los números (DNI, días, conteos, KPIs, ranking) usan cifras proporcionales, así
+    #     que no alinean en columnas y "bailan" al cambiar. La app no tiene clases por número, así
+    #     que se aplica tabular-nums global (correcto en una app de datos). De paso, text-wrap:
+    #     pretty evita palabras huérfanas en textos largos (no hay <h#> para balance dirigido). ---
+    (
+        "body{margin:0;-webkit-font-smoothing:antialiased}",
+        "body{margin:0;-webkit-font-smoothing:antialiased;font-variant-numeric:tabular-nums;text-wrap:pretty}",
+        "MENOR: tabular-nums + text-wrap",
+    ),
+
+    # --- MENOR: el campo Nombre del alta no ofrece autocompletar (Email/Teléfono ya lo hacen). ---
+    (
+        '<input placeholder="Ej. Juan Pérez" style="{{ inputStyle }}"/>',
+        '<input autocomplete="name" placeholder="Ej. Juan Pérez" style="{{ inputStyle }}"/>',
+        "MENOR: autocomplete nombre",
+    ),
 ]
 
 
