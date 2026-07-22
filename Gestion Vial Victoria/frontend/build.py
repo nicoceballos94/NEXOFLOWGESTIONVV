@@ -1089,9 +1089,10 @@ EDICIONES = [
     ),
     (
         '<link rel="preconnect" href="https://fonts.googleapis.com">',
-        '<meta name="theme-color" content="#0A1120">\n'
+        '<meta name="theme-color" content="#EEF2F7">\n'
+        '<script>try{var _t=localStorage.getItem("ceibo-th")||"light";document.documentElement.setAttribute("data-th",_t);var _m=document.getElementsByName("theme-color")[0];if(_m)_m.setAttribute("content",_t==="dark"?"#0A1120":"#EEF2F7");}catch(e){}</script>\n'
         '<link rel="preconnect" href="https://fonts.googleapis.com">',
-        "MEDIO: theme-color",
+        "MEDIO: theme-color (sigue al tema, sin flash)",
     ),
 
     # --- MEDIO: la foto de perfil declara tamaño por style pero no con atributos width/height,
@@ -1141,6 +1142,26 @@ EDICIONES = [
         '<span onClick="{{ n.toggleExpand }}" style="{{ n.proBadge }}">',
         '<span onClick="{{ n.toggleExpand }}" role="button" tabindex="0" aria-expanded="{{ n.proExpanded }}" aria-label="{{ n.proLbl }}" onKeyDown="{{ n.toggleExpandKey }}" style="{{ n.proBadge }}">',
         "#1: badge de prórroga accesible",
+    ),
+
+    # ===== tema día/noche: default Día + recordar la elección (2026-07-22) =====
+    # Pedido del usuario: el botón manda y la elección persiste al recargar. Es comportamiento
+    # (localStorage + sincronizar theme-color), no color de diseño → build.py. Los colores día/
+    # noche ya viven en el canvas ([data-th=light] / :root). El default de primera visita pasa de
+    # noche a día; la barra del navegador y el data-th temprano evitan el parpadeo (ver script del
+    # head en la edición "theme-color").
+
+    # (a) estado inicial: Día por defecto, o lo último que se haya guardado con el botón.
+    (
+        "theme: 'dark', view: 'dashboard', selEmp: 1,",
+        "theme: (function(){try{return localStorage.getItem('ceibo-th')||'light';}catch(e){return 'light';}})(), view: 'dashboard', selEmp: 1,",
+        "tema: default día + restaurar de localStorage",
+    ),
+    # (b) el botón: además de cambiar, guarda la elección y sincroniza la barra del navegador.
+    (
+        "toggleTheme = ()=> this.setState(s=>({theme:s.theme==='dark'?'light':'dark'}));",
+        "toggleTheme = ()=> this.setState(s=>{var t=s.theme==='dark'?'light':'dark';try{localStorage.setItem('ceibo-th',t);}catch(e){}try{var m=document.getElementsByName('theme-color')[0];if(m)m.setAttribute('content',t==='dark'?'#0A1120':'#EEF2F7');}catch(e){}return {theme:t};});",
+        "tema: persistir elección + sincronizar theme-color",
     ),
 ]
 
