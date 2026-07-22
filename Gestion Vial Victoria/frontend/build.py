@@ -1120,6 +1120,28 @@ EDICIONES = [
         '<input autocomplete="name" placeholder="Ej. Juan Pérez" style="{{ inputStyle }}"/>',
         "MENOR: autocomplete nombre",
     ),
+
+    # ===== accesibilidad: cierre del hallazgo #1 (auditoría 2026-07-22) =====
+    # El badge de prórrogas de cada novedad es un <span onClick> que expande/colapsa la cadena,
+    # pero no era alcanzable por teclado (único <div/span onClick> que quedaba sin rol/tab/tecla;
+    # el resto de filas y acordeones ya estaban resueltos). Se le da semántica de button y handler
+    # de tecla, reusando la var `expanded` y el método toggleExpandNov(n.id) que ya existen en el
+    # objeto `n` de renderVals. Igual que el resto: comportamiento/a11y, no diseño → build.py.
+
+    # (a) sumar los dos campos al objeto n: proExpanded (para aria-expanded) y toggleExpandKey.
+    (
+        "toggleExpand:(e)=>{e.stopPropagation();this.toggleExpandNov(n.id);},",
+        "toggleExpand:(e)=>{e.stopPropagation();this.toggleExpandNov(n.id);},\n"
+        "        proExpanded:expanded,\n"
+        "        toggleExpandKey:(e)=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();e.stopPropagation();this.toggleExpandNov(n.id);}},",
+        "#1: n.proExpanded + n.toggleExpandKey",
+    ),
+    # (b) declarar el span como button accesible: rol, foco de teclado, estado y nombre.
+    (
+        '<span onClick="{{ n.toggleExpand }}" style="{{ n.proBadge }}">',
+        '<span onClick="{{ n.toggleExpand }}" role="button" tabindex="0" aria-expanded="{{ n.proExpanded }}" aria-label="{{ n.proLbl }}" onKeyDown="{{ n.toggleExpandKey }}" style="{{ n.proBadge }}">',
+        "#1: badge de prórroga accesible",
+    ),
 ]
 
 
