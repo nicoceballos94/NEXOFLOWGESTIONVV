@@ -1055,6 +1055,52 @@ EDICIONES = [
         '<input type="email" inputmode="email" autocomplete="email" spellcheck="false" placeholder="nombre@empresa.com" style="{{ inputStyle }}"/>',
         "ALTO: email type=email",
     ),
+
+    # ===== calidad de interacción (auditoría 2026-07-22, tanda MEDIA) =====
+    # Igual criterio: comportamiento/a11y sobre lo que ya existe, no rediseño visual → build.py.
+
+    # --- MEDIO: varios inputs/selects traen outline:none inline (búsqueda, selStyle, inputStyle)
+    #     sin foco de reemplazo: al navegar con teclado no se ve dónde estás parado. Se agrega un
+    #     anillo global en :focus-visible (con !important para ganarle al outline:none inline). ---
+    (
+        "input,select,button,textarea{font-family:inherit}",
+        "input,select,button,textarea{font-family:inherit}\n"
+        "  :focus-visible{outline:2px solid var(--accent)!important;outline-offset:2px}",
+        "MEDIO: foco visible (:focus-visible)",
+    ),
+
+    # --- MEDIO: al llegar al final del scroll dentro de un modal, el scroll "se escapa" y mueve
+    #     la página de atrás (scroll chaining). overscroll-behavior:contain lo frena. Se aplica al
+    #     diálogo y sus hijos para cubrir el contenedor real que scrollea, sea cual sea. ---
+    (
+        "@keyframes ov{from{opacity:0}to{opacity:1}}",
+        "@keyframes ov{from{opacity:0}to{opacity:1}}\n"
+        '  [role="dialog"],[role="dialog"] *{overscroll-behavior:contain}',
+        "MEDIO: overscroll-behavior en modales",
+    ),
+
+    # --- MEDIO: en tema oscuro, los controles nativos (date picker, dropdown del select) y las
+    #     barras de scroll se ven claros/rotos sin declarar color-scheme; y la barra del navegador
+    #     en el celular no combina sin theme-color. Se declaran ambos. ---
+    (
+        "body{margin:0;-webkit-font-smoothing:antialiased}",
+        "html{color-scheme:light dark}\n  body{margin:0;-webkit-font-smoothing:antialiased}",
+        "MEDIO: color-scheme",
+    ),
+    (
+        '<link rel="preconnect" href="https://fonts.googleapis.com">',
+        '<meta name="theme-color" content="#0A1120">\n'
+        '<link rel="preconnect" href="https://fonts.googleapis.com">',
+        "MEDIO: theme-color",
+    ),
+
+    # --- MEDIO: la foto de perfil declara tamaño por style pero no con atributos width/height,
+    #     así que el layout "salta" un poco mientras carga (CLS). Se agregan los atributos. ---
+    (
+        '<img src="{{ ficha.fotoUrl }}" alt="Foto de perfil" style="width:74px;height:74px;border-radius:20px;object-fit:cover;border:1px solid var(--border2);display:block"/>',
+        '<img src="{{ ficha.fotoUrl }}" alt="Foto de perfil" width="74" height="74" style="width:74px;height:74px;border-radius:20px;object-fit:cover;border:1px solid var(--border2);display:block"/>',
+        "MEDIO: foto width/height (CLS)",
+    ),
 ]
 
 
