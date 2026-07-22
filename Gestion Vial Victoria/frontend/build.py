@@ -1018,6 +1018,43 @@ EDICIONES = [
         '<span class="ceibo-navlbl" aria-label="{{ novBadgeAria }}" style="{{ novBadge }}">{{ novCount }}</span>',
         "MENOR-03: aria del badge de novedades",
     ),
+
+    # ===== accesibilidad (auditoría 2026-07-22, fase 2) =====
+    # Misma naturaleza que la fase 1: atributos de comportamiento/a11y sobre elementos que ya
+    # existen (type de inputs, idioma del documento, respeto por prefers-reduced-motion). Es
+    # cableado, no diseño visual → va acá y NO al canvas.
+
+    # --- ALTO: el documento no declara idioma; un lector de pantalla lo pronuncia en inglés y
+    #     la traducción automática no sabe de qué idioma parte. Se declara español. ---
+    (
+        "<html>",
+        '<html lang="es">',
+        "ALTO: <html lang=es>",
+    ),
+
+    # --- ALTO: las animaciones de entrada (pop/fin/ov) y el spinner no respetan la preferencia
+    #     del sistema de "reducir movimiento". Se agrega el media query estándar, que acorta
+    #     animaciones y transiciones para quien lo pidió (mareos, sensibilidad vestibular). ---
+    (
+        "@keyframes spin{to{transform:rotate(360deg)}}",
+        "@keyframes spin{to{transform:rotate(360deg)}}\n"
+        "  @media (prefers-reduced-motion: reduce){*,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important;scroll-behavior:auto!important}}",
+        "ALTO: prefers-reduced-motion",
+    ),
+
+    # --- ALTO: los campos Teléfono y Email del alta son <input> sin type: en el celular no
+    #     aparece el teclado adecuado y se pierde la validación del navegador. Se les da type
+    #     e inputmode; al email además autocomplete y spellcheck=false. ---
+    (
+        '<input placeholder="+54 379 …" style="{{ inputStyle }}"/>',
+        '<input type="tel" inputmode="tel" autocomplete="tel" placeholder="+54 379 …" style="{{ inputStyle }}"/>',
+        "ALTO: teléfono type=tel",
+    ),
+    (
+        '<input placeholder="nombre@empresa.com" style="{{ inputStyle }}"/>',
+        '<input type="email" inputmode="email" autocomplete="email" spellcheck="false" placeholder="nombre@empresa.com" style="{{ inputStyle }}"/>',
+        "ALTO: email type=email",
+    ),
 ]
 
 
