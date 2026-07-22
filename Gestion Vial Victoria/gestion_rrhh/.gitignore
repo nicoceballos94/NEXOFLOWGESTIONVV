@@ -5,6 +5,10 @@ venv/
 .env
 db.sqlite3
 staticfiles/
+# Respaldos de documentos (apto médico, carnet): datos personales de salud. En dev con
+# docker viven en un volumen, pero corriendo fuera de docker MEDIA_ROOT cae acá, y un
+# `git add .` distraído los publicaría en el repo para siempre.
+media/
 .pytest_cache/
 .ruff_cache/
 *.egg-info/

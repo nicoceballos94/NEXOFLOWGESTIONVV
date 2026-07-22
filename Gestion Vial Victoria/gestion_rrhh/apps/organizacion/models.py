@@ -5,6 +5,7 @@ la pertenencia a una empresa se da por la RelacionLaboral (app empleados, MVP1).
 """
 from django.conf import settings
 from django.db import models
+from django.db.models.functions import Lower
 
 from common.models import ModeloBase
 
@@ -53,7 +54,11 @@ class Sector(ModeloBase):
 
 
 class Puesto(ModeloBase):
-    nombre = models.CharField(max_length=100, unique=True)
+    # El catálogo se puebla desde el alta de empleados, donde el puesto se escribe a mano:
+    # sin unicidad case-insensitive, "Chofer"/"chofer"/"CHOFER " son tres puestos distintos
+    # que después ensucian los filtros. El unique simple de Postgres es case-sensitive y no
+    # alcanza; el nombre se normaliza (strip) en save() para que el índice compare lo mismo.
+    nombre = models.CharField(max_length=100)
     sector = models.ForeignKey(
         Sector, null=True, blank=True, on_delete=models.PROTECT, related_name="puestos"
     )
@@ -63,6 +68,13 @@ class Puesto(ModeloBase):
         verbose_name = "puesto"
         verbose_name_plural = "puestos"
         ordering = ["nombre"]
+        constraints = [
+            models.UniqueConstraint(Lower("nombre"), name="puesto_nombre_unico_ci"),
+        ]
+
+    def save(self, *args, **kwargs):
+        self.nombre = (self.nombre or "").strip()
+        return super().save(*args, **kwargs)
 
     def __str__(self):
         return self.nombre

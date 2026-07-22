@@ -1,0 +1,27 @@
+name: Frontend CI
+
+on:
+  push:
+    paths:
+      - "Gestion Vial Victoria/frontend/**"
+      - ".github/workflows/frontend-ci.yml"
+  pull_request:
+    paths:
+      - "Gestion Vial Victoria/frontend/**"
+
+defaults:
+  run:
+    working-directory: "Gestion Vial Victoria/frontend"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # build.py solo usa la stdlib: no hay que instalar nada.
+      # Cada inyección falla ruidosamente si no encuentra su ancla, así que esto
+      # detecta un export de Claude Design que rompa el cableado al backend.
+      - run: python build.py

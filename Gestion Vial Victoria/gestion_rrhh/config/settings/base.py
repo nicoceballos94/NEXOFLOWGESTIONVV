@@ -25,6 +25,7 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    "django.contrib.postgres",  # ExclusionConstraint + btree_gist (novedades)
     # terceros
     "rest_framework",
     "rest_framework_simplejwt.token_blacklist",
@@ -35,6 +36,9 @@ INSTALLED_APPS = [
     "common",
     "apps.usuarios",
     "apps.organizacion",
+    "apps.empleados",
+    "apps.novedades",
+    "apps.dashboard",
 ]
 
 MIDDLEWARE = [
@@ -66,10 +70,10 @@ TEMPLATES = [
     },
 ]
 
-# Postgres en docker/CI/prod; sqlite como fallback local mientras no haya
-# features específicas de Postgres (a partir de Fase 1/MVP1 es Postgres sí o sí:
-# índices parciales y constraints de exclusión no existen en sqlite).
-DATABASES = {"default": env.db("DATABASE_URL", default=f"sqlite:///{BASE_DIR / 'db.sqlite3'}")}
+# Postgres y solo Postgres: el fallback a sqlite murió cuando `novedades` incorporó el
+# ExclusionConstraint de solapamiento (btree_gist). Las migraciones no corren en sqlite.
+# Levantar la base con `docker compose up` antes de migrar o correr los tests.
+DATABASES = {"default": env.db("DATABASE_URL")}
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
@@ -89,6 +93,27 @@ USE_TZ = True  # se persiste en UTC
 
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
+
+# --- Archivos de respaldo de documentos (CU-06) ---
+# Los archivos NO viven en la base: en la columna va la ruta (~80 bytes), el binario va acá.
+# `MEDIA_URL` a propósito NO se define y `media/` NO se sirve como estático: un apto médico
+# es un dato de salud, así que se descarga solo por el endpoint que valida rol y scope
+# (`/empleados/{id}/documentos/{doc_id}/archivo/`). Servirlo por URL directa saltearía el
+# login: en `media/` no hay permisos, solo el sistema de archivos.
+# Con volumen persistente en docker-compose; migrar a S3/R2 el día del deploy es cambiar
+# STORAGES por django-storages, sin tocar el modelo (por eso el FileField y no una URL).
+MEDIA_ROOT = env("MEDIA_ROOT", default=str(BASE_DIR / "media"))
+
+# Tope de subida. El default de Django (2.5 MB en memoria) deja pasar archivos enormes a
+# disco temporal; acá se corta antes, en el serializer.
+DOCUMENTO_MAX_BYTES = env.int("DOCUMENTO_MAX_BYTES", default=10 * 1024 * 1024)  # 10 MB
+DOCUMENTO_EXTENSIONES = ("pdf", "jpg", "jpeg", "png", "webp", "heic")
+
+# Foto de perfil del empleado: solo imágenes raster (sin PDF ni SVG). Se sirve inline por el
+# mismo tipo de endpoint protegido que los documentos; el SVG queda afuera porque se ejecuta
+# como HTML en el navegador y esta imagen sí se muestra en vez de descargarse.
+FOTO_MAX_BYTES = env.int("FOTO_MAX_BYTES", default=5 * 1024 * 1024)  # 5 MB
+FOTO_EXTENSIONES = ("jpg", "jpeg", "png", "webp", "heic")
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
@@ -112,6 +137,11 @@ REST_FRAMEWORK = {
         "anon": "20/min",
         "user": "300/min",
         "login": "5/min",
+        # Scope propio, y no el de `login`: compartirlo hacía que varias pestañas renovando
+        # su access (dura 15 min) se comieran los 5/min y cortaran sesiones válidas, y de
+        # paso le regalaba cupo a un ataque de fuerza bruta contra el login. El refresh ya
+        # exige un token válido, así que puede ser holgado sin aflojar la puerta.
+        "refresh": "30/min",
     },
 }
 
@@ -134,3 +164,9 @@ SPECTACULAR_SETTINGS = {
 }
 
 CORS_ALLOWED_ORIGINS = env.list("CORS_ALLOWED_ORIGINS", default=[])
+# El front corre en otro origen y descarga los respaldos con fetch (necesita mandar el
+# header Authorization, cosa que un <a href> no hace). De una respuesta cross-origin, el
+# navegador solo deja leer a JS un puñado de headers: Content-Disposition no está entre
+# ellos salvo que el servidor lo exponga. Sin esto, el nombre que arma la vista no llega
+# y el apto médico se descarga como "documento", sin extensión ni con qué abrirlo.
+CORS_EXPOSE_HEADERS = ["Content-Disposition"]

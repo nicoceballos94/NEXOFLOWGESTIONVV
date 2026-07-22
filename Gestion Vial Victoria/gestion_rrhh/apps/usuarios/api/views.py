@@ -13,8 +13,10 @@ class LoginThrottledView(TokenObtainPairView):
 
 
 class RefreshThrottledView(TokenRefreshView):
+    """Renovación del access con throttle propio (30/min), separado del login."""
+
     throttle_classes = [ScopedRateThrottle]
-    throttle_scope = "login"
+    throttle_scope = "refresh"
 
 
 class MeView(RetrieveAPIView):
