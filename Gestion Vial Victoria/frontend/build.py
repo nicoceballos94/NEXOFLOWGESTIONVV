@@ -103,6 +103,7 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
       await window.CeiboAPI.login(S.loginUsuario.trim(), S.loginClave);
       // La clave no queda en el estado ni un momento más de lo necesario.
       this.setState({ sesion: true, loginOcupado: false, loginClave: '', loginError: '' });
+      window.CeiboAPI.a11ySesion(true);   // se abre la app: el fondo deja de estar inerte (ALTO-03)
       await this.cargarTodo();
     } catch (err) {
       this.setState({ loginOcupado: false, loginClave: '', loginError: String(err.message || err) });
@@ -110,6 +111,7 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
   };
   doLogout = () => {
     window.CeiboAPI.logout();
+    window.CeiboAPI.a11ySesion(false);   // vuelve el login: el fondo se apaga del árbol accesible
     // Los datos de la sesión anterior se van con ella: si no, el siguiente en entrar ve
     // por un instante la dotación del anterior antes de que termine su propia carga.
     this.setState({
@@ -130,18 +132,27 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
       this.doLogout();
       this.setState({ loginError: 'Tu sesión venció. Ingresá de nuevo.' });
     });
+    // Arranca sin sesión (login a la vista): el fondo va inerte ya, antes de resolver la
+    // restauración, para que no quede ni un frame con el shell navegable detrás del login.
+    window.CeiboAPI.a11ySesion(false);
     let hay = false;
     try {
       hay = await window.CeiboAPI.restaurarSesion();
     } catch (err) {
       console.warn('[ceibo] no se pudo restaurar la sesión', err);
     }
+    // Sin sesión, el fondo va inerte: el login lo tapa visualmente pero sin esto seguía en el
+    // árbol accesible (sidebar, header, todas las acciones y los datos mock). Con sesión, activo.
+    window.CeiboAPI.a11ySesion(hay);
     if (!hay) return;             // sin sesión: queda la pantalla de login
     this.setState({ sesion: true });
     await this.cargarTodo();
   }
   renderVals() {
     const v = this.renderValsBase();
+    // Dato utilizable: descarta null (sin cargar / fallo de red) y el marcador SIN_PERMISO (403).
+    // Sin esto, un módulo que el rol no puede ver se quedaría con los datos de ejemplo del canvas.
+    const _real = (x) => !!x && !window.CeiboAPI.esSinPermiso(x);
     // El canvas trae datos de ejemplo hardcodeados (134 activos, rankings, alertas) para
     // poder diseñarse solo. Hasta que termina la primera carga, `base()`/`novBase()`/
     // `metrics` devuelven ESOS valores, así que la app abría mostrando cifras inventadas
@@ -150,6 +161,10 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
     const carga = this.state.cargaInicial;
     v.cargandoInit = carga === 'cargando';
     v.errorInit = carga === 'error';
+    // Copy por defecto del panel de error (el markup del canvas dejó de tener texto fijo: build.py
+    // lo ató a estas vars). El bloque de "sin permiso", más abajo, las pisa para un 403.
+    v.errorTitle = 'No se pudieron cargar los datos';
+    v.errorText = 'No se muestra nada en vez de mostrar información de ejemplo. Reintentá recargando la página.';
     // Sesión: el canvas define doLogin/doLogout como maqueta (entra con cualquier campo no
     // vacío). Acá se pisan por los reales, y el pie del sidebar deja de decir "Luciana
     // Sosa · Referente RRHH" para decir quién entró de verdad.
@@ -225,21 +240,21 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
     // alta tipos nuevos y el desplegable tiene que mostrarlos.
     if (this.state.tiposDoc) v.docTipos = this.state.tiposDoc;
     // Dashboard con datos reales: reemplaza las métricas mock del canvas.
-    if (this.state.dashboard) {
+    if (_real(this.state.dashboard)) {
       Object.assign(v, window.CeiboAPI.dashboardVals(this.state.dashboard, this.state.rot, v.metrics));
     }
     // Reportes con datos reales: dotación en el tiempo, ausentismo por tipo y motivos de
     // egreso. Reemplazan las series inventadas del canvas (y con ellas el banner de demo).
-    if (this.state.reportes) {
+    if (_real(this.state.reportes)) {
       Object.assign(v, window.CeiboAPI.reportesVals(this.state.reportes));
     }
     // Vencimientos reales: reemplazan los 4 grupos mock del canvas.
-    if (this.state.vencimientos) {
+    if (_real(this.state.vencimientos)) {
       Object.assign(v, window.CeiboAPI.vencimientosVals(
         this.state.vencimientos, this._uiSem(), v.vencGroups));
     }
     // Alertas del día: reemplazan las 4 inventadas del canvas y descongelan la fecha.
-    if (this.state.alertasDiaData) {
+    if (_real(this.state.alertasDiaData)) {
       Object.assign(v, window.CeiboAPI.alertasDiaVals(this.state.alertasDiaData, this._uiSem()));
     }
     // Destinatarios y canales: no hay backend donde guardarlos, así que se apagan en vez
@@ -257,7 +272,7 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
       console.error('[ceibo] CeiboAPI.notifVals no está disponible; ¿ceibo-api.js desactualizado?');
     }
     // Parametría real: las filas salen del catálogo, así que un tipo nuevo aparece solo.
-    if (this.state.cfgVenc) {
+    if (_real(this.state.cfgVenc)) {
       // Los aria van acá también: este override reemplaza a cfgRows del canvas, así que
       // sin esto todos los botones se seguirían anunciando como "+" y "−" a secas.
       v.cfgRows = this.state.cfgVenc.map((f) => ({
@@ -267,6 +282,27 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
         inc: () => this.cfgVencChange(f.clave, 5),
         dec: () => this.cfgVencChange(f.clave, -5),
       }));
+    }
+    // ALTO-01: la vista actual sin permiso (403) o sin datos NO debe quedarse con los mocks del
+    // canvas. Se apaga el módulo y se reusa el panel de error con el aviso que corresponda.
+    const _modVista = { dashboard: this.state.dashboard, reportes: this.state.reportes,
+      alertas: this.state.vencimientos, config: this.state.cfgVenc };
+    if (carga === 'lista' && (this.state.view in _modVista)) {
+      const _d = _modVista[this.state.view];
+      const _sinPermiso = window.CeiboAPI.esSinPermiso(_d);
+      if (_sinPermiso || _d === null) {
+        v.isDash = false; v.isEmp = false; v.isFicha = false; v.isNov = false;
+        v.isAle = false; v.isRep = false; v.isCfg = false;
+        v.errorInit = true;
+        if (_sinPermiso) {
+          v.errorTitle = 'No tenés permisos para ver esta sección';
+          v.errorText = 'Tu rol no tiene acceso a este módulo. Si creés que es un error, avisá a Administración.';
+          v.apiErrMsg = '';   // un 403 no es un error técnico que haya que mostrar
+        } else {
+          v.errorTitle = 'No se pudo cargar esta sección';
+          v.errorText = 'No se muestra nada en vez de mostrar información de ejemplo. Reintentá recargando la página.';
+        }
+      }
     }
     return v;
   }
@@ -337,12 +373,19 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
   };
   goCfg = () => { this.setView('config'); this.reloadConfigVenc(); this.reloadEmpresasCfg(); this.reloadSectoresCfg(); };
   openAltaNov = () => {
-    this.setState({ modal: 'altanov', editNovId: null, novFormTipo: 'Falta' });
+    // praxis: false a propósito (ALTO-02). El estado del canvas arranca con praxis:true, así que
+    // un alta nueva abría con "Requiere praxis" activado y los campos médicos/ART visibles aunque
+    // el tipo por defecto sea "Falta" —y el adaptador terminaba mandando requiere_praxis=true—.
+    this.setState({ modal: 'altanov', editNovId: null, novFormTipo: 'Falta', praxis: false });
     setTimeout(() => window.CeiboAPI.populateNovForm(), 60);
     this._a11y('[data-modal="altanov"]');
   };
   openEditNov = (id) => {
-    this.setState({ modal: 'altanov', editNovId: id, editProrrogaIdx: null, novFormTipo: window.CeiboAPI.novFormTipoFor(id) });
+    // En edición el toggle refleja el valor real de la novedad (no el que quedó de la última vez
+    // que se abrió el modal): editar un accidente sigue mostrando sus campos de praxis.
+    const n = this.novList().find((x) => x.id === id);
+    this.setState({ modal: 'altanov', editNovId: id, editProrrogaIdx: null,
+      novFormTipo: window.CeiboAPI.novFormTipoFor(id), praxis: !!(n && n.praxis) });
     setTimeout(() => window.CeiboAPI.prefillNovForm(id), 60);
     this._a11y('[data-modal="altanov"]');
   };
@@ -692,6 +735,20 @@ EDICIONES = [
         "  confirmReingreso = ()=> this.setState(s=>({ bajaSet: s.bajaSet.filter(x=>x!==s.reingresoId), modal:null }));\n}",
         BLOQUE_INTEGRACION,
         "clase: bloque de integración",
+    ),
+    # --- panel de error: copy dinámico (carga fallida vs. sin permiso, ALTO-01) ---
+    # El canvas trae el texto fijo "No se pudieron cargar los datos". Se ata a vars para que el
+    # mismo panel sirva de aviso de "no tenés permisos" cuando el rol recibe un 403, en vez de
+    # dejar la vista con los datos de ejemplo del canvas. La lógica está en renderVals.
+    (
+        '<div style="font-size:13.5px;font-weight:600;color:var(--text)">No se pudieron cargar los datos</div>',
+        '<div style="font-size:13.5px;font-weight:600;color:var(--text)">{{ errorTitle }}</div>',
+        "panel de error: título → errorTitle",
+    ),
+    (
+        '<div style="font-size:12px;color:var(--text3);line-height:1.5">No se muestra nada en vez de mostrar información de ejemplo. Reintentá recargando la página.</div>',
+        '<div style="font-size:12px;color:var(--text3);line-height:1.5">{{ errorText }}</div>',
+        "panel de error: texto → errorText",
     ),
     # (El FIX del header malformado de "Registrar/Editar novedad" ya no hace falta:
     #  el export 2026-07-10 de Claude Design trae el header balanceado de fábrica.)

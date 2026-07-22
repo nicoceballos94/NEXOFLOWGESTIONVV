@@ -118,7 +118,13 @@
   }
   async function jget(path) {
     var r = await authedFetch(CONFIG.API + path, {});
-    if (!r.ok) throw new Error("GET " + path + " → " + r.status);
+    if (!r.ok) {
+      // El status va como propiedad, no solo en el texto: quien llama distingue un 403 (el rol
+      // no ve este recurso) de un fallo de red sin tener que parsear el mensaje.
+      var e = new Error("GET " + path + " → " + r.status);
+      e.status = r.status;
+      throw e;
+    }
     return r.json();
   }
   async function jsend(method, path, body) {
@@ -447,6 +453,30 @@
       if (txt) el.setAttribute("aria-label", txt);
     });
   }
+
+  // ---------- inert del fondo: login y modales (ALTO-03 / MEDIO-02) ----------
+  // El login y los modales son overlays visuales (z-index) sobre la app, pero eso NO los saca
+  // del árbol accesible: un lector de pantalla igual anuncia el sidebar, el header y todas las
+  // acciones de atrás, y el Tab puede llevar el foco a controles tapados. `inert` los apaga de
+  // verdad (foco + a11y). Se marcan solo las dos regiones de la app —el <aside> y la columna de
+  // contenido— y NO los overlays, que son hermanos: así el login/modal de adelante sigue vivo.
+  function _regionesApp() {
+    var shell = document.querySelector(".ceibo-shell");
+    if (!shell) return [];
+    var aside = shell.querySelector(":scope > aside");
+    var contenido = aside ? aside.nextElementSibling : null;   // el <div> de header+main
+    return [aside, contenido].filter(Boolean);
+  }
+  function _fondoInerte(on) {
+    _regionesApp().forEach(function (el) {
+      if (on) { el.setAttribute("inert", ""); el.setAttribute("aria-hidden", "true"); }
+      else { el.removeAttribute("inert"); el.removeAttribute("aria-hidden"); }
+    });
+  }
+
+  // Marcador de "el rol no puede ver este módulo" (respuesta 403), distinto de `null` (que es
+  // fallo de red / módulo sin cargar). Se compara por identidad, así que es un objeto único.
+  var SIN_PERMISO = { __sinPermiso: true };
 
   // ---------- campos de la ficha que el guardado NO toca ----------
   // El PATCH de edición va contra ActualizarEmpleadoSerializer, que expone SOLO datos de la
@@ -781,9 +811,18 @@
   window.CeiboAPI = {
     toast: showToast,
 
-    // Se llama al abrir cada modal: rotula los campos y encierra el foco (ver arriba).
-    a11yModal(sel) { rotularCampos(sel); focoAtrapado(sel); },
-    a11yCerrar: focoDevuelto,
+    // Se llama al abrir cada modal: rotula los campos, encierra el foco y apaga el fondo.
+    a11yModal(sel) { rotularCampos(sel); focoAtrapado(sel); _fondoInerte(true); },
+    // Al cerrar: devuelve el foco y reactiva el fondo (hay sesión; si no la hubiera, la app
+    // ya estaría inerte por el login, y a11ySesion la maneja aparte).
+    a11yCerrar() { focoDevuelto(); _fondoInerte(false); },
+    // El login tapa la app entera: mientras no hay sesión, el fondo va inerte (ALTO-03).
+    a11ySesion(haySesion) { _fondoInerte(!haySesion); },
+
+    // Marcador y test de "sin permiso" (403): el componente los usa para no pisar los mocks
+    // del canvas con datos que el rol no puede ver, y para mostrar el aviso en su lugar.
+    SIN_PERMISO: SIN_PERMISO,
+    esSinPermiso(x) { return x === SIN_PERMISO; },
 
     // Cambio de módulo = pantalla nueva: se entra por arriba. El scroll vive en <main>
     // (no en window), así que scrollTo() del navegador no sirve.
@@ -923,7 +962,10 @@
     // rol no tiene panel / falla la red); el componente lo pasa por dashboardVals.
     async loadDashboard() {
       try { return await jget("/dashboard/metricas/"); }
-      catch (e) { console.warn("[ceibo] dashboard no disponible", e); return null; }
+      catch (e) {
+        if (e && e.status === 403) return SIN_PERMISO;   // el rol no ve el panel: NO caer en mocks
+        console.warn("[ceibo] dashboard no disponible", e); return null;
+      }
     },
     // Traduce la respuesta del backend a las vars del diseño (metrics, rankFaltas,
     // rotación). `mockMetrics` aporta solo los íconos SVG del canvas.
@@ -936,7 +978,10 @@
     // Igual que el dashboard: dict crudo del backend, o null si el rol no ve la dotación.
     async loadReportes() {
       try { return await jget("/reportes/metricas/"); }
-      catch (e) { console.warn("[ceibo] reportes no disponibles", e); return null; }
+      catch (e) {
+        if (e && e.status === 403) return SIN_PERMISO;
+        console.warn("[ceibo] reportes no disponibles", e); return null;
+      }
     },
     // Traduce la respuesta a las vars del diseño: dotación (sparkline + total + variación),
     // ausentismo (barras) y egresos (dona + leyenda).
@@ -953,13 +998,19 @@
     // devuelve el dict crudo, o null si el rol no ve la dotación / falla la red.
     async loadVencimientos() {
       try { return await jget("/alertas/vencimientos/"); }
-      catch (e) { console.warn("[ceibo] vencimientos no disponibles", e); return null; }
+      catch (e) {
+        if (e && e.status === 403) return SIN_PERMISO;
+        console.warn("[ceibo] vencimientos no disponibles", e); return null;
+      }
     },
 
     // Alertas del día (tarjeta del panel): vencimientos + certificados + cumpleaños.
     async loadAlertasDia() {
       try { return await jget("/alertas/del-dia/"); }
-      catch (e) { console.warn("[ceibo] alertas del día no disponibles", e); return null; }
+      catch (e) {
+        if (e && e.status === 403) return SIN_PERMISO;
+        console.warn("[ceibo] alertas del día no disponibles", e); return null;
+      }
     },
     // El backend manda `estado` (bad/warn/info), no colores: el semáforo lo pinta el diseño.
     alertasDiaVals(d, ui) {
@@ -974,7 +1025,10 @@
     // Parametría de alertas: con cuántos días de anticipación avisa cada cosa.
     async loadConfigVenc() {
       try { return (await jget("/config/vencimientos/")).filas; }
-      catch (e) { console.warn("[ceibo] config de vencimientos no disponible", e); return null; }
+      catch (e) {
+        if (e && e.status === 403) return SIN_PERMISO;
+        console.warn("[ceibo] config de vencimientos no disponible", e); return null;
+      }
     },
     async guardarDiasAviso(clave, dias) {
       return await jsend("PATCH", "/config/vencimientos/", { clave: clave, dias: dias });
