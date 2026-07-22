@@ -14,6 +14,7 @@ from apps.empleados.models import (
     Empleado,
     EstadoRelacion,
     RelacionLaboral,
+    TipoContrato,
     TipoDocumento,
 )
 from apps.novedades.models import EstadoNovedad, Novedad, TipoNovedad
@@ -79,6 +80,26 @@ def test_dice_cuanto_falta_o_cuanto_hace_que_vencio(empresa, apto):
     textos = " | ".join(_textos(alertas_del_dia(hoy=HOY)))
     for apellido, (_, esperado) in casos.items():
         assert esperado in textos, f"{apellido}: falta '{esperado}'"
+
+
+def test_contrato_a_plazo_sin_fecha_se_rotula_sin_fecha_no_vencido(empresa):
+    """Un plazo fijo sin fecha de fin es alerta roja, pero el título no dice "vencido" —no se
+    sabe cuándo vence, es documentación incompleta—: dice "sin fecha". Y el grupo es
+    "Contrato a plazo", que no se confunde con el tipo de documento "Contrato" (MEDIO-05)."""
+    emp = Empleado.objects.create(legajo="9001", dni="40999001", nombre="Test", apellido="SinFin")
+    RelacionLaboral.objects.create(
+        empleado=emp,
+        empresa=empresa,
+        fecha_ingreso=date(2024, 1, 10),
+        estado=EstadoRelacion.ACTIVA,
+        tipo_contrato=TipoContrato.PLAZO_FIJO,
+        fecha_vencimiento_contrato=None,
+    )
+    data = alertas_del_dia(hoy=HOY)
+    assert "Contrato a plazo sin fecha" in _titulos(data)
+    assert "Contrato a plazo vencido" not in _titulos(data)
+    item = next(i for i in data["items"] if i["title"] == "Contrato a plazo sin fecha")
+    assert item["estado"] == "bad"  # sigue siendo alerta roja
 
 
 def test_lo_urgente_va_primero(empresa, apto):

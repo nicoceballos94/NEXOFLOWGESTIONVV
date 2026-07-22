@@ -33,7 +33,9 @@ from apps.organizacion.selectors import dias_aviso_contratos
 # El contrato indeterminado no termina: no hay nada que avisar.
 CONTRATOS_QUE_VENCEN = [t for t in TipoContrato.values if t != TipoContrato.INDETERMINADO]
 
-GRUPO_CONTRATOS = "Contratos"
+# "Contrato a plazo" y no "Contratos": desambigua del tipo de documento "Contrato" (el
+# escaneo del contrato firmado). Este grupo es el vencimiento del PLAZO del contrato, otra cosa.
+GRUPO_CONTRATOS = "Contrato a plazo"
 
 
 def _estado(vence: date | None, hoy: date, dias_aviso: int) -> str:

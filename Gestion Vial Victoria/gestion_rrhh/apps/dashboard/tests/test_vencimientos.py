@@ -8,7 +8,7 @@ from datetime import date, timedelta
 import pytest
 from rest_framework.test import APIClient
 
-from apps.dashboard.vencimientos import vencimientos_de_la_dotacion
+from apps.dashboard.vencimientos import GRUPO_CONTRATOS, vencimientos_de_la_dotacion
 from apps.empleados.models import (
     DocumentoEmpleado,
     Empleado,
@@ -116,7 +116,7 @@ def test_el_indeterminado_no_vence_pero_el_plazo_fijo_sin_fecha_alerta(empresa):
         fecha_vencimiento_contrato=HOY + timedelta(days=10),
     )
 
-    items = _items(vencimientos_de_la_dotacion(hoy=HOY), "Contratos")
+    items = _items(vencimientos_de_la_dotacion(hoy=HOY), GRUPO_CONTRATOS)
     por_apellido = _apellidos(items)
     assert "Indeterminado" not in por_apellido
     assert (por_apellido["SinFecha"]["estado"], por_apellido["SinFecha"]["fecha"]) == ("bad", None)

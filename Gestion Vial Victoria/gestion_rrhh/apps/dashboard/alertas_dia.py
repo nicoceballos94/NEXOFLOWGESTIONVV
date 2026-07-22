@@ -21,7 +21,7 @@ from datetime import date
 from apps.empleados.models import Empleado, EstadoRelacion
 from apps.novedades.models import EstadoNovedad, Novedad
 
-from .vencimientos import GRUPO_CONTRATOS, vencimientos_de_la_dotacion
+from .vencimientos import vencimientos_de_la_dotacion
 
 MAX_ITEMS = 6
 
@@ -72,11 +72,17 @@ def _de_vencimientos(hoy: date) -> list[dict]:
     """Documentos y contratos vencidos o por vencer. Los que están al día no son alerta."""
     items = []
     for grupo in vencimientos_de_la_dotacion(hoy=hoy)["grupos"]:
-        etiqueta = "Contrato" if grupo["tipo"] == GRUPO_CONTRATOS else grupo["tipo"]
+        # El nombre del grupo ya es el rótulo ("Apto médico", "Contrato a plazo", …).
+        etiqueta = grupo["tipo"]
         for i in grupo["items"]:
             if i["estado"] == "ok":
                 continue
-            estado_txt = "vencido" if i["estado"] == "bad" else "próximo a vencer"
+            # Sin fecha cargada no es "vencido" —no se sabe cuándo vence—: es documentación
+            # incompleta. Sigue siendo alerta roja (estado bad), pero el rótulo dice la verdad.
+            if i["estado"] == "bad":
+                estado_txt = "sin fecha" if i["fecha"] is None else "vencido"
+            else:
+                estado_txt = "próximo a vencer"
             items.append(
                 {
                     "title": f"{etiqueta} {estado_txt}",

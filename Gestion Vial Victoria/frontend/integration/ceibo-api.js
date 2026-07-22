@@ -1076,7 +1076,9 @@
               fecha: i.fecha ? fmtISOtoDMY(i.fecha) : "—",
               dot: ui.dot(ui.semColor(i.estado)),
               badge: ui.badge(i.estado),
-              label: ui.semLabel(i.estado),
+              // Sin fecha es rojo (bad) igual, pero no es "Vencido": no se sabe cuándo vence,
+              // es documentación incompleta. El rótulo lo dice; el color no cambia (MEDIO-05).
+              label: (i.estado === "bad" && !i.fecha) ? "Sin fecha" : ui.semLabel(i.estado),
             };
           }),
           summary: n.ok + " al día · " + n.warn + " por vencer · " + n.bad + " vencidos",
