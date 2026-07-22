@@ -13,7 +13,12 @@ class UsuarioActualSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Usuario
-        fields = ("id", "username", "first_name", "last_name", "email", "roles", "capacidades")
+        # is_superuser: el superusuario no está en ningún grupo, así que `roles` viene vacío;
+        # el front lo usa para mostrar "Administrador" en vez de "Sin rol asignado" (MENOR-01).
+        fields = (
+            "id", "username", "first_name", "last_name", "email",
+            "is_superuser", "roles", "capacidades",
+        )
         read_only_fields = fields
 
     def get_capacidades(self, obj) -> dict:

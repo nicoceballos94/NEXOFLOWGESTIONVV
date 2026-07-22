@@ -448,9 +448,26 @@
     var m = document.querySelector(sel);
     if (!m) return;
     m.querySelectorAll("input,select,textarea").forEach(function (el) {
+      // El <input type=date> transparente es solo el disparador del calendario; comparte
+      // etiqueta con el input de texto de al lado, así que rotularlo crea DOS controles con el
+      // mismo nombre (MEDIO-01). Se lo saca del árbol accesible en neutralizarDatePickers.
+      if (el.type === "date") return;
       if (el.getAttribute("aria-label")) return;
       var txt = labelFor(el).replace(/\s*·\s*$/, "").trim();
       if (txt) el.setAttribute("aria-label", txt);
+    });
+  }
+
+  // MEDIO-01: cada campo de fecha es un input de texto (dd/mm/aaaa) + un <input type=date>
+  // transparente encima que solo abre el calendario. Los dos se anunciaban como "Fecha", así
+  // que el lector de pantalla veía dos textboxes por dato. El de texto ya es operable por
+  // teclado (se escribe la fecha); el de date se saca del árbol y del tab order.
+  function neutralizarDatePickers(sel) {
+    var m = document.querySelector(sel);
+    if (!m) return;
+    m.querySelectorAll('input[type="date"]').forEach(function (el) {
+      el.setAttribute("aria-hidden", "true");
+      el.setAttribute("tabindex", "-1");
     });
   }
 
@@ -811,8 +828,9 @@
   window.CeiboAPI = {
     toast: showToast,
 
-    // Se llama al abrir cada modal: rotula los campos, encierra el foco y apaga el fondo.
-    a11yModal(sel) { rotularCampos(sel); focoAtrapado(sel); _fondoInerte(true); },
+    // Se llama al abrir cada modal: rotula los campos, saca del árbol los date-pickers
+    // duplicados, encierra el foco y apaga el fondo.
+    a11yModal(sel) { rotularCampos(sel); neutralizarDatePickers(sel); focoAtrapado(sel); _fondoInerte(true); },
     // Al cerrar: devuelve el foco y reactiva el fondo (hay sesión; si no la hubiera, la app
     // ya estaría inerte por el login, y a11ySesion la maneja aparte).
     a11yCerrar() { focoDevuelto(); _fondoInerte(false); },
@@ -908,9 +926,14 @@
       if (!_perfil) return { nombre: "—", rol: "" };
       var nombre = ((_perfil.first_name || "") + " " + (_perfil.last_name || "")).trim();
       var roles = _perfil.roles || [];
+      // El superusuario tiene acceso total por bypass (tiene_rol lo cortocircuita), pero no
+      // pertenece a ningún grupo, así que roles viene vacío. Sin esto el pie decía "Sin rol
+      // asignado", que parece un error de permisos justo en quien más tiene (MENOR-01).
+      var rol = roles.length ? roles.join(" · ")
+        : (_perfil.is_superuser ? "Administrador" : "Sin rol asignado");
       return {
         nombre: nombre || _perfil.username || "—",
-        rol: roles.length ? roles.join(" · ") : "Sin rol asignado",
+        rol: rol,
       };
     },
 

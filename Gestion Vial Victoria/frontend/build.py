@@ -283,6 +283,23 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
         dec: () => this.cfgVencChange(f.clave, -5),
       }));
     }
+    // MEDIO-03: los encabezados de los acordeones de Configuración son <div onClick>. El markup
+    // les agrega role=button/tabindex/aria-expanded (build.py); el handler de teclado va acá,
+    // colgado de cada sección, para que Enter/Espacio los abran igual que el click.
+    if (v.cfgUI) {
+      Object.keys(v.cfgUI).forEach((k) => {
+        const sec = v.cfgUI[k];
+        if (sec && typeof sec.toggle === 'function') {
+          sec.toggleKey = (e) => {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); sec.toggle(); }
+          };
+        }
+      });
+    }
+    // MENOR-03: el badge del menú cuenta TODAS las novedades (no las pendientes). Sin rótulo, un
+    // lector de pantalla lo puede leer como "pendientes". Se aclara qué mide, sin cambiar el
+    // número visible (mostrar solo pendientes sería un cambio de producto, no de accesibilidad).
+    v.novBadgeAria = (v.novCount != null ? v.novCount : '') + ' novedades en total';
     // ALTO-01: la vista actual sin permiso (403) o sin datos NO debe quedarse con los mocks del
     // canvas. Se apaga el módulo y se reusa el panel de error con el aviso que corresponda.
     const _modVista = { dashboard: this.state.dashboard, reportes: this.state.reportes,
@@ -934,6 +951,72 @@ EDICIONES = [
         '<div style="font-weight:600;font-size:15px;color:var(--text)">Ranking de faltas</div>',
         '<div style="font-weight:600;font-size:15px;color:var(--text)">Ranking de faltas · días</div>',
         "dashboard: ranking título · días",
+    ),
+
+    # ===== accesibilidad (auditoría 2026-07-21, fase 1) =====
+    # Son atributos ARIA/rol sobre elementos que ya existen: es cableado de accesibilidad, no
+    # diseño visual, así que va acá y NO al canvas (mismo criterio que rotularCampos/a11yModal).
+
+    # --- MEDIO-04: los filtros son <select> sin nombre accesible; se los rotula ---
+    (
+        '<select value="{{ empEmpresa }}" onChange="{{ onEmpresa }}" style="{{ selStyle }}">',
+        '<select value="{{ empEmpresa }}" onChange="{{ onEmpresa }}" aria-label="Filtrar por empresa" style="{{ selStyle }}">',
+        "MEDIO-04: filtro empresa (empleados)",
+    ),
+    (
+        '<select value="{{ empSector }}" onChange="{{ onSector }}" style="{{ selStyle }}">',
+        '<select value="{{ empSector }}" onChange="{{ onSector }}" aria-label="Filtrar por sector" style="{{ selStyle }}">',
+        "MEDIO-04: filtro sector (empleados)",
+    ),
+    (
+        '<select value="{{ novTipo }}" onChange="{{ onNovTipo }}" style="{{ selStyle }}">',
+        '<select value="{{ novTipo }}" onChange="{{ onNovTipo }}" aria-label="Filtrar por tipo de novedad" style="{{ selStyle }}">',
+        "MEDIO-04: filtro tipo (novedades)",
+    ),
+    (
+        '<select value="{{ novEstado }}" onChange="{{ onNovEstado }}" style="{{ selStyle }}">',
+        '<select value="{{ novEstado }}" onChange="{{ onNovEstado }}" aria-label="Filtrar por estado" style="{{ selStyle }}">',
+        "MEDIO-04: filtro estado (novedades)",
+    ),
+
+    # --- MEDIO-03: los acordeones de Configuración son <div onClick>: sin rol, sin foco de
+    #     teclado, sin aria-expanded. Se los declara button y se les cuelga el handler de tecla
+    #     (definido por sección en renderVals). El nombre accesible sale del texto del título. ---
+    (
+        '<div onClick="{{ cfgUI.alertas.toggle }}" style="display:flex;align-items:flex-start;gap:12px;cursor:pointer;user-select:none">',
+        '<div onClick="{{ cfgUI.alertas.toggle }}" role="button" tabindex="0" aria-expanded="{{ cfgUI.alertas.abierta }}" onKeyDown="{{ cfgUI.alertas.toggleKey }}" style="display:flex;align-items:flex-start;gap:12px;cursor:pointer;user-select:none">',
+        "MEDIO-03: acordeón parametría de alertas",
+    ),
+    (
+        '<div onClick="{{ cfgUI.notif.toggle }}" style="display:flex;align-items:flex-start;gap:12px;cursor:pointer;user-select:none">',
+        '<div onClick="{{ cfgUI.notif.toggle }}" role="button" tabindex="0" aria-expanded="{{ cfgUI.notif.abierta }}" onKeyDown="{{ cfgUI.notif.toggleKey }}" style="display:flex;align-items:flex-start;gap:12px;cursor:pointer;user-select:none">',
+        "MEDIO-03: acordeón destinatarios y canales",
+    ),
+    (
+        '<div onClick="{{ cfgUI.empresas.toggle }}" style="display:flex;align-items:center;gap:12px;cursor:pointer;user-select:none;flex:1;min-width:0">',
+        '<div onClick="{{ cfgUI.empresas.toggle }}" role="button" tabindex="0" aria-expanded="{{ cfgUI.empresas.abierta }}" onKeyDown="{{ cfgUI.empresas.toggleKey }}" style="display:flex;align-items:center;gap:12px;cursor:pointer;user-select:none;flex:1;min-width:0">',
+        "MEDIO-03: acordeón empresas del grupo",
+    ),
+    (
+        '<div onClick="{{ cfgUI.sectores.toggle }}" style="display:flex;align-items:center;gap:12px;cursor:pointer;user-select:none;flex:1;min-width:0">',
+        '<div onClick="{{ cfgUI.sectores.toggle }}" role="button" tabindex="0" aria-expanded="{{ cfgUI.sectores.abierta }}" onKeyDown="{{ cfgUI.sectores.toggleKey }}" style="display:flex;align-items:center;gap:12px;cursor:pointer;user-select:none;flex:1;min-width:0">',
+        "MEDIO-03: acordeón sectores",
+    ),
+
+    # --- MENOR-02: "Cambiar foto" envuelve un <input type=file> con display:none, que no es
+    #     alcanzable por teclado. Se lo oculta con la técnica clip (invisible pero enfocable) y
+    #     se le da nombre propio, así se llega con Tab y se abre con Enter. ---
+    (
+        '<input data-foto="input" type="file" accept="image/*" onChange="{{ ficha.onFotoInput }}" style="display:none"/>',
+        '<input data-foto="input" type="file" accept="image/*" onChange="{{ ficha.onFotoInput }}" aria-label="Cambiar foto de perfil" style="position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);border:0"/>',
+        "MENOR-02: input de foto alcanzable por teclado",
+    ),
+
+    # --- MENOR-03: el badge del menú muestra el total de novedades; se aclara qué cuenta ---
+    (
+        '<span class="ceibo-navlbl" style="{{ novBadge }}">{{ novCount }}</span>',
+        '<span class="ceibo-navlbl" aria-label="{{ novBadgeAria }}" style="{{ novBadge }}">{{ novCount }}</span>',
+        "MENOR-03: aria del badge de novedades",
     ),
 ]
 
