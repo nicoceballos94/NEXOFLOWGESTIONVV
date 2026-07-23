@@ -338,11 +338,8 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
     v.tipoDocModalTitle = this.state.orgEditId != null ? 'Editar tipo de documento' : 'Nuevo tipo de documento';
     v.openTipoDocNuevo = this.openTipoDocNuevo;
     v.submitTipoDoc = this.submitTipoDoc;
-    // El ícono del botón de tema era un sol fijo (no cambiaba en modo noche). Se expone el estado
-    // para que el markup muestre sol en día y luna en noche, y una etiqueta accesible que diga a
-    // qué modo se va al clickear.
-    v.temaEsNoche = this.state.theme === 'dark';
-    v.temaEsDia = this.state.theme !== 'dark';
+    // Etiqueta accesible del toggle de tema (a11y → build.py). El ícono sol/luna y las vars
+    // temaEsDia/temaEsNoche que lo eligen viven en el canvas desde el 2026-07-23.
     v.temaToggleAria = this.state.theme === 'dark' ? 'Cambiar a modo día' : 'Cambiar a modo noche';
     // MENOR-03: el badge del menú cuenta TODAS las novedades (no las pendientes). Sin rótulo, un
     // lector de pantalla lo puede leer como "pendientes". Se aclara qué mide, sin cambiar el
@@ -1322,19 +1319,15 @@ EDICIONES = [
         "CU-31 data-modal: modal tipo de documento",
     ),
 
-    # ===== tema: ícono del toggle según el modo (2026-07-23) =====
-    # El botón de tema mostraba SIEMPRE un sol, tanto en día como en noche. Se hace dinámico:
-    # sol en día, luna en noche, con etiqueta accesible que dice a qué modo se cambia. El
-    # estado (temaEsDia/temaEsNoche/temaToggleAria) se calcula en renderVals.
+    # ===== tema: cableado a11y del toggle (2026-07-23) =====
+    # El ícono sol/luna (que antes era un sol fijo) ya vive en el canvas: muestra sol en día y
+    # luna en noche vía sc-if temaEsDia/temaEsNoche (vars que ahora calcula renderValsBase del
+    # canvas). Acá queda solo el cableado a11y que NO va al canvas: título + aria-label dinámicos
+    # ("Cambiar a modo día/noche"), con temaToggleAria calculado en renderVals.
     (
         '<button onClick="{{ toggleTheme }}" title="Cambiar tema" style="width:38px;height:38px;border-radius:10px;border:1px solid var(--border);background:var(--surface);color:var(--text2);display:flex;align-items:center;justify-content:center;cursor:pointer;flex:none" style-hover="color:var(--text);border-color:var(--border2)">',
         '<button onClick="{{ toggleTheme }}" title="{{ temaToggleAria }}" aria-label="{{ temaToggleAria }}" style="width:38px;height:38px;border-radius:10px;border:1px solid var(--border);background:var(--surface);color:var(--text2);display:flex;align-items:center;justify-content:center;cursor:pointer;flex:none" style-hover="color:var(--text);border-color:var(--border2)">',
         "tema: título/aria dinámico del toggle",
-    ),
-    (
-        '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2M12 19.5v2M4.6 4.6l1.4 1.4M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4 6 18M18 6l1.4-1.4"/></svg>',
-        '<sc-if value="{{ temaEsDia }}" hint-placeholder-val="{{ true }}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2M12 19.5v2M4.6 4.6l1.4 1.4M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4 6 18M18 6l1.4-1.4"/></svg></sc-if><sc-if value="{{ temaEsNoche }}" hint-placeholder-val="{{ false }}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg></sc-if>',
-        "tema: ícono sol (día) / luna (noche)",
     ),
 ]
 
