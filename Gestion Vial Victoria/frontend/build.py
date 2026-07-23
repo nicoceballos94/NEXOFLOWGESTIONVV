@@ -338,6 +338,41 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
     v.tipoDocModalTitle = this.state.orgEditId != null ? 'Editar tipo de documento' : 'Nuevo tipo de documento';
     v.openTipoDocNuevo = this.openTipoDocNuevo;
     v.submitTipoDoc = this.submitTipoDoc;
+    // CU-29/30: filas reales del ABM de checklists (desde chkItemsData) pisando el mock del canvas,
+    // con el mismo shape. En el ABM solo se define la plantilla; el "hecho" del ítem documental
+    // vive en la tarjeta de la ficha, no acá.
+    {
+      const _orgBtn = (bad) => 'display:inline-flex;align-items:center;justify-content:center;height:30px;padding:0 11px;font-size:11.5px;font-weight:600;border-radius:8px;cursor:pointer;border:1px solid ' + (bad ? 'var(--bad)' : 'var(--border2)') + ';background:' + (bad ? 'transparent' : 'var(--surface2)') + ';color:' + (bad ? 'var(--bad)' : 'var(--text)');
+      const items = (this.state.chkItemsData || []).map((it) => ({
+        id: it.id, etiqueta: it.etiqueta, activo: it.activo,
+        tipoLabel: it.tipo === 'DOCUMENTAL' ? 'Documental' : 'Acción',
+        tipoBadge: this.badge(it.tipo === 'DOCUMENTAL' ? 'accent' : 'neutral'),
+        docLabel: it.tipo === 'DOCUMENTAL' ? (it.doc || '—') : '—',
+        estadoBadge: this.badge(it.activo ? 'ok' : 'neutral'), estadoLabel: it.activo ? 'Activo' : 'Inactivo',
+        nombreStyle: 'font-weight:600;color:' + (it.activo ? 'var(--text)' : 'var(--text3)'),
+        toggleLbl: it.activo ? 'Quitar' : 'Reactivar', toggleStyle: _orgBtn(it.activo), editStyle: _orgBtn(false),
+        editar: () => this.openChkItemEdit(it.id), toggle: () => this.toggleChkItem(it.id),
+      }));
+      v.checklistItems = items;
+      v.checklistVacio = items.length === 0;
+    }
+    v.chkEmpresa = this.state.chkEmpresa;
+    v.onChkEmpresa = this.onChkEmpresa;
+    v.chkIngresoStyle = this.segStyle(this.state.chkTipo !== 'EGRESO');
+    v.chkEgresoStyle = this.segStyle(this.state.chkTipo === 'EGRESO');
+    v.setChkIngreso = this.setChkIngreso;
+    v.setChkEgreso = this.setChkEgreso;
+    v.openChkItemNuevo = this.openChkItemNuevo;
+    v.submitChkItem = this.submitChkItem;
+    v.showChkItemModal = this.state.modal === 'chkitem';
+    v.chkItemModalTitle = this.state.chkItemEditId != null ? 'Editar ítem' : 'Nuevo ítem del checklist';
+    v.chkItemModalSub = (this.state.chkTipo === 'EGRESO' ? 'Egreso' : 'Ingreso') + ' · ' + this.state.chkEmpresa;
+    v.chkItemTipo = this.state.chkItemTipo;
+    v.onChkItemTipo = this.onChkItemTipo;
+    v.chkItemEsDoc = this.state.chkItemTipo === 'DOCUMENTAL';
+    v.chkItemDoc = this.state.chkItemDoc;
+    v.onChkItemDoc = this.onChkItemDoc;
+    v.chkDocOptions = (this.state.tiposDocCfgData || []).filter((t) => t.activo).map((t) => ({ id: t.id, nombre: t.nombre }));
     // Etiqueta accesible del toggle de tema (a11y → build.py). El ícono sol/luna y las vars
     // temaEsDia/temaEsNoche que lo eligen viven en el canvas desde el 2026-07-23.
     v.temaToggleAria = this.state.theme === 'dark' ? 'Cambiar a modo día' : 'Cambiar a modo noche';
@@ -433,7 +468,7 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
       await this.reloadConfigVenc();   // el server manda: se descarta lo optimista
     }
   };
-  goCfg = () => { this.setView('config'); this.reloadConfigVenc(); this.reloadEmpresasCfg(); this.reloadSectoresCfg(); this.reloadTiposDocCfg(); };
+  goCfg = () => { this.setView('config'); this.reloadConfigVenc(); this.reloadEmpresasCfg(); this.reloadSectoresCfg(); this.reloadTiposDocCfg(); this.reloadChecklist(); };
   openAltaNov = () => {
     // praxis: false a propósito (ALTO-02). El estado del canvas arranca con praxis:true, así que
     // un alta nueva abría con "Requiere praxis" activado y los campos médicos/ART visibles aunque
@@ -765,6 +800,59 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
       await window.CeiboAPI.toggleTipoDocActivo(id, !t.activo);
       await this.reloadTiposDocCfg();
     } catch (err) { console.error('[ceibo] baja tipo doc', err); window.CeiboAPI.toast(err.message || String(err), 'error'); }
+  };
+  // ===== Checklists de ingreso/egreso (ABM en Configuración — CU-29/30) =====
+  // El ABM configura las plantillas por empresa+tipo_proceso. La plantilla se crea perezosamente
+  // al agregar el primer ítem. Los datos reales del selector actual viven en chkItemsData/chkPlantillaId;
+  // renderVals pisa el mock del canvas (checklistItems) con estos, igual que tiposDocCfg.
+  reloadChecklist = async (empresa, tipo) => {
+    const emp = empresa || this.state.chkEmpresa;
+    const tp = tipo || this.state.chkTipo;
+    try {
+      const r = await window.CeiboAPI.listChecklist(emp, tp);
+      this.setState({ chkPlantillaId: r.plantillaId, chkItemsData: r.items });
+    } catch (e) { console.warn('[ceibo] checklist', e); this.setState({ chkPlantillaId: null, chkItemsData: [] }); }
+  };
+  // La empresa/tipo se pasan explícitos a reloadChecklist para no leer un state todavía sin aplicar.
+  onChkEmpresa = (e) => { const v = e.target.value; this.setState({ chkEmpresa: v }); this.reloadChecklist(v, this.state.chkTipo); };
+  setChkIngreso = () => { this.setState({ chkTipo: 'INGRESO' }); this.reloadChecklist(this.state.chkEmpresa, 'INGRESO'); };
+  setChkEgreso = () => { this.setState({ chkTipo: 'EGRESO' }); this.reloadChecklist(this.state.chkEmpresa, 'EGRESO'); };
+  _readChk = (campo) => { const el = document.querySelector('[data-modal="chkitem"] [data-chk="' + campo + '"]'); return el ? el.value : ''; };
+  _prefillChk = (etiqueta) => setTimeout(() => { const el = document.querySelector('[data-modal="chkitem"] [data-chk="etiqueta"]'); if (el) el.value = etiqueta || ''; }, 60);
+  _primerDocId = () => { const d = (this.state.tiposDocCfgData || []).filter((t) => t.activo)[0]; return d ? d.id : null; };
+  openChkItemNuevo = () => { this.setState({ modal: 'chkitem', chkItemEditId: null, chkItemTipo: 'ACCION', chkItemDoc: this._primerDocId() }); this._prefillChk(''); this._a11y('[data-modal="chkitem"]'); };
+  openChkItemEdit = (id) => {
+    const it = (this.state.chkItemsData || []).find((x) => x.id === id) || {};
+    this.setState({ modal: 'chkitem', chkItemEditId: id, chkItemTipo: it.tipo || 'ACCION', chkItemDoc: it.tipo_documento != null ? it.tipo_documento : this._primerDocId() });
+    this._prefillChk(it.etiqueta || '');
+    this._a11y('[data-modal="chkitem"]');
+  };
+  onChkItemTipo = (e) => this.setState({ chkItemTipo: e.target.value });
+  onChkItemDoc = (e) => this.setState({ chkItemDoc: e.target.value });
+  submitChkItem = async () => {
+    try {
+      const tipo = this.state.chkItemTipo;
+      const tipo_documento = tipo === 'DOCUMENTAL' && this.state.chkItemDoc != null ? Number(this.state.chkItemDoc) : null;
+      const datos = { etiqueta: this._readChk('etiqueta'), tipo: tipo, tipo_documento: tipo_documento };
+      let plantillaId = this.state.chkPlantillaId;
+      if (plantillaId == null) {
+        // Primer ítem del checklist: se crea la plantilla en el acto (creación perezosa).
+        const pl = await window.CeiboAPI.crearPlantillaChecklist(this.state.chkEmpresa, this.state.chkTipo);
+        plantillaId = pl.id;
+      }
+      if (this.state.chkItemEditId != null) await window.CeiboAPI.editarChecklistItem(plantillaId, this.state.chkItemEditId, datos);
+      else await window.CeiboAPI.agregarChecklistItem(plantillaId, datos);
+      this.setState({ modal: null, chkItemEditId: null });
+      await this.reloadChecklist(this.state.chkEmpresa, this.state.chkTipo);
+    } catch (e) { console.error('[ceibo] checklist item', e); window.CeiboAPI.toast(e.message || String(e), 'error'); }
+  };
+  toggleChkItem = async (id) => {
+    try {
+      const it = (this.state.chkItemsData || []).find((x) => x.id === id);
+      if (!it || this.state.chkPlantillaId == null) return;
+      await window.CeiboAPI.toggleChecklistItem(this.state.chkPlantillaId, id, !it.activo);
+      await this.reloadChecklist(this.state.chkEmpresa, this.state.chkTipo);
+    } catch (e) { console.error('[ceibo] toggle checklist item', e); window.CeiboAPI.toast(e.message || String(e), 'error'); }
   };
 }
 """
@@ -1317,6 +1405,21 @@ EDICIONES = [
         '<div onClick="{{ stop }}" role="dialog" aria-modal="true" aria-label="Alta y edición de tipo de documento" style="background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:500px;max-width:100%',
         '<div onClick="{{ stop }}" data-modal="tipodoc" role="dialog" aria-modal="true" aria-label="Alta y edición de tipo de documento" style="background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:500px;max-width:100%',
         "CU-31 data-modal: modal tipo de documento",
+    ),
+
+    # ===== CU-29/30: cableado del ABM de checklists de ingreso/egreso (2026-07-23) =====
+    # La sección y el modal son nuevos (se subirán al canvas con DesignSync). Acá va solo el
+    # cableado que NO va al canvas: a11y del acordeón y data-modal del modal del ítem. La lógica
+    # (estado, métodos del ABM, overrides de renderVals) vive en BLOQUE_INTEGRACION.
+    (
+        '<div onClick="{{ cfgUI.checklists.toggle }}" style="display:flex;align-items:center;gap:12px;cursor:pointer;user-select:none;flex:1;min-width:0">',
+        '<div onClick="{{ cfgUI.checklists.toggle }}" role="button" tabindex="0" aria-expanded="{{ cfgUI.checklists.abierta }}" onKeyDown="{{ cfgUI.checklists.toggleKey }}" style="display:flex;align-items:center;gap:12px;cursor:pointer;user-select:none;flex:1;min-width:0">',
+        "CU-29/30 a11y: acordeón checklists",
+    ),
+    (
+        '<div onClick="{{ stop }}" role="dialog" aria-modal="true" aria-label="Alta y edición de ítem de checklist" style="background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:520px;max-width:100%',
+        '<div onClick="{{ stop }}" data-modal="chkitem" role="dialog" aria-modal="true" aria-label="Alta y edición de ítem de checklist" style="background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:520px;max-width:100%',
+        "CU-29/30 data-modal: modal ítem de checklist",
     ),
 
     # ===== tema: cableado a11y del toggle (2026-07-23) =====

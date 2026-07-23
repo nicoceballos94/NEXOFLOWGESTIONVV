@@ -886,6 +886,57 @@
           </div>
           </sc-if>
         </div>
+
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;box-shadow:var(--shadow);margin-top:16px;overflow:hidden">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;padding:20px 24px 16px">
+            <div onClick="{{ cfgUI.checklists.toggle }}" style="display:flex;align-items:center;gap:12px;cursor:pointer;user-select:none;flex:1;min-width:0">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="{{ cfgUI.checklists.chevron }}"><path d="m6 9 6 6 6-6"/></svg>
+              <div style="min-width:0">
+                <div style="font-weight:600;font-size:15px;color:var(--text)">Checklists de ingreso y egreso</div>
+                <div style="font-size:12.5px;color:var(--text3)">Pasos del onboarding y offboarding, configurables por empresa. Los ítems documentales se completan solos al cargar su documento en el legajo.</div>
+              </div>
+            </div>
+            <sc-if value="{{ puedeConfig }}" hint-placeholder-val="{{ true }}">
+            <button onClick="{{ openChkItemNuevo }}" style="background:var(--accent);border:none;color:#04201C;font-weight:600;font-size:12.5px;border-radius:10px;padding:0 15px;height:36px;cursor:pointer;white-space:nowrap">+ Nuevo ítem</button>
+            </sc-if>
+          </div>
+          <sc-if value="{{ cfgUI.checklists.abierta }}" hint-placeholder-val="{{ true }}">
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:0 24px 14px">
+            <select value="{{ chkEmpresa }}" onChange="{{ onChkEmpresa }}" style="{{ selStyle }}">
+              <option value="PREMOCOR">PREMOCOR</option>
+              <option value="VIAL VICTORIA">VIAL VICTORIA</option>
+            </select>
+            <div style="display:inline-flex;background:var(--surface2);border:1px solid var(--border2);border-radius:9px;padding:3px">
+              <button onClick="{{ setChkIngreso }}" style="{{ chkIngresoStyle }}">Ingreso</button>
+              <button onClick="{{ setChkEgreso }}" style="{{ chkEgresoStyle }}">Egreso</button>
+            </div>
+          </div>
+          <div style="overflow-x:auto">
+            <div style="min-width:620px">
+              <div style="display:grid;grid-template-columns:1.6fr .8fr 1.1fr .7fr 150px;gap:12px;padding:10px 24px;border-top:1px solid var(--border);border-bottom:1px solid var(--border);font-size:11px;font-weight:600;letter-spacing:.04em;color:var(--text3);background:var(--surface2)">
+                <div>ÍTEM</div><div>TIPO</div><div>DOCUMENTO</div><div>ESTADO</div><div></div>
+              </div>
+              <sc-for list="{{ checklistItems }}" as="it" hint-placeholder-count="3">
+                <div style="display:grid;grid-template-columns:1.6fr .8fr 1.1fr .7fr 150px;gap:12px;padding:13px 24px;border-bottom:1px solid var(--border);align-items:center;font-size:13px">
+                  <div style="{{ it.nombreStyle }}">{{ it.etiqueta }}</div>
+                  <div><span style="{{ it.tipoBadge }}">{{ it.tipoLabel }}</span></div>
+                  <div style="color:var(--text2)">{{ it.docLabel }}</div>
+                  <div><span style="{{ it.estadoBadge }}">{{ it.estadoLabel }}</span></div>
+                  <sc-if value="{{ puedeConfig }}" hint-placeholder-val="{{ true }}">
+                  <div style="display:flex;gap:7px;justify-content:flex-end">
+                    <button onClick="{{ it.editar }}" style="{{ it.editStyle }}">Editar</button>
+                    <button onClick="{{ it.toggle }}" style="{{ it.toggleStyle }}">{{ it.toggleLbl }}</button>
+                  </div>
+                  </sc-if>
+                </div>
+              </sc-for>
+              <sc-if value="{{ checklistVacio }}" hint-placeholder-val="{{ false }}">
+              <div style="padding:22px 24px;text-align:center;color:var(--text3);font-size:13px">Todavía no hay ítems en este checklist. Agregá el primero con “+ Nuevo ítem”.</div>
+              </sc-if>
+            </div>
+          </div>
+          </sc-if>
+        </div>
       </div>
       </sc-if>
 
@@ -1181,6 +1232,38 @@
     </div>
   </sc-if>
 
+  <sc-if value="{{ showChkItemModal }}" hint-placeholder-val="{{ false }}">
+    <div onClick="{{ closeModal }}" style="position:fixed;inset:0;background:rgba(4,8,16,.6);backdrop-filter:blur(3px);display:flex;align-items:flex-start;justify-content:center;padding:8vh 20px;z-index:50;animation:ov .2s ease both">
+      <div onClick="{{ stop }}" role="dialog" aria-modal="true" aria-label="Alta y edición de ítem de checklist" style="background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:520px;max-width:100%;box-shadow:0 30px 80px rgba(0,0,0,.5);animation:pop .28s cubic-bezier(.2,.9,.3,1) both">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:20px 24px;border-bottom:1px solid var(--border)">
+          <div><div style="font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:17px;color:var(--text)">{{ chkItemModalTitle }}</div><div style="font-size:12px;color:var(--text3)">{{ chkItemModalSub }}</div></div>
+          <button onClick="{{ closeModal }}" style="width:32px;height:32px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text2);cursor:pointer;font-size:16px">✕</button>
+        </div>
+        <div style="padding:20px 24px;display:flex;flex-direction:column;gap:14px">
+          <div><div style="{{ lblStyle }}">Nombre del ítem ·</div><input data-chk="etiqueta" placeholder="Ej. Alta AFIP/ARCA, Entrega de uniforme…" style="{{ inputStyle }}"/></div>
+          <div><div style="{{ lblStyle }}">Tipo de ítem ·</div>
+            <select data-chk="tipo" value="{{ chkItemTipo }}" onChange="{{ onChkItemTipo }}" style="{{ inputStyle }}">
+              <option value="ACCION">Acción — se tilda a mano</option>
+              <option value="DOCUMENTAL">Documental — se completa con un documento del legajo</option>
+            </select>
+          </div>
+          <sc-if value="{{ chkItemEsDoc }}" hint-placeholder-val="{{ false }}">
+          <div><div style="{{ lblStyle }}">Documento que lo completa ·</div>
+            <select data-chk="tipo_documento" value="{{ chkItemDoc }}" onChange="{{ onChkItemDoc }}" style="{{ inputStyle }}">
+              <sc-for list="{{ chkDocOptions }}" as="o" hint-placeholder-count="4"><option value="{{ o.id }}">{{ o.nombre }}</option></sc-for>
+            </select>
+            <div style="font-size:11.5px;color:var(--text3);line-height:1.5;margin-top:8px">Este ítem queda “hecho” automáticamente cuando ese documento está cargado con su archivo. No se tilda a mano.</div>
+          </div>
+          </sc-if>
+        </div>
+        <div style="display:flex;justify-content:flex-end;gap:10px;padding:16px 24px;border-top:1px solid var(--border)">
+          <button onClick="{{ closeModal }}" style="background:var(--surface);border:1px solid var(--border2);color:var(--text);font-weight:600;font-size:13px;border-radius:10px;padding:0 18px;height:40px;cursor:pointer">Cancelar</button>
+          <button onClick="{{ submitChkItem }}" style="background:var(--accent);border:none;color:#04201C;font-weight:600;font-size:13px;border-radius:10px;padding:0 20px;height:40px;cursor:pointer;box-shadow:0 4px 14px rgba(45,212,191,.28)">Guardar ítem</button>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
   <sc-if value="{{ showDetNov }}" hint-placeholder-val="{{ false }}">
     <div onClick="{{ closeModal }}" style="position:fixed;inset:0;background:rgba(4,8,16,.6);backdrop-filter:blur(3px);display:flex;align-items:flex-start;justify-content:center;padding:6vh 20px;z-index:50;animation:ov .2s ease both">
       <div onClick="{{ stop }}" role="dialog" aria-modal="true" aria-label="Detalle de la novedad" style="background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:640px;max-width:100%;box-shadow:0 30px 80px rgba(0,0,0,.5);animation:pop .28s cubic-bezier(.2,.9,.3,1) both;display:flex;flex-direction:column;max-height:88vh">
@@ -1395,6 +1478,7 @@ class Component extends DCLogic {
     rot: 'm',
     modal: null, bajaId: null, reingresoId: null, bajaSet: [],
     orgEditId: null, orgArchivoNombre: '',
+    chkEmpresa: 'VIAL VICTORIA', chkTipo: 'INGRESO', chkItemEditId: null, chkItemTipo: 'ACCION', chkItemDoc: 'Contrato',
     docEditId: null, docArchivoNombre: '',
     adjuntosDet: null,
     cfg: { carnet: 30, apto: 15, cnrt: 30, contrato: 45 },
@@ -1625,6 +1709,35 @@ class Component extends DCLogic {
       { id:4, nombre:'Contrato', descripcion:'Contrato de trabajo firmado.', activo:true }
     ];
   }
+  // ---------- ABM de checklists de ingreso/egreso (Configuración) ----------
+  // Mock del canvas para verse solo; el CRUD real (POST/PATCH a la API) lo inyecta build.py.
+  checklistItemsBase(){
+    const ing = [
+      { id:1, etiqueta:'Alta AFIP/ARCA', tipo:'ACCION', doc:'', activo:true },
+      { id:2, etiqueta:'Firma de contrato', tipo:'DOCUMENTAL', doc:'Contrato', activo:true },
+      { id:3, etiqueta:'Entrega de uniforme', tipo:'ACCION', doc:'', activo:true },
+      { id:4, etiqueta:'Alta de usuario ERP', tipo:'ACCION', doc:'', activo:true }
+    ];
+    const egr = [
+      { id:11, etiqueta:'Baja AFIP/ARCA', tipo:'ACCION', doc:'', activo:true },
+      { id:12, etiqueta:'Devolución de notebook', tipo:'ACCION', doc:'', activo:true },
+      { id:13, etiqueta:'Liquidación final', tipo:'DOCUMENTAL', doc:'Contrato', activo:true },
+      { id:14, etiqueta:'Entrevista de salida', tipo:'ACCION', doc:'', activo:true }
+    ];
+    return this.state.chkTipo==='EGRESO' ? egr : ing;
+  }
+  onChkEmpresa = (e)=> this.setState({chkEmpresa:e.target.value});
+  setChkIngreso = ()=> this.setState({chkTipo:'INGRESO'});
+  setChkEgreso = ()=> this.setState({chkTipo:'EGRESO'});
+  openChkItemNuevo = ()=> this.setState({modal:'chkitem', chkItemEditId:null, chkItemTipo:'ACCION', chkItemDoc:'Contrato'});
+  openChkItemEdit = (id)=>{
+    const it = this.checklistItemsBase().find(x=>x.id===id) || {};
+    this.setState({modal:'chkitem', chkItemEditId:id, chkItemTipo:it.tipo||'ACCION', chkItemDoc:it.doc||'Contrato'});
+  };
+  submitChkItem = ()=> this.setState({modal:null, chkItemEditId:null});
+  toggleChkItem = (id)=> this.setState({});
+  onChkItemTipo = (e)=> this.setState({chkItemTipo:e.target.value});
+  onChkItemDoc = (e)=> this.setState({chkItemDoc:e.target.value});
   docEnEdicionTieneArchivo(){
     const S=this.state; if(!S.docEditId) return false;
     const emp=this.base().find(e=>e.id===S.selEmp);
@@ -1989,6 +2102,16 @@ class Component extends DCLogic {
       toggleLbl:t.activo?'Baja':'Reactivar', toggleStyle:orgActionBtn(t.activo?'bad':'ghost'), editStyle:orgActionBtn('ghost'),
       editar:()=>this.openTipoDocEdit(t.id), toggle:()=>this.toggleTipoDocCfg(t.id)
     }));
+    const checklistItems = this.checklistItemsBase().map(it=>({
+      id:it.id, etiqueta:it.etiqueta, activo:it.activo,
+      tipoLabel: it.tipo==='DOCUMENTAL'?'Documental':'Acción',
+      tipoBadge: this.badge(it.tipo==='DOCUMENTAL'?'accent':'neutral'),
+      docLabel: it.tipo==='DOCUMENTAL' ? (it.doc||'—') : '—',
+      estadoBadge:this.badge(it.activo?'ok':'neutral'), estadoLabel:it.activo?'Activo':'Inactivo',
+      nombreStyle:'font-weight:600;color:'+(it.activo?'var(--text)':'var(--text3)'),
+      toggleLbl:it.activo?'Quitar':'Reactivar', toggleStyle:orgActionBtn(it.activo?'bad':'ghost'), editStyle:orgActionBtn('ghost'),
+      editar:()=>this.openChkItemEdit(it.id), toggle:()=>this.toggleChkItem(it.id)
+    }));
 
     // Colapso de las secciones de Configuración: cada header alterna la visibilidad de su
     // cuerpo para que la página no quede tan larga. Es estado de UI, no va al backend.
@@ -1998,7 +2121,7 @@ class Component extends DCLogic {
       toggle: ()=>this.toggleCfgSec(k),
       chevron: 'width:18px;height:18px;flex:none;color:var(--text3);transition:transform .2s ease;transform:rotate('+(_cfgOpen[k]?'0':'-90')+'deg)',
     });
-    const cfgUI = { alertas:cfgSec('alertas'), notif:cfgSec('notif'), empresas:cfgSec('empresas'), sectores:cfgSec('sectores'), tiposdoc:cfgSec('tiposdoc') };
+    const cfgUI = { alertas:cfgSec('alertas'), notif:cfgSec('notif'), empresas:cfgSec('empresas'), sectores:cfgSec('sectores'), tiposdoc:cfgSec('tiposdoc'), checklists:cfgSec('checklists') };
 
     const titles = {dashboard:['Panel general','Resumen operativo de RRHH'],empleados:['Empleados','Legajos y relación laboral'],ficha:['Ficha de empleado','Legajo completo'],novedades:['Novedades','Accidentes, faltas, licencias y vacaciones'],alertas:['Alertas y vencimientos','Control de documentación'],reportes:['Reportes y métricas','Análisis de dotación y ausentismo'],config:['Configuración','Parametría de alertas']};
     const t = titles[S.view]||titles.dashboard;
@@ -2061,6 +2184,16 @@ class Component extends DCLogic {
       tiposDocCfg, showTipoDocModal:S.modal==='tipodoc',
       tipoDocModalTitle: S.orgEditId!=null ? 'Editar tipo de documento' : 'Nuevo tipo de documento',
       openTipoDocNuevo:this.openTipoDocNuevo, submitTipoDoc:this.submitTipoDoc,
+      checklistItems, checklistVacio:checklistItems.length===0,
+      chkEmpresa:S.chkEmpresa, onChkEmpresa:this.onChkEmpresa,
+      chkIngresoStyle:this.segStyle(S.chkTipo!=='EGRESO'), chkEgresoStyle:this.segStyle(S.chkTipo==='EGRESO'),
+      setChkIngreso:this.setChkIngreso, setChkEgreso:this.setChkEgreso, openChkItemNuevo:this.openChkItemNuevo,
+      showChkItemModal:S.modal==='chkitem',
+      chkItemModalTitle: S.chkItemEditId!=null ? 'Editar ítem' : 'Nuevo ítem del checklist',
+      chkItemModalSub: (S.chkTipo==='EGRESO'?'Egreso':'Ingreso')+' · '+S.chkEmpresa,
+      chkItemTipo:S.chkItemTipo, onChkItemTipo:this.onChkItemTipo, chkItemEsDoc:S.chkItemTipo==='DOCUMENTAL',
+      chkItemDoc:S.chkItemDoc, onChkItemDoc:this.onChkItemDoc, submitChkItem:this.submitChkItem,
+      chkDocOptions:this.tiposDocCfgBase().map(t=>({id:t.nombre, nombre:t.nombre})),
       showAlta:S.modal==='alta', showAltaNov:S.modal==='altanov', showBaja:S.modal==='baja', showReingreso:S.modal==='reingreso',
       showDoc:S.modal==='doc', openDocNuevo:this.openDocNuevo, onDocArchivo:this.onDocArchivo,
       docTitle:S.docEditId?'Editar documento':'Agregar documento',

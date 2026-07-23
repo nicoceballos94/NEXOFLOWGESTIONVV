@@ -1265,6 +1265,75 @@
       return t;
     },
 
+    // ---------- Checklists de ingreso/egreso (ABM en Configuración — CU-29/30) ----------
+    // Plantillas configurables por empresa + tipo_proceso (INGRESO/EGRESO). La plantilla se crea
+    // perezosamente al agregar el primer ítem (el back tiene único parcial de plantilla activa por
+    // empresa+tipo). Los ítems DOCUMENTAL enlazan un tipo_documento (id); su "hecho" lo calcula el
+    // back al cargar el documento en el legajo, no se tilda en el ABM.
+    async listChecklist(empresaNombre, tipoProceso) {
+      var empId = _empresaByName[empresaNombre];
+      if (empId == null) return { plantillaId: null, items: [] };
+      var rows = await getAllPages("/onboarding/plantillas/?empresa=" + empId +
+        "&tipo_proceso=" + tipoProceso + "&page_size=100");
+      var pl = rows.filter(function (p) { return p.activa; })[0] || rows[0];
+      if (!pl) return { plantillaId: null, items: [] };
+      var items = (pl.items || []).map(function (it) {
+        return {
+          id: it.id, etiqueta: it.etiqueta, tipo: it.tipo_item,
+          doc: it.tipo_documento_nombre || "", tipo_documento: it.tipo_documento, activo: !!it.activo,
+        };
+      });
+      return { plantillaId: pl.id, items: items };
+    },
+
+    // Crea la plantilla de esa empresa+tipo (perezosa: solo cuando hace falta agregar un ítem).
+    async crearPlantillaChecklist(empresaNombre, tipoProceso) {
+      var empId = _empresaByName[empresaNombre];
+      if (empId == null) throw new Error("Empresa desconocida.");
+      return await jsend("POST", "/onboarding/plantillas/", { empresa: empId, tipo_proceso: tipoProceso });
+    },
+
+    // `datos`: { etiqueta, tipo: 'ACCION'|'DOCUMENTAL', tipo_documento: id|null }
+    async agregarChecklistItem(plantillaId, datos) {
+      var etiqueta = (datos && datos.etiqueta || "").trim();
+      if (!etiqueta) throw new Error("El nombre del ítem es obligatorio.");
+      var body = { etiqueta: etiqueta, tipo_item: datos.tipo };
+      if (datos.tipo === "DOCUMENTAL") {
+        if (!datos.tipo_documento) throw new Error("Elegí el documento que completa el ítem.");
+        body.tipo_documento = datos.tipo_documento;
+      }
+      var it = await jsend("POST", "/onboarding/plantillas/" + plantillaId + "/items/", body);
+      showToast("Ítem agregado", "ok");
+      return it;
+    },
+
+    async editarChecklistItem(plantillaId, itemId, datos) {
+      var body = {};
+      if (datos.etiqueta != null) {
+        body.etiqueta = String(datos.etiqueta).trim();
+        if (!body.etiqueta) throw new Error("El nombre del ítem no puede quedar vacío.");
+      }
+      if (datos.tipo != null) {
+        body.tipo_item = datos.tipo;
+        if (datos.tipo === "DOCUMENTAL") {
+          if (!datos.tipo_documento) throw new Error("Elegí el documento que completa el ítem.");
+          body.tipo_documento = datos.tipo_documento;
+        } else {
+          body.tipo_documento = null;
+        }
+      }
+      var it = await jsend("PATCH", "/onboarding/plantillas/" + plantillaId + "/items/" + itemId + "/", body);
+      showToast("Ítem actualizado", "ok");
+      return it;
+    },
+
+    // Baja/reactivación lógica del ítem (activo). No borra: un proceso ya creado lo fotografió.
+    async toggleChecklistItem(plantillaId, itemId, activo) {
+      var it = await jsend("PATCH", "/onboarding/plantillas/" + plantillaId + "/items/" + itemId + "/", { activo: !!activo });
+      showToast(activo ? "Ítem reactivado" : "Ítem quitado", "ok");
+      return it;
+    },
+
     // Novedades con cadenas expandidas: se agrupan las prórrogas bajo su madre
     // (novedad_origen) para tener la cadena completa sin N+1.
     async listNovedades() {
