@@ -373,6 +373,23 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
     v.chkItemDoc = this.state.chkItemDoc;
     v.onChkItemDoc = this.onChkItemDoc;
     v.chkDocOptions = (this.state.tiposDocCfgData || []).filter((t) => t.activo).map((t) => ({ id: t.id, nombre: t.nombre }));
+    // CU-29/30: tarjeta de checklist de la ficha, armada con _chkView (el mismo helper del canvas)
+    // a partir de los datos reales del empleado abierto. El toggle documental no se cablea: lo
+    // decide _chkView (los documentales se completan al cargar el documento, no se tildan).
+    {
+      const d = this.state.fichaChkData;
+      if (d && d.hay) {
+        v.fichaChk = this._chkView({
+          items: d.items, tipo: d.tipo, sinPlantilla: d.sinPlantilla, hay: true,
+          expandido: !!this.state.fichaChkExpandido,
+          onToggle: (id) => this.toggleFichaChkItem(id),
+          onColapso: this.toggleFichaChkColapso,
+          onCargar: () => this.openDocNuevo(),
+        });
+      } else {
+        v.fichaChk = { hay: false };
+      }
+    }
     // Etiqueta accesible del toggle de tema (a11y → build.py). El ícono sol/luna y las vars
     // temaEsDia/temaEsNoche que lo eligen viven en el canvas desde el 2026-07-23.
     v.temaToggleAria = this.state.theme === 'dark' ? 'Cambiar a modo día' : 'Cambiar a modo noche';
@@ -582,8 +599,9 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
     } catch (e) { console.error('[ceibo] reingreso', e); window.CeiboAPI.toast(e.message || String(e), 'error'); }
   };
   selectEmp = (id) => {
-    this.setState({ selEmp: id, view: 'ficha' });
+    this.setState({ selEmp: id, view: 'ficha', fichaChkData: null, fichaChkExpandido: false });
     this.recargarDocs(id);
+    this.recargarChecklistFicha(id);
     this.ensureFoto(id);
   };
   // ===== foto de perfil de la ficha (el canvas la deja en avatar de iniciales) =====
@@ -853,6 +871,25 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
       await window.CeiboAPI.toggleChecklistItem(this.state.chkPlantillaId, id, !it.activo);
       await this.reloadChecklist(this.state.chkEmpresa, this.state.chkTipo);
     } catch (e) { console.error('[ceibo] toggle checklist item', e); window.CeiboAPI.toast(e.message || String(e), 'error'); }
+  };
+  // ===== Tarjeta de checklist en la ficha (CU-29/30) =====
+  // El back crea el proceso perezosamente al pedir la tarjeta y decide onboarding/offboarding
+  // según el estado de la relación. fichaChkData guarda la tarjeta del empleado abierto.
+  recargarChecklistFicha = async (id) => {
+    try { this.setState({ fichaChkData: await window.CeiboAPI.getChecklistFicha(id) }); }
+    catch (e) { console.warn('[ceibo] checklist ficha', e); this.setState({ fichaChkData: { hay: false } }); }
+  };
+  // Solo ítems de ACCIÓN se tildan (el _chkView no cablea toggle en los documentales). La
+  // respuesta del tildado ya trae la tarjeta actualizada; se guarda directo sin re-pedir.
+  toggleFichaChkItem = async (id) => {
+    try {
+      const t = this.state.fichaChkData;
+      if (!t || !t.hay) return;
+      const it = (t.items || []).find((x) => x.id === id);
+      if (!it) return;
+      const tarjeta = await window.CeiboAPI.tildarChecklistFichaItem(this.state.selEmp, id, !it.hecho);
+      this.setState({ fichaChkData: tarjeta });
+    } catch (e) { console.error('[ceibo] tildar checklist ficha', e); window.CeiboAPI.toast(e.message || String(e), 'error'); }
   };
 }
 """

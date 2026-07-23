@@ -161,6 +161,26 @@
     return rows;
   }
 
+  // Mapea la tarjeta de checklist del back ({tipo_proceso, sin_plantilla, items:[...]}) a la
+  // forma que consume _chkView del componente. Resuelve el nombre del tipo de documento con el
+  // catálogo ya cargado (_tipoDocByNombre) para que el ítem documental diga a qué doc se enlaza.
+  function _mapTarjetaChecklist(t) {
+    if (!t) return { hay: false };
+    var nameById = {};
+    Object.keys(_tipoDocByNombre).forEach(function (n) { nameById[_tipoDocByNombre[n].id] = n; });
+    return {
+      hay: true,
+      tipo: t.tipo_proceso,
+      sinPlantilla: !!t.sin_plantilla,
+      items: (t.items || []).map(function (it) {
+        return {
+          id: it.id, etiqueta: it.etiqueta, tipo: it.tipo_item, hecho: !!it.hecho,
+          doc: it.tipo_documento != null ? (nameById[it.tipo_documento] || "documento") : "",
+        };
+      }),
+    };
+  }
+
   // ---------- formato ----------
   function fmtISOtoDMY(iso) { return iso ? iso.split("-").reverse().join("/") : ""; }
   function parseFecha(s) {
@@ -1332,6 +1352,20 @@
       var it = await jsend("PATCH", "/onboarding/plantillas/" + plantillaId + "/items/" + itemId + "/", { activo: !!activo });
       showToast(activo ? "Ítem reactivado" : "Ítem quitado", "ok");
       return it;
+    },
+
+    // ---------- Tarjeta de checklist en la ficha (CU-29/30) ----------
+    // El proceso se crea perezosamente en el back al abrir la ficha; devuelve onboarding si la
+    // relación está activa u offboarding si está dada de baja. El "hecho" del ítem documental lo
+    // calcula el back (documento cargado con archivo); acá solo se tilda el de ACCIÓN.
+    async getChecklistFicha(empleadoId) {
+      var r = await jsend("GET", "/empleados/" + empleadoId + "/checklist/");
+      return _mapTarjetaChecklist(r && r.tarjeta);
+    },
+
+    async tildarChecklistFichaItem(empleadoId, itemId, hecho) {
+      var r = await jsend("POST", "/empleados/" + empleadoId + "/checklist/items/" + itemId + "/tildar/", { hecho: !!hecho });
+      return _mapTarjetaChecklist(r && r.tarjeta);
     },
 
     // Novedades con cadenas expandidas: se agrupan las prórrogas bajo su madre

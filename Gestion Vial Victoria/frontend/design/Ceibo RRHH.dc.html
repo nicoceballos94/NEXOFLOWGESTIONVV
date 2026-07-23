@@ -399,6 +399,59 @@
           </sc-if>
         </div>
 
+        <sc-if value="{{ fichaChk.hay }}" hint-placeholder-val="{{ true }}">
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;box-shadow:var(--shadow);margin-top:16px;overflow:hidden">
+          <sc-if value="{{ fichaChk.mostrarAviso }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;align-items:center;gap:12px;padding:18px 22px">
+            <div style="{{ fichaChk.iconWrap }}">{{ fichaChk.icon }}</div>
+            <div style="min-width:0">
+              <div style="font-weight:600;font-size:14px;color:var(--text)">{{ fichaChk.tipoLabel }}</div>
+              <div style="font-size:12.5px;color:var(--text3)">No hay checklist configurado para esta empresa. Se define en Configuración → Checklists de ingreso y egreso.</div>
+            </div>
+          </div>
+          </sc-if>
+          <sc-if value="{{ fichaChk.colapsada }}" hint-placeholder-val="{{ false }}">
+          <button onClick="{{ fichaChk.toggleColapso }}" style="display:flex;align-items:center;gap:12px;padding:16px 22px;cursor:pointer;user-select:none;width:100%;background:none;border:none;text-align:left">
+            <div style="width:30px;height:30px;border-radius:9px;background:var(--ok-dim);color:var(--ok);display:flex;align-items:center;justify-content:center;font-size:16px;flex:none">✓</div>
+            <div style="flex:1;min-width:0"><span style="font-weight:600;font-size:14px;color:var(--text)">{{ fichaChk.tipoLabel }} completo</span><span style="font-size:12.5px;color:var(--text3)"> · {{ fichaChk.progresoLabel }}</span></div>
+            <span style="font-size:12px;color:var(--text3)">Ver detalle</span>
+          </button>
+          </sc-if>
+          <sc-if value="{{ fichaChk.abierta }}" hint-placeholder-val="{{ true }}">
+          <div style="padding:18px 22px 10px">
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px">
+              <div style="flex:1;min-width:0">
+                <div style="font-weight:600;font-size:15px;color:var(--text)">{{ fichaChk.tipoLabel }}</div>
+                <div style="font-size:12.5px;color:var(--text3)">{{ fichaChk.subtitulo }}</div>
+              </div>
+              <div style="font-size:13px;font-weight:600;color:var(--accent)">{{ fichaChk.progresoLabel }}</div>
+            </div>
+            <div style="height:7px;border-radius:20px;background:var(--surface2);overflow:hidden"><div style="{{ fichaChk.barStyle }}"></div></div>
+          </div>
+          <div style="border-top:1px solid var(--border)">
+            <sc-for list="{{ fichaChk.items }}" as="it" hint-placeholder-count="4">
+              <div style="display:flex;align-items:center;gap:13px;padding:12px 22px;border-bottom:1px solid var(--border)">
+                <sc-if value="{{ it.esAccion }}" hint-placeholder-val="{{ true }}">
+                <button onClick="{{ it.toggle }}" aria-label="{{ it.toggleAria }}" aria-pressed="{{ it.hecho }}" style="{{ it.checkStyle }}">{{ it.checkIcon }}</button>
+                </sc-if>
+                <sc-if value="{{ it.esDoc }}" hint-placeholder-val="{{ false }}">
+                <div role="img" aria-label="{{ it.toggleAria }}" style="{{ it.checkStyle }}">{{ it.checkIcon }}</div>
+                </sc-if>
+                <div style="flex:1;min-width:0">
+                  <div style="{{ it.etiquetaStyle }}">{{ it.etiqueta }}</div>
+                  <div style="{{ it.metaStyle }}">{{ it.meta }}</div>
+                </div>
+                <span style="{{ it.tipoBadge }}">{{ it.tipoLabel }}</span>
+                <sc-if value="{{ it.cargarShow }}" hint-placeholder-val="{{ false }}">
+                <button onClick="{{ it.cargar }}" style="background:var(--surface2);border:1px solid var(--border2);color:var(--text);font-weight:600;font-size:11.5px;border-radius:8px;padding:0 11px;height:30px;cursor:pointer;white-space:nowrap;flex:none">Cargar documento</button>
+                </sc-if>
+              </div>
+            </sc-for>
+          </div>
+          </sc-if>
+        </div>
+        </sc-if>
+
         <div style="display:grid;grid-template-columns:1.6fr 1fr;gap:16px;margin-top:16px;align-items:start">
           <div style="display:flex;flex-direction:column;gap:16px">
             <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:20px 22px;box-shadow:var(--shadow)">
@@ -1738,6 +1791,52 @@ class Component extends DCLogic {
   toggleChkItem = (id)=> this.setState({});
   onChkItemTipo = (e)=> this.setState({chkItemTipo:e.target.value});
   onChkItemDoc = (e)=> this.setState({chkItemDoc:e.target.value});
+  // ---------- Tarjeta de checklist en la ficha (onboarding/offboarding — CU-29/30) ----------
+  // _chkView arma la tarjeta a partir de una lista de ítems; la usan tanto el mock del canvas
+  // como el cableado real (build.py la llama con los datos del backend), sin duplicar el cálculo.
+  _chkView(o){
+    const items = (o.items||[]).map(it=>{
+      const esAccion = it.tipo==='ACCION';
+      const hecho = !!it.hecho;
+      const meta = esAccion
+        ? (hecho ? ('Hecho'+(it.por?' por '+it.por:'')+(it.cuando?' · '+it.cuando:'')) : 'Pendiente — tildá cuando esté hecho')
+        : (hecho ? 'Documento cargado' : 'Se completa al cargar: '+(it.doc||'documento'));
+      const base = 'width:26px;height:26px;border-radius:8px;display:flex;align-items:center;justify-content:center;flex:none;';
+      return {
+        id:it.id, etiqueta:it.etiqueta, esAccion, esDoc:!esAccion, hecho,
+        etiquetaStyle:'font-size:13.5px;font-weight:500;color:var(--text)',
+        metaStyle:'font-size:11.5px;color:'+(hecho?'var(--ok)':'var(--text3)')+';margin-top:2px',
+        meta,
+        tipoLabel: esAccion?'Acción':'Documental',
+        tipoBadge: this.badge(esAccion?'neutral':'accent'),
+        checkStyle: hecho
+          ? base+'border:none;background:var(--ok);color:#04140F;font-size:15px;cursor:'+(esAccion?'pointer':'default')
+          : base+'border:1.5px solid var(--border2);background:transparent;color:var(--text3);font-size:13px;cursor:'+(esAccion?'pointer':'default'),
+        checkIcon: hecho?'✓':(esAccion?'':'○'),
+        toggle: esAccion ? ()=>o.onToggle(it.id) : ()=>{},
+        toggleAria: esAccion ? ((hecho?'Desmarcar ':'Marcar como hecho: ')+it.etiqueta) : (it.etiqueta+' — '+(hecho?'documento cargado':'pendiente de documento')),
+        cargarShow: (!esAccion && !hecho),
+        cargar: o.onCargar,
+      };
+    });
+    const total = items.length, hechos = items.filter(i=>i.hecho).length;
+    const pct = total ? Math.round(hechos*100/total) : 0;
+    const completo = total>0 && hechos===total;
+    return {
+      hay: !!o.hay,
+      mostrarAviso: !!(o.hay && o.sinPlantilla),
+      colapsada: !!(o.hay && !o.sinPlantilla && completo && !o.expandido),
+      abierta: !!(o.hay && !o.sinPlantilla && (!completo || o.expandido)),
+      tipoLabel: o.tipo==='EGRESO' ? 'Offboarding (egreso)' : 'Onboarding (ingreso)',
+      subtitulo: o.tipo==='EGRESO' ? 'Pasos para cerrar el egreso' : 'Pasos para completar el ingreso',
+      progresoLabel: hechos+' de '+total,
+      barStyle: 'height:100%;width:'+pct+'%;background:'+(completo?'var(--ok)':'var(--accent)')+';border-radius:20px;transition:width .3s ease',
+      iconWrap: 'width:34px;height:34px;border-radius:10px;background:var(--warn-dim);color:var(--warn);display:flex;align-items:center;justify-content:center;flex:none;font-size:16px;font-weight:700',
+      icon:'!', items, toggleColapso: o.onColapso,
+    };
+  }
+  toggleFichaChkItem = (id)=> this.setState({});
+  toggleFichaChkColapso = ()=> this.setState(s=>({fichaChkExpandido:!s.fichaChkExpandido}));
   docEnEdicionTieneArchivo(){
     const S=this.state; if(!S.docEditId) return false;
     const emp=this.base().find(e=>e.id===S.selEmp);
@@ -1927,6 +2026,23 @@ class Component extends DCLogic {
     ficha.novedades = fnov;
     ficha.noNov = fnov.length===0;
     ficha.novLbl = fnov.length + (fnov.length===1?' registro':' registros');
+
+    // Tarjeta de checklist (CU-29/30): mock del canvas. Onboarding si el empleado está activo,
+    // offboarding si está dado de baja. En el repo, build.py la pisa con datos del backend.
+    const _chkTipo = fEstado==='activo' ? 'INGRESO' : 'EGRESO';
+    const _chkItemsMock = _chkTipo==='EGRESO' ? [
+      {id:11, etiqueta:'Baja AFIP/ARCA', tipo:'ACCION', hecho:false},
+      {id:12, etiqueta:'Devolución de notebook', tipo:'ACCION', hecho:false},
+      {id:13, etiqueta:'Liquidación final', tipo:'DOCUMENTAL', hecho:false, doc:'Contrato'}
+    ] : [
+      {id:1, etiqueta:'Alta AFIP/ARCA', tipo:'ACCION', hecho:true, por:'Luciana Sosa', cuando:'12/07'},
+      {id:2, etiqueta:'Firma de contrato', tipo:'DOCUMENTAL', hecho:true, doc:'Contrato'},
+      {id:3, etiqueta:'Entrega de uniforme', tipo:'ACCION', hecho:false},
+      {id:4, etiqueta:'Alta de usuario ERP', tipo:'ACCION', hecho:false}
+    ];
+    const fichaChk = this._chkView({ items:_chkItemsMock, tipo:_chkTipo, sinPlantilla:false, hay:true,
+      expandido: !!S.fichaChkExpandido, onToggle:(id)=>this.toggleFichaChkItem(id),
+      onColapso:this.toggleFichaChkColapso, onCargar:()=>this.openDocNuevo() });
 
     // novedades list
     const filteredNov = this.novList().filter(n=>{
@@ -2165,7 +2281,7 @@ class Component extends DCLogic {
       onEmpresa:this.onEmpresa, onSector:this.onSector, openAlta:this.openAlta,
       filteredEmployees, noEmp:filteredEmployees.length===0,
       empCountLbl:`Mostrando ${filteredEmployees.length} de ${totalActivos} activos · 2 empresas`,
-      ficha,
+      ficha, fichaChk,
       novTipo:S.novTipo, novEstado:S.novEstado, onNovTipo:this.onNovTipo, onNovEstado:this.onNovEstado, openAltaNov:this.openAltaNov,
       novEmp:S.novEmp, onNovEmp:this.onNovEmp, novEmpOptions:[...new Set(this.novList().map(n=>n.emp))].sort().map(name=>({name})),
       filteredNov, noNovList:filteredNov.length===0,
