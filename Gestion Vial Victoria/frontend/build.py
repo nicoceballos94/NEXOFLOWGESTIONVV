@@ -1301,91 +1301,25 @@ EDICIONES = [
         "A11Y-2307: dona de egresos decorativa (aria-hidden, Reportes)",
     ),
 
-    # ===== CU-31: tipos de documento en Configuración (2026-07-23) =====
-    # Nueva sección de ABM en Configuración + su modal. El backend ya está (TipoDocumentoViewSet,
-    # GET/POST/PATCH, baja lógica por `activo`, escritura Admin/RRHH); acá se expone en la UI, con
-    # el mismo molde que empresas/sectores. La lógica (reload/open/submit/toggle, las filas
-    # tiposDocCfg y el estado colapsable cfgUI.tiposdoc) vive en BLOQUE_INTEGRACION/renderVals.
-    # Esto es UI nueva (visual): tras verificarlo en el repo se sube al canvas con DesignSync
-    # (acordado con el usuario: "repo primero, canvas después").
+    # ===== CU-31: cableado sobre el markup de tipos de documento (2026-07-23) =====
+    # La sección y el modal de "Tipos de documento" ya viven en el canvas (se subieron el
+    # 2026-07-23 con DesignSync y el export los trae de fábrica). Sus dos inyecciones de markup
+    # se borraron de acá al promoverlo (mismo patrón que empresas/sectores). Queda solo el
+    # cableado que NO va al canvas: los atributos a11y del acordeón y el data-modal del diálogo.
+    # La lógica (estado, métodos del ABM, overrides de renderVals) sigue en BLOQUE_INTEGRACION.
 
-    # --- la tarjeta de la sección, al final de la vista Config (después de Sectores) ---
+    # --- a11y del acordeón (MEDIO-03): el header es <div onClick>; se le da rol de botón, foco
+    #     de teclado, aria-expanded y el handler de tecla (definido por sección en renderVals). ---
     (
-        '        </div>\n'
-        '      </div>\n'
-        '      </sc-if>\n'
-        '\n'
-        '    </main>',
-        '        </div>\n'
-        '\n'
-        '        <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;box-shadow:var(--shadow);margin-top:16px;overflow:hidden">\n'
-        '          <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;padding:20px 24px 16px">\n'
-        '            <div onClick="{{ cfgUI.tiposdoc.toggle }}" role="button" tabindex="0" aria-expanded="{{ cfgUI.tiposdoc.abierta }}" onKeyDown="{{ cfgUI.tiposdoc.toggleKey }}" style="display:flex;align-items:center;gap:12px;cursor:pointer;user-select:none;flex:1;min-width:0">\n'
-        '              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="{{ cfgUI.tiposdoc.chevron }}"><path d="m6 9 6 6 6-6"/></svg>\n'
-        '              <div style="min-width:0">\n'
-        '                <div style="font-weight:600;font-size:15px;color:var(--text)">Tipos de documento</div>\n'
-        '                <div style="font-size:12.5px;color:var(--text3)">Catálogo de documentos con vencimiento (apto médico, CNRT, carnet…). Baja lógica: un tipo inactivo no rompe los documentos ya cargados.</div>\n'
-        '              </div>\n'
-        '            </div>\n'
-        '            <sc-if value="{{ puedeConfig }}" hint-placeholder-val="{{ true }}">\n'
-        '            <button onClick="{{ openTipoDocNuevo }}" style="background:var(--accent);border:none;color:#04201C;font-weight:600;font-size:12.5px;border-radius:10px;padding:0 15px;height:36px;cursor:pointer;white-space:nowrap">+ Nuevo tipo</button>\n'
-        '            </sc-if>\n'
-        '          </div>\n'
-        '          <sc-if value="{{ cfgUI.tiposdoc.abierta }}" hint-placeholder-val="{{ true }}">\n'
-        '          <div style="overflow-x:auto">\n'
-        '            <div style="min-width:560px">\n'
-        '              <div style="display:grid;grid-template-columns:1.5fr 2fr .7fr 150px;gap:12px;padding:10px 24px;border-top:1px solid var(--border);border-bottom:1px solid var(--border);font-size:11px;font-weight:600;letter-spacing:.04em;color:var(--text3);background:var(--surface2)">\n'
-        '                <div>NOMBRE</div><div>DESCRIPCIÓN</div><div>ESTADO</div><div></div>\n'
-        '              </div>\n'
-        '              <sc-for list="{{ tiposDocCfg }}" as="t" hint-placeholder-count="4">\n'
-        '                <div style="display:grid;grid-template-columns:1.5fr 2fr .7fr 150px;gap:12px;padding:13px 24px;border-bottom:1px solid var(--border);align-items:center;font-size:13px">\n'
-        '                  <div style="{{ t.nombreStyle }}">{{ t.nombre }}</div>\n'
-        '                  <div style="color:var(--text2)">{{ t.descripcion }}</div>\n'
-        '                  <div><span style="{{ t.estadoBadge }}">{{ t.estadoLabel }}</span></div>\n'
-        '                  <sc-if value="{{ puedeConfig }}" hint-placeholder-val="{{ true }}">\n'
-        '                  <div style="display:flex;gap:7px;justify-content:flex-end">\n'
-        '                    <button onClick="{{ t.editar }}" style="{{ t.editStyle }}">Editar</button>\n'
-        '                    <button onClick="{{ t.toggle }}" style="{{ t.toggleStyle }}">{{ t.toggleLbl }}</button>\n'
-        '                  </div>\n'
-        '                  </sc-if>\n'
-        '                </div>\n'
-        '              </sc-for>\n'
-        '            </div>\n'
-        '          </div>\n'
-        '          </sc-if>\n'
-        '        </div>\n'
-        '      </div>\n'
-        '      </sc-if>\n'
-        '\n'
-        '    </main>',
-        "CU-31: sección Tipos de documento en Configuración",
+        '<div onClick="{{ cfgUI.tiposdoc.toggle }}" style="display:flex;align-items:center;gap:12px;cursor:pointer;user-select:none;flex:1;min-width:0">',
+        '<div onClick="{{ cfgUI.tiposdoc.toggle }}" role="button" tabindex="0" aria-expanded="{{ cfgUI.tiposdoc.abierta }}" onKeyDown="{{ cfgUI.tiposdoc.toggleKey }}" style="display:flex;align-items:center;gap:12px;cursor:pointer;user-select:none;flex:1;min-width:0">',
+        "CU-31 a11y: acordeón tipos de documento",
     ),
-
-    # --- el modal de alta/edición (data-modal=tipodoc; reusa data-org nombre/descripcion) ---
+    # --- data-modal del diálogo (para que _readOrg/_prefillOrg/_a11y lo encuentren por selector) ---
     (
-        '  <sc-if value="{{ showDetNov }}" hint-placeholder-val="{{ false }}">',
-        '  <sc-if value="{{ showTipoDocModal }}" hint-placeholder-val="{{ false }}">\n'
-        '    <div onClick="{{ closeModal }}" style="position:fixed;inset:0;background:rgba(4,8,16,.6);backdrop-filter:blur(3px);display:flex;align-items:flex-start;justify-content:center;padding:8vh 20px;z-index:50;animation:ov .2s ease both">\n'
-        '      <div onClick="{{ stop }}" data-modal="tipodoc" role="dialog" aria-modal="true" aria-label="Alta y edición de tipo de documento" style="background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:500px;max-width:100%;box-shadow:0 30px 80px rgba(0,0,0,.5);animation:pop .28s cubic-bezier(.2,.9,.3,1) both">\n'
-        '        <div style="display:flex;align-items:center;justify-content:space-between;padding:20px 24px;border-bottom:1px solid var(--border)">\n'
-        '          <div><div style="font-family:\'Space Grotesk\',sans-serif;font-weight:600;font-size:17px;color:var(--text)">{{ tipoDocModalTitle }}</div><div style="font-size:12px;color:var(--text3)">Los campos con · son obligatorios</div></div>\n'
-        '          <button onClick="{{ closeModal }}" style="width:32px;height:32px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text2);cursor:pointer;font-size:16px">✕</button>\n'
-        '        </div>\n'
-        '        <div style="padding:20px 24px;display:flex;flex-direction:column;gap:14px">\n'
-        '          <div><div style="{{ lblStyle }}">Nombre ·</div><input data-org="nombre" placeholder="Ej. Licencia de conducir" style="{{ inputStyle }}"/></div>\n'
-        '          <div><div style="{{ lblStyle }}">Descripción</div><input data-org="descripcion" placeholder="Ej. Documento habilitante para conducir" style="{{ inputStyle }}"/></div>\n'
-        '          <div style="font-size:11.5px;color:var(--text3);line-height:1.5">Los días de aviso previo al vencimiento se configuran en <strong style="color:var(--text2);font-weight:600">Parametría de alertas</strong>. Un tipo nuevo arranca avisando a 30 días.</div>\n'
-        '        </div>\n'
-        '        <div style="display:flex;justify-content:flex-end;gap:10px;padding:16px 24px;border-top:1px solid var(--border)">\n'
-        '          <button onClick="{{ closeModal }}" style="background:var(--surface);border:1px solid var(--border2);color:var(--text);font-weight:600;font-size:13px;border-radius:10px;padding:0 18px;height:40px;cursor:pointer">Cancelar</button>\n'
-        '          <button onClick="{{ submitTipoDoc }}" style="background:var(--accent);border:none;color:#04201C;font-weight:600;font-size:13px;border-radius:10px;padding:0 20px;height:40px;cursor:pointer;box-shadow:0 4px 14px rgba(45,212,191,.28)">Guardar tipo</button>\n'
-        '        </div>\n'
-        '      </div>\n'
-        '    </div>\n'
-        '  </sc-if>\n'
-        '\n'
-        '  <sc-if value="{{ showDetNov }}" hint-placeholder-val="{{ false }}">',
-        "CU-31: modal de alta/edición de tipo de documento",
+        '<div onClick="{{ stop }}" role="dialog" aria-modal="true" aria-label="Alta y edición de tipo de documento" style="background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:500px;max-width:100%',
+        '<div onClick="{{ stop }}" data-modal="tipodoc" role="dialog" aria-modal="true" aria-label="Alta y edición de tipo de documento" style="background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:500px;max-width:100%',
+        "CU-31 data-modal: modal tipo de documento",
     ),
 
     # ===== tema: ícono del toggle según el modo (2026-07-23) =====

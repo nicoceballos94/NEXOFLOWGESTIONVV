@@ -849,6 +849,43 @@
           </div>
           </sc-if>
         </div>
+
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;box-shadow:var(--shadow);margin-top:16px;overflow:hidden">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;padding:20px 24px 16px">
+            <div onClick="{{ cfgUI.tiposdoc.toggle }}" style="display:flex;align-items:center;gap:12px;cursor:pointer;user-select:none;flex:1;min-width:0">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="{{ cfgUI.tiposdoc.chevron }}"><path d="m6 9 6 6 6-6"/></svg>
+              <div style="min-width:0">
+                <div style="font-weight:600;font-size:15px;color:var(--text)">Tipos de documento</div>
+                <div style="font-size:12.5px;color:var(--text3)">Catálogo de documentos con vencimiento (apto médico, CNRT, carnet…). Baja lógica: un tipo inactivo no rompe los documentos ya cargados.</div>
+              </div>
+            </div>
+            <sc-if value="{{ puedeConfig }}" hint-placeholder-val="{{ true }}">
+            <button onClick="{{ openTipoDocNuevo }}" style="background:var(--accent);border:none;color:#04201C;font-weight:600;font-size:12.5px;border-radius:10px;padding:0 15px;height:36px;cursor:pointer;white-space:nowrap">+ Nuevo tipo</button>
+            </sc-if>
+          </div>
+          <sc-if value="{{ cfgUI.tiposdoc.abierta }}" hint-placeholder-val="{{ true }}">
+          <div style="overflow-x:auto">
+            <div style="min-width:560px">
+              <div style="display:grid;grid-template-columns:1.5fr 2fr .7fr 150px;gap:12px;padding:10px 24px;border-top:1px solid var(--border);border-bottom:1px solid var(--border);font-size:11px;font-weight:600;letter-spacing:.04em;color:var(--text3);background:var(--surface2)">
+                <div>NOMBRE</div><div>DESCRIPCIÓN</div><div>ESTADO</div><div></div>
+              </div>
+              <sc-for list="{{ tiposDocCfg }}" as="t" hint-placeholder-count="4">
+                <div style="display:grid;grid-template-columns:1.5fr 2fr .7fr 150px;gap:12px;padding:13px 24px;border-bottom:1px solid var(--border);align-items:center;font-size:13px">
+                  <div style="{{ t.nombreStyle }}">{{ t.nombre }}</div>
+                  <div style="color:var(--text2)">{{ t.descripcion }}</div>
+                  <div><span style="{{ t.estadoBadge }}">{{ t.estadoLabel }}</span></div>
+                  <sc-if value="{{ puedeConfig }}" hint-placeholder-val="{{ true }}">
+                  <div style="display:flex;gap:7px;justify-content:flex-end">
+                    <button onClick="{{ t.editar }}" style="{{ t.editStyle }}">Editar</button>
+                    <button onClick="{{ t.toggle }}" style="{{ t.toggleStyle }}">{{ t.toggleLbl }}</button>
+                  </div>
+                  </sc-if>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+          </sc-if>
+        </div>
       </div>
       </sc-if>
 
@@ -1119,6 +1156,26 @@
         <div style="display:flex;justify-content:flex-end;gap:10px;padding:16px 24px;border-top:1px solid var(--border)">
           <button onClick="{{ closeModal }}" style="background:var(--surface);border:1px solid var(--border2);color:var(--text);font-weight:600;font-size:13px;border-radius:10px;padding:0 18px;height:40px;cursor:pointer">Cancelar</button>
           <button onClick="{{ submitSector }}" style="background:var(--accent);border:none;color:#04201C;font-weight:600;font-size:13px;border-radius:10px;padding:0 20px;height:40px;cursor:pointer;box-shadow:0 4px 14px rgba(45,212,191,.28)">Guardar sector</button>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ showTipoDocModal }}" hint-placeholder-val="{{ false }}">
+    <div onClick="{{ closeModal }}" style="position:fixed;inset:0;background:rgba(4,8,16,.6);backdrop-filter:blur(3px);display:flex;align-items:flex-start;justify-content:center;padding:8vh 20px;z-index:50;animation:ov .2s ease both">
+      <div onClick="{{ stop }}" role="dialog" aria-modal="true" aria-label="Alta y edición de tipo de documento" style="background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:500px;max-width:100%;box-shadow:0 30px 80px rgba(0,0,0,.5);animation:pop .28s cubic-bezier(.2,.9,.3,1) both">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:20px 24px;border-bottom:1px solid var(--border)">
+          <div><div style="font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:17px;color:var(--text)">{{ tipoDocModalTitle }}</div><div style="font-size:12px;color:var(--text3)">Los campos con · son obligatorios</div></div>
+          <button onClick="{{ closeModal }}" style="width:32px;height:32px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text2);cursor:pointer;font-size:16px">✕</button>
+        </div>
+        <div style="padding:20px 24px;display:flex;flex-direction:column;gap:14px">
+          <div><div style="{{ lblStyle }}">Nombre ·</div><input data-org="nombre" placeholder="Ej. Licencia de conducir" style="{{ inputStyle }}"/></div>
+          <div><div style="{{ lblStyle }}">Descripción</div><input data-org="descripcion" placeholder="Ej. Documento habilitante para conducir" style="{{ inputStyle }}"/></div>
+          <div style="font-size:11.5px;color:var(--text3);line-height:1.5">Los días de aviso previo al vencimiento se configuran en <strong style="color:var(--text2);font-weight:600">Parametría de alertas</strong>. Un tipo nuevo arranca avisando a 30 días.</div>
+        </div>
+        <div style="display:flex;justify-content:flex-end;gap:10px;padding:16px 24px;border-top:1px solid var(--border)">
+          <button onClick="{{ closeModal }}" style="background:var(--surface);border:1px solid var(--border2);color:var(--text);font-weight:600;font-size:13px;border-radius:10px;padding:0 18px;height:40px;cursor:pointer">Cancelar</button>
+          <button onClick="{{ submitTipoDoc }}" style="background:var(--accent);border:none;color:#04201C;font-weight:600;font-size:13px;border-radius:10px;padding:0 20px;height:40px;cursor:pointer;box-shadow:0 4px 14px rgba(45,212,191,.28)">Guardar tipo</button>
         </div>
       </div>
     </div>
@@ -1556,6 +1613,18 @@ class Component extends DCLogic {
   openSectorEdit = (id)=> this.setState({modal:'sector', orgEditId:id});
   submitSector = ()=> this.setState({modal:null, orgEditId:null});
   toggleSectorCfg = (id)=> this.setState({});
+  openTipoDocNuevo = ()=> this.setState({modal:'tipodoc', orgEditId:null});
+  openTipoDocEdit = (id)=> this.setState({modal:'tipodoc', orgEditId:id});
+  submitTipoDoc = ()=> this.setState({modal:null, orgEditId:null});
+  toggleTipoDocCfg = (id)=> this.setState({});
+  tiposDocCfgBase(){
+    return [
+      { id:1, nombre:'Apto médico', descripcion:'Examen médico periódico que habilita a trabajar.', activo:true },
+      { id:2, nombre:'Carnet de conducir', descripcion:'Licencia de conducir habilitante. Vence y se renueva.', activo:true },
+      { id:3, nombre:'CNRT', descripcion:'Habilitación de la Comisión Nacional de Regulación del Transporte.', activo:true },
+      { id:4, nombre:'Contrato', descripcion:'Contrato de trabajo firmado.', activo:true }
+    ];
+  }
   docEnEdicionTieneArchivo(){
     const S=this.state; if(!S.docEditId) return false;
     const emp=this.base().find(e=>e.id===S.selEmp);
@@ -1913,6 +1982,13 @@ class Component extends DCLogic {
       toggleLbl:s.activo?'Baja':'Reactivar', toggleStyle:orgActionBtn(s.activo?'bad':'ghost'), editStyle:orgActionBtn('ghost'),
       editar:()=>this.openSectorEdit(s.id), toggle:()=>this.toggleSectorCfg(s.id)
     }));
+    const tiposDocCfg = this.tiposDocCfgBase().map(t=>({
+      id:t.id, nombre:t.nombre, descripcion:t.descripcion||'—', activo:t.activo,
+      estadoBadge:this.badge(t.activo?'ok':'neutral'), estadoLabel:t.activo?'Activo':'Inactivo',
+      nombreStyle:'font-weight:600;color:'+(t.activo?'var(--text)':'var(--text3)'),
+      toggleLbl:t.activo?'Baja':'Reactivar', toggleStyle:orgActionBtn(t.activo?'bad':'ghost'), editStyle:orgActionBtn('ghost'),
+      editar:()=>this.openTipoDocEdit(t.id), toggle:()=>this.toggleTipoDocCfg(t.id)
+    }));
 
     // Colapso de las secciones de Configuración: cada header alterna la visibilidad de su
     // cuerpo para que la página no quede tan larga. Es estado de UI, no va al backend.
@@ -1922,7 +1998,7 @@ class Component extends DCLogic {
       toggle: ()=>this.toggleCfgSec(k),
       chevron: 'width:18px;height:18px;flex:none;color:var(--text3);transition:transform .2s ease;transform:rotate('+(_cfgOpen[k]?'0':'-90')+'deg)',
     });
-    const cfgUI = { alertas:cfgSec('alertas'), notif:cfgSec('notif'), empresas:cfgSec('empresas'), sectores:cfgSec('sectores') };
+    const cfgUI = { alertas:cfgSec('alertas'), notif:cfgSec('notif'), empresas:cfgSec('empresas'), sectores:cfgSec('sectores'), tiposdoc:cfgSec('tiposdoc') };
 
     const titles = {dashboard:['Panel general','Resumen operativo de RRHH'],empleados:['Empleados','Legajos y relación laboral'],ficha:['Ficha de empleado','Legajo completo'],novedades:['Novedades','Accidentes, faltas, licencias y vacaciones'],alertas:['Alertas y vencimientos','Control de documentación'],reportes:['Reportes y métricas','Análisis de dotación y ausentismo'],config:['Configuración','Parametría de alertas']};
     const t = titles[S.view]||titles.dashboard;
@@ -1982,6 +2058,9 @@ class Component extends DCLogic {
       secModalTitle: S.orgEditId!=null ? 'Editar sector' : 'Nuevo sector',
       openEmpresaNueva:this.openEmpresaNueva, submitEmpresa:this.submitEmpresa,
       openSectorNuevo:this.openSectorNuevo, submitSector:this.submitSector,
+      tiposDocCfg, showTipoDocModal:S.modal==='tipodoc',
+      tipoDocModalTitle: S.orgEditId!=null ? 'Editar tipo de documento' : 'Nuevo tipo de documento',
+      openTipoDocNuevo:this.openTipoDocNuevo, submitTipoDoc:this.submitTipoDoc,
       showAlta:S.modal==='alta', showAltaNov:S.modal==='altanov', showBaja:S.modal==='baja', showReingreso:S.modal==='reingreso',
       showDoc:S.modal==='doc', openDocNuevo:this.openDocNuevo, onDocArchivo:this.onDocArchivo,
       docTitle:S.docEditId?'Editar documento':'Agregar documento',
