@@ -142,6 +142,13 @@ constancia de quién lo hizo y cuándo.
   el MVP 1**).
 - *Bloqueado por decisión:* no (sí definir el checklist definitivo por empresa —
   Vial Victoria y Premocor pueden diferir, y cuáles ítems son documentales).
+- *Estado:* ✅ **Hecho (2026-07-23).** App `onboarding` en el backend (4 modelos:
+  plantilla configurable por empresa, ítems acción/documental, proceso por empleado
+  fotografiado de la plantilla), endpoints `/onboarding/plantillas/` (ABM) y
+  `/empleados/{id}/checklist/` (tarjeta), 14 tests contra Postgres. Front: ABM en
+  Configuración y tarjeta con barra de avance en la ficha; el ítem documental se
+  completa solo al cargar su documento y la tarjeta colapsa al 100%. El checklist
+  por empresa se configura desde la UI (no está fijo en código).
 
 **CU-30 — Offboarding (proceso de egreso)**
 El espejo del anterior: cuando alguien se va, un **checklist** de baja asegura que
@@ -164,6 +171,9 @@ se recupere todo lo entregado y se cierren los trámites, con constancia.
 - *Depende de:* el legajo y la baja lógica (**ya disponible desde el MVP 1**). Se
   dispara al registrar la baja del empleado.
 - *Bloqueado por decisión:* no (sí definir el checklist definitivo por empresa).
+- *Estado:* ✅ **Hecho (2026-07-23).** Mismo motor que CU-29 (`tipo_proceso=EGRESO`).
+  La tarjeta de la ficha muestra offboarding cuando el empleado está dado de baja;
+  el ABM configura el checklist de egreso por empresa.
 
 ### F. Configuración y catálogos
 
@@ -194,8 +204,8 @@ de un tipo nuevo solo se hace por herramientas internas.
 | CU-25 | Medidas disciplinarias | Nada | No — **listo para arrancar** |
 | CU-31 | Tipos de documento en Configuración | Backend ya está (solo UI) | ✅ **Hecho (2026-07-23)** |
 | CU-24 | Portal de autogestión | Nada nuevo | No (definir alcance) |
-| CU-29 | Onboarding (checklist ingreso) | Legajo (ya está) | No (definir checklist por empresa) |
-| CU-30 | Offboarding (checklist egreso) | Legajo/baja (ya está) | No (definir checklist por empresa) |
+| CU-29 | Onboarding (checklist ingreso) | Legajo (ya está) | ✅ **Hecho (2026-07-23)** |
+| CU-30 | Offboarding (checklist egreso) | Legajo/baja (ya está) | ✅ **Hecho (2026-07-23)** |
 | CU-28 | Bot de consultas (RAG) | Documentación (ya está) | No |
 | CU-20 | Asistencia / fichada | Fuente de fichada | **Sí** — qué hardware hay hoy |
 | CU-21 | Faltas/tardanzas automáticas | CU-20 | Hereda de CU-20 |
