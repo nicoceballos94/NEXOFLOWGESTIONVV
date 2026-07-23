@@ -301,6 +301,16 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
     // les agrega role=button/tabindex/aria-expanded (build.py); el handler de teclado va acá,
     // colgado de cada sección, para que Enter/Espacio los abran igual que el click.
     if (v.cfgUI) {
+      // CU-31: la sección "Tipos de documento" es nueva (el canvas no la conoce), así que su
+      // estado de colapsable se arma acá con el mismo shape que cfgSec de renderValsBase (que es
+      // local y no se puede reusar), a partir de state.cfgOpen y toggleCfgSec.
+      const _open = this.state.cfgOpen || {};
+      v.cfgUI.tiposdoc = {
+        abierta: !!_open.tiposdoc,
+        toggle: () => this.toggleCfgSec('tiposdoc'),
+        chevron: 'width:18px;height:18px;flex:none;color:var(--text3);transition:transform .2s ease;transform:rotate(' + (_open.tiposdoc ? '0' : '-90') + 'deg)',
+      };
+      // MEDIO-03: handler de teclado en cada acordeón, ahora incluida la sección nueva.
       Object.keys(v.cfgUI).forEach((k) => {
         const sec = v.cfgUI[k];
         if (sec && typeof sec.toggle === 'function') {
@@ -310,6 +320,24 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
         }
       });
     }
+    // CU-31: filas del ABM de tipos de documento, con el mismo shape que empresasCfg/sectoresCfg
+    // del canvas. orgActionBtn es local a renderValsBase, así que su estilo se replica acá inline.
+    {
+      const _orgBtn = (bad) => 'display:inline-flex;align-items:center;justify-content:center;height:30px;padding:0 11px;font-size:11.5px;font-weight:600;border-radius:8px;cursor:pointer;border:1px solid ' + (bad ? 'var(--bad)' : 'var(--border2)') + ';background:' + (bad ? 'transparent' : 'var(--surface2)') + ';color:' + (bad ? 'var(--bad)' : 'var(--text)');
+      v.tiposDocCfg = (this.state.tiposDocCfgData || []).map((t) => ({
+        id: t.id, nombre: t.nombre, descripcion: t.descripcion || '—',
+        estadoBadge: this.badge(t.activo ? 'ok' : 'neutral'),
+        estadoLabel: t.activo ? 'Activo' : 'Inactivo',
+        nombreStyle: 'font-weight:600;color:' + (t.activo ? 'var(--text)' : 'var(--text3)'),
+        toggleLbl: t.activo ? 'Baja' : 'Reactivar',
+        toggleStyle: _orgBtn(t.activo), editStyle: _orgBtn(false),
+        editar: () => this.openTipoDocEdit(t.id), toggle: () => this.toggleTipoDocCfg(t.id),
+      }));
+    }
+    v.showTipoDocModal = this.state.modal === 'tipodoc';
+    v.tipoDocModalTitle = this.state.orgEditId != null ? 'Editar tipo de documento' : 'Nuevo tipo de documento';
+    v.openTipoDocNuevo = this.openTipoDocNuevo;
+    v.submitTipoDoc = this.submitTipoDoc;
     // MENOR-03: el badge del menú cuenta TODAS las novedades (no las pendientes). Sin rótulo, un
     // lector de pantalla lo puede leer como "pendientes". Se aclara qué mide, sin cambiar el
     // número visible (mostrar solo pendientes sería un cambio de producto, no de accesibilidad).
@@ -402,7 +430,7 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
       await this.reloadConfigVenc();   // el server manda: se descarta lo optimista
     }
   };
-  goCfg = () => { this.setView('config'); this.reloadConfigVenc(); this.reloadEmpresasCfg(); this.reloadSectoresCfg(); };
+  goCfg = () => { this.setView('config'); this.reloadConfigVenc(); this.reloadEmpresasCfg(); this.reloadSectoresCfg(); this.reloadTiposDocCfg(); };
   openAltaNov = () => {
     // praxis: false a propósito (ALTO-02). El estado del canvas arranca con praxis:true, así que
     // un alta nueva abría con "Requiere praxis" activado y los campos médicos/ART visibles aunque
@@ -649,7 +677,7 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
     const el = document.querySelector('[data-modal="' + this._orgModal() + '"] [data-org="' + campo + '"]');
     return el ? el.value.trim() : '';
   };
-  _orgModal = () => (this.state.modal === 'sector' ? 'sector' : 'empresa');
+  _orgModal = () => (this.state.modal === 'sector' ? 'sector' : this.state.modal === 'tipodoc' ? 'tipodoc' : 'empresa');
   _prefillOrg = (valores) => setTimeout(() => {
     const m = document.querySelector('[data-modal="' + this._orgModal() + '"]');
     if (!m) return;
@@ -703,6 +731,38 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
       await this.reloadSectoresCfg();
     } catch (err) { console.error('[ceibo] baja sector', err); window.CeiboAPI.toast(err.message || String(err), 'error'); }
   };
+  // ===== Tipos de documento (ABM en Configuración — CU-31) =====
+  // Mismo patrón que empresas/sectores: el TipoDocumentoViewSet ya soporta GET/POST/PATCH y baja
+  // lógica (activo). El modal reusa data-org (nombre, descripcion) y el lector genérico
+  // _readOrg/_prefillOrg vía _orgModal()==='tipodoc'. dias_aviso se edita en Parametría de alertas.
+  reloadTiposDocCfg = async () => {
+    try { this.setState({ tiposDocCfgData: await window.CeiboAPI.listTiposDocCfg() }); }
+    catch (e) { console.warn('[ceibo] tipos doc cfg', e); }
+  };
+  openTipoDocNuevo = () => { this.setState({ modal: 'tipodoc', orgEditId: null }); this._prefillOrg({}); this._a11y('[data-modal="tipodoc"]'); };
+  openTipoDocEdit = (id) => {
+    const t = (this.state.tiposDocCfgData || []).find((x) => x.id === id) || {};
+    this.setState({ modal: 'tipodoc', orgEditId: id });
+    this._prefillOrg({ nombre: t.nombre, descripcion: t.descripcion });
+    this._a11y('[data-modal="tipodoc"]');
+  };
+  submitTipoDoc = async () => {
+    try {
+      const datos = { nombre: this._readOrg('nombre'), descripcion: this._readOrg('descripcion') };
+      if (this.state.orgEditId != null) await window.CeiboAPI.editarTipoDoc(this.state.orgEditId, datos);
+      else await window.CeiboAPI.crearTipoDoc(datos);
+      this.setState({ modal: null, orgEditId: null });
+      await this.reloadTiposDocCfg();
+    } catch (e) { console.error('[ceibo] tipo doc', e); window.CeiboAPI.toast(e.message || String(e), 'error'); }
+  };
+  toggleTipoDocCfg = async (id) => {
+    try {
+      const t = (this.state.tiposDocCfgData || []).find((x) => x.id === id);
+      if (!t) return;
+      await window.CeiboAPI.toggleTipoDocActivo(id, !t.activo);
+      await this.reloadTiposDocCfg();
+    } catch (err) { console.error('[ceibo] baja tipo doc', err); window.CeiboAPI.toast(err.message || String(err), 'error'); }
+  };
 }
 """
 
@@ -729,7 +789,7 @@ EDICIONES = [
     # --- state: campos nuevos ---
     (
         "theme: 'dark', view: 'dashboard', selEmp: 1,",
-        "theme: 'dark', view: 'dashboard', selEmp: 1,\n    empleados: null, novedades: null, dashboard: null, reportes: null, apiErr: null, altaEditId: null, tiposDoc: null, vencimientos: null, alertasDiaData: null, cfgVenc: null,\n    empresasCfgData: null, sectoresCfgData: null, fotoUrlByEmp: {},\n    cargaInicial: 'cargando',",
+        "theme: 'dark', view: 'dashboard', selEmp: 1,\n    empleados: null, novedades: null, dashboard: null, reportes: null, apiErr: null, altaEditId: null, tiposDoc: null, vencimientos: null, alertasDiaData: null, cfgVenc: null,\n    empresasCfgData: null, sectoresCfgData: null, tiposDocCfgData: null, fotoUrlByEmp: {},\n    cargaInicial: 'cargando',",
         "state: campos de integración",
     ),
     # --- novBase(): usar datos reales si están cargados ---
@@ -1233,6 +1293,93 @@ EDICIONES = [
         '<svg viewBox="0 0 140 140" style="width:140px;height:140px;flex:none;transform:rotate(-90deg)">',
         '<svg viewBox="0 0 140 140" aria-hidden="true" style="width:140px;height:140px;flex:none;transform:rotate(-90deg)">',
         "A11Y-2307: dona de egresos decorativa (aria-hidden, Reportes)",
+    ),
+
+    # ===== CU-31: tipos de documento en Configuración (2026-07-23) =====
+    # Nueva sección de ABM en Configuración + su modal. El backend ya está (TipoDocumentoViewSet,
+    # GET/POST/PATCH, baja lógica por `activo`, escritura Admin/RRHH); acá se expone en la UI, con
+    # el mismo molde que empresas/sectores. La lógica (reload/open/submit/toggle, las filas
+    # tiposDocCfg y el estado colapsable cfgUI.tiposdoc) vive en BLOQUE_INTEGRACION/renderVals.
+    # Esto es UI nueva (visual): tras verificarlo en el repo se sube al canvas con DesignSync
+    # (acordado con el usuario: "repo primero, canvas después").
+
+    # --- la tarjeta de la sección, al final de la vista Config (después de Sectores) ---
+    (
+        '        </div>\n'
+        '      </div>\n'
+        '      </sc-if>\n'
+        '\n'
+        '    </main>',
+        '        </div>\n'
+        '\n'
+        '        <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;box-shadow:var(--shadow);margin-top:16px;overflow:hidden">\n'
+        '          <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;padding:20px 24px 16px">\n'
+        '            <div onClick="{{ cfgUI.tiposdoc.toggle }}" role="button" tabindex="0" aria-expanded="{{ cfgUI.tiposdoc.abierta }}" onKeyDown="{{ cfgUI.tiposdoc.toggleKey }}" style="display:flex;align-items:center;gap:12px;cursor:pointer;user-select:none;flex:1;min-width:0">\n'
+        '              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="{{ cfgUI.tiposdoc.chevron }}"><path d="m6 9 6 6 6-6"/></svg>\n'
+        '              <div style="min-width:0">\n'
+        '                <div style="font-weight:600;font-size:15px;color:var(--text)">Tipos de documento</div>\n'
+        '                <div style="font-size:12.5px;color:var(--text3)">Catálogo de documentos con vencimiento (apto médico, CNRT, carnet…). Baja lógica: un tipo inactivo no rompe los documentos ya cargados.</div>\n'
+        '              </div>\n'
+        '            </div>\n'
+        '            <sc-if value="{{ puedeConfig }}" hint-placeholder-val="{{ true }}">\n'
+        '            <button onClick="{{ openTipoDocNuevo }}" style="background:var(--accent);border:none;color:#04201C;font-weight:600;font-size:12.5px;border-radius:10px;padding:0 15px;height:36px;cursor:pointer;white-space:nowrap">+ Nuevo tipo</button>\n'
+        '            </sc-if>\n'
+        '          </div>\n'
+        '          <sc-if value="{{ cfgUI.tiposdoc.abierta }}" hint-placeholder-val="{{ true }}">\n'
+        '          <div style="overflow-x:auto">\n'
+        '            <div style="min-width:560px">\n'
+        '              <div style="display:grid;grid-template-columns:1.5fr 2fr .7fr 150px;gap:12px;padding:10px 24px;border-top:1px solid var(--border);border-bottom:1px solid var(--border);font-size:11px;font-weight:600;letter-spacing:.04em;color:var(--text3);background:var(--surface2)">\n'
+        '                <div>NOMBRE</div><div>DESCRIPCIÓN</div><div>ESTADO</div><div></div>\n'
+        '              </div>\n'
+        '              <sc-for list="{{ tiposDocCfg }}" as="t" hint-placeholder-count="4">\n'
+        '                <div style="display:grid;grid-template-columns:1.5fr 2fr .7fr 150px;gap:12px;padding:13px 24px;border-bottom:1px solid var(--border);align-items:center;font-size:13px">\n'
+        '                  <div style="{{ t.nombreStyle }}">{{ t.nombre }}</div>\n'
+        '                  <div style="color:var(--text2)">{{ t.descripcion }}</div>\n'
+        '                  <div><span style="{{ t.estadoBadge }}">{{ t.estadoLabel }}</span></div>\n'
+        '                  <sc-if value="{{ puedeConfig }}" hint-placeholder-val="{{ true }}">\n'
+        '                  <div style="display:flex;gap:7px;justify-content:flex-end">\n'
+        '                    <button onClick="{{ t.editar }}" style="{{ t.editStyle }}">Editar</button>\n'
+        '                    <button onClick="{{ t.toggle }}" style="{{ t.toggleStyle }}">{{ t.toggleLbl }}</button>\n'
+        '                  </div>\n'
+        '                  </sc-if>\n'
+        '                </div>\n'
+        '              </sc-for>\n'
+        '            </div>\n'
+        '          </div>\n'
+        '          </sc-if>\n'
+        '        </div>\n'
+        '      </div>\n'
+        '      </sc-if>\n'
+        '\n'
+        '    </main>',
+        "CU-31: sección Tipos de documento en Configuración",
+    ),
+
+    # --- el modal de alta/edición (data-modal=tipodoc; reusa data-org nombre/descripcion) ---
+    (
+        '  <sc-if value="{{ showDetNov }}" hint-placeholder-val="{{ false }}">',
+        '  <sc-if value="{{ showTipoDocModal }}" hint-placeholder-val="{{ false }}">\n'
+        '    <div onClick="{{ closeModal }}" style="position:fixed;inset:0;background:rgba(4,8,16,.6);backdrop-filter:blur(3px);display:flex;align-items:flex-start;justify-content:center;padding:8vh 20px;z-index:50;animation:ov .2s ease both">\n'
+        '      <div onClick="{{ stop }}" data-modal="tipodoc" role="dialog" aria-modal="true" aria-label="Alta y edición de tipo de documento" style="background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:500px;max-width:100%;box-shadow:0 30px 80px rgba(0,0,0,.5);animation:pop .28s cubic-bezier(.2,.9,.3,1) both">\n'
+        '        <div style="display:flex;align-items:center;justify-content:space-between;padding:20px 24px;border-bottom:1px solid var(--border)">\n'
+        '          <div><div style="font-family:\'Space Grotesk\',sans-serif;font-weight:600;font-size:17px;color:var(--text)">{{ tipoDocModalTitle }}</div><div style="font-size:12px;color:var(--text3)">Los campos con · son obligatorios</div></div>\n'
+        '          <button onClick="{{ closeModal }}" style="width:32px;height:32px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text2);cursor:pointer;font-size:16px">✕</button>\n'
+        '        </div>\n'
+        '        <div style="padding:20px 24px;display:flex;flex-direction:column;gap:14px">\n'
+        '          <div><div style="{{ lblStyle }}">Nombre ·</div><input data-org="nombre" placeholder="Ej. Licencia de conducir" style="{{ inputStyle }}"/></div>\n'
+        '          <div><div style="{{ lblStyle }}">Descripción</div><input data-org="descripcion" placeholder="Ej. Documento habilitante para conducir" style="{{ inputStyle }}"/></div>\n'
+        '          <div style="font-size:11.5px;color:var(--text3);line-height:1.5">Los días de aviso previo al vencimiento se configuran en <strong style="color:var(--text2);font-weight:600">Parametría de alertas</strong>. Un tipo nuevo arranca avisando a 30 días.</div>\n'
+        '        </div>\n'
+        '        <div style="display:flex;justify-content:flex-end;gap:10px;padding:16px 24px;border-top:1px solid var(--border)">\n'
+        '          <button onClick="{{ closeModal }}" style="background:var(--surface);border:1px solid var(--border2);color:var(--text);font-weight:600;font-size:13px;border-radius:10px;padding:0 18px;height:40px;cursor:pointer">Cancelar</button>\n'
+        '          <button onClick="{{ submitTipoDoc }}" style="background:var(--accent);border:none;color:#04201C;font-weight:600;font-size:13px;border-radius:10px;padding:0 20px;height:40px;cursor:pointer;box-shadow:0 4px 14px rgba(45,212,191,.28)">Guardar tipo</button>\n'
+        '        </div>\n'
+        '      </div>\n'
+        '    </div>\n'
+        '  </sc-if>\n'
+        '\n'
+        '  <sc-if value="{{ showDetNov }}" hint-placeholder-val="{{ false }}">',
+        "CU-31: modal de alta/edición de tipo de documento",
     ),
 ]
 

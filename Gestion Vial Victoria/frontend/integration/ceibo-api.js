@@ -1217,6 +1217,54 @@
       return s;
     },
 
+    // ---------- Tipos de documento (ABM en Configuración — CU-31) ----------
+    // Mismo patrón que empresa/sector: el TipoDocumentoViewSet ya soporta GET/POST/PATCH y baja
+    // lógica (activo), restringido a Admin/RRHH. La diferencia con listTiposDoc() —que trae solo
+    // los activos para el dropdown de "Cargar documento"— es que el ABM lista TODOS (activos e
+    // inactivos) para poder reactivar. `dias_aviso` se edita en "Parametría de alertas"; acá se
+    // muestra como dato (un tipo nuevo nace en 30 por el default del modelo).
+    async listTiposDocCfg() {
+      var rows = await getAllPages("/tipos-documento/?page_size=100");
+      return rows.map(function (t) {
+        return {
+          id: t.id,
+          nombre: t.nombre,
+          descripcion: t.descripcion || "",
+          dias_aviso: t.dias_aviso,
+          activo: !!t.activo,
+        };
+      });
+    },
+
+    // `datos`: { nombre, descripcion }. Solo `nombre` es obligatorio (lo pide el modelo, unique).
+    async crearTipoDoc(datos) {
+      var nombre = (datos && datos.nombre || "").trim();
+      if (!nombre) throw new Error("El nombre del tipo de documento es obligatorio.");
+      var body = { nombre: nombre, descripcion: (datos.descripcion || "").trim() };
+      var t = await jsend("POST", "/tipos-documento/", body);
+      showToast("Tipo de documento creado", "ok");
+      return t;
+    },
+
+    async editarTipoDoc(id, datos) {
+      var body = {};
+      ["nombre", "descripcion"].forEach(function (k) {
+        if (datos && datos[k] != null) body[k] = String(datos[k]).trim();
+      });
+      if (body.nombre === "") throw new Error("El nombre del tipo de documento no puede quedar vacío.");
+      var t = await jsend("PATCH", "/tipos-documento/" + id + "/", body);
+      showToast("Tipo de documento actualizado", "ok");
+      return t;
+    },
+
+    // Baja/reactivación lógica: no borra, solo apaga el tipo (activo=false). Los documentos ya
+    // cargados que lo usan no se rompen; un tipo inactivo no se ofrece para documentos nuevos.
+    async toggleTipoDocActivo(id, activo) {
+      var t = await jsend("PATCH", "/tipos-documento/" + id + "/", { activo: !!activo });
+      showToast(activo ? "Tipo de documento reactivado" : "Tipo de documento dado de baja", "ok");
+      return t;
+    },
+
     // Novedades con cadenas expandidas: se agrupan las prórrogas bajo su madre
     // (novedad_origen) para tener la cadena completa sin N+1.
     async listNovedades() {
