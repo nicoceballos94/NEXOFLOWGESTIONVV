@@ -668,6 +668,9 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
       await window.CeiboAPI.submitDoc(this.state.selEmp, this.state.docEditId);
       this.setState({ modal: null, docEditId: null, docArchivoNombre: '' });
       await this.recargarDocs(this.state.selEmp);
+      // Un ítem documental del checklist se completa/descompleta con este documento: hay que
+      // refrescar la tarjeta en el acto, si no queda "pendiente" hasta recargar la página.
+      await this.recargarChecklistFicha(this.state.selEmp);
     } catch (e) { console.error('[ceibo] documento', e); window.CeiboAPI.toast(e.message || String(e), 'error'); }
   };
   descargarDoc = async (id) => {
@@ -680,6 +683,8 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
     try {
       await window.CeiboAPI.quitarDoc(this.state.selEmp, id);
       await this.recargarDocs(this.state.selEmp);
+      // Borrar el documento puede descompletar un ítem documental del checklist: refrescar.
+      await this.recargarChecklistFicha(this.state.selEmp);
     } catch (e) { console.error('[ceibo] quitar documento', e); window.CeiboAPI.toast(e.message || String(e), 'error'); }
   };
   // ===== respaldos de la novedad (el canvas los deja en mock; acá van al backend) =====
