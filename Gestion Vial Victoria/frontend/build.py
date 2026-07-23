@@ -1163,6 +1163,63 @@ EDICIONES = [
         "toggleTheme = ()=> this.setState(s=>{var t=s.theme==='dark'?'light':'dark';try{localStorage.setItem('ceibo-th',t);}catch(e){}try{var m=document.getElementsByName('theme-color')[0];if(m)m.setAttribute('content',t==='dark'?'#0A1120':'#EEF2F7');}catch(e){}return {theme:t};});",
         "tema: persistir elección + sincronizar theme-color",
     ),
+
+    # ===== accesibilidad (auditoría 2026-07-23) =====
+    # Misma naturaleza que las tandas anteriores: rol/nombre accesible sobre elementos que ya
+    # existen. No cambia color, tipografía ni layout (no es diseño visual) → va acá y NO al
+    # canvas, igual que MEDIO-04, el badge de prórroga y los aria de los acordeones.
+
+    # --- HALLAZGO A: la campana del header es un <div> con cursor:pointer, hover y un punto
+    #     rojo de "no leído", pero sin onClick, sin rol y sin foco de teclado: parece clickeable,
+    #     no hace nada y un lector de pantalla no la alcanza. Se la vuelve <button> real que abre
+    #     Alertas y vencimientos —la pantalla que lista lo pendiente, que es lo que el punto rojo
+    #     insinúa—. El punto se marca aria-hidden: es decorativo, el nombre lo da el botón.
+    #     (El botón queda idéntico al toggle de tema, que ya usa este mismo patrón 38x38.) ---
+    (
+        '      <div style="width:38px;height:38px;border-radius:10px;border:1px solid var(--border);background:var(--surface);color:var(--text2);display:flex;align-items:center;justify-content:center;position:relative;cursor:pointer;flex:none" style-hover="color:var(--text)">\n'
+        '        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6z"/><path d="M10 19a2 2 0 0 0 4 0"/></svg>\n'
+        '        <span style="position:absolute;top:7px;right:8px;width:7px;height:7px;border-radius:50%;background:var(--bad);border:2px solid var(--surface)"></span>\n'
+        '      </div>',
+        '      <button type="button" onClick="{{ goAle }}" aria-label="Alertas y vencimientos" title="Alertas y vencimientos" style="width:38px;height:38px;border-radius:10px;border:1px solid var(--border);background:var(--surface);color:var(--text2);display:flex;align-items:center;justify-content:center;position:relative;cursor:pointer;flex:none" style-hover="color:var(--text)">\n'
+        '        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6z"/><path d="M10 19a2 2 0 0 0 4 0"/></svg>\n'
+        '        <span aria-hidden="true" style="position:absolute;top:7px;right:8px;width:7px;height:7px;border-radius:50%;background:var(--bad);border:2px solid var(--surface)"></span>\n'
+        '      </button>',
+        "A11Y-2307: campana del header → botón accesible que abre Alertas",
+    ),
+
+    # --- HALLAZGO B: los <input> de búsqueda (header y filtro de Novedades) no tienen nombre
+    #     accesible, solo placeholder (que no cuenta como label). Se les da aria-label. Los 4
+    #     <select> de filtros ya se rotularon en MEDIO-04 (2026-07-21); esto cierra el hueco. ---
+    (
+        '<input value="{{ empSearch }}" onInput="{{ onSearch }}" placeholder="Buscar empleado…"',
+        '<input value="{{ empSearch }}" onInput="{{ onSearch }}" aria-label="Buscar empleado" placeholder="Buscar empleado…"',
+        "A11Y-2307: aria-label del buscador del header",
+    ),
+    (
+        '<input value="{{ novEmp }}" onInput="{{ onNovEmp }}" list="nov-emp-list" autocomplete="off" placeholder="Filtrar por empleado…"',
+        '<input value="{{ novEmp }}" onInput="{{ onNovEmp }}" list="nov-emp-list" autocomplete="off" aria-label="Filtrar novedades por empleado" placeholder="Filtrar por empleado…"',
+        "A11Y-2307: aria-label del filtro de empleado (novedades)",
+    ),
+
+    # --- HALLAZGO C: los gráficos SVG de Reportes no tienen alternativa textual.
+    #     · La dona de "Motivos de egreso" es puramente visual: la leyenda de al lado ya trae
+    #       label + % como texto real, así que se la marca aria-hidden (evita que el lector
+    #       anuncie 6 <circle> sin sentido; el dato ya lo da la leyenda).
+    #     · El sparkline de "Dotación en el tiempo" sí aporta la forma de la tendencia, que no
+    #       está en ningún texto, así que se lo declara role=img con nombre.
+    #     · Las barras de "Ausentismo por tipo" ya son accesibles (cada una tiene su label y %
+    #       como texto), no se tocan. El sparkline de "Índice de rotación" del Dashboard tiene el
+    #       mismo hueco; queda como próxima tanda para no ampliar el alcance acordado. ---
+    (
+        '<svg viewBox="0 0 560 200" style="width:100%;height:200px;display:block">',
+        '<svg viewBox="0 0 560 200" role="img" aria-label="Gráfico de líneas de la dotación de empleados activos en los últimos 12 meses." style="width:100%;height:200px;display:block">',
+        "A11Y-2307: nombre accesible del sparkline de dotación (Reportes)",
+    ),
+    (
+        '<svg viewBox="0 0 140 140" style="width:140px;height:140px;flex:none;transform:rotate(-90deg)">',
+        '<svg viewBox="0 0 140 140" aria-hidden="true" style="width:140px;height:140px;flex:none;transform:rotate(-90deg)">',
+        "A11Y-2307: dona de egresos decorativa (aria-hidden, Reportes)",
+    ),
 ]
 
 
