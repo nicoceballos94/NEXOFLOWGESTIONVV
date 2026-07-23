@@ -75,7 +75,8 @@ reportes de **dotación / ausentismo / rotación** y las **alertas del día**
 backend real (`apps/dashboard`). De los mocks del canvas solo se reutilizan los
 íconos SVG, nunca los datos.
 
-**Configuración** — alta / edición y baja lógica de empresas y sectores.
+**Configuración** — alta / edición y baja lógica de empresas, sectores y
+**tipos de documento** (CU-31).
 
 **Pendiente de backend (fuera de lo cableado hoy):** auditoría consultable
 (historial de "quién hizo qué y cuándo") e importación inicial desde Excel.

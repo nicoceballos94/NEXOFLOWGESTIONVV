@@ -179,6 +179,9 @@ de un tipo nuevo solo se hace por herramientas internas.
   con alta/baja restringido a Admin/RRHH). Falta **exponerlo en la UI**, junto al
   ABM de empresas y sectores que ya está en Configuración.
 - *Bloqueado por decisión:* no — **listo para arrancar** (es trabajo de front).
+- *Estado:* ✅ **Hecho (2026-07-23).** ABM en Configuración (alta, edición y baja
+  lógica), con el mismo molde que empresas/sectores; verificado contra Postgres.
+  Los días de aviso siguen editándose en "Parametría de alertas".
 - *Habilita:* los ítems documentales del onboarding/offboarding (CU-29 / CU-30),
   que se enlazan a estos tipos.
 
@@ -189,7 +192,7 @@ de un tipo nuevo solo se hace por herramientas internas.
 | CU | Ítem | Depende de | ¿Decisión externa pendiente? |
 |---|---|---|---|
 | CU-25 | Medidas disciplinarias | Nada | No — **listo para arrancar** |
-| CU-31 | Tipos de documento en Configuración | Backend ya está (solo UI) | No — **listo para arrancar** |
+| CU-31 | Tipos de documento en Configuración | Backend ya está (solo UI) | ✅ **Hecho (2026-07-23)** |
 | CU-24 | Portal de autogestión | Nada nuevo | No (definir alcance) |
 | CU-29 | Onboarding (checklist ingreso) | Legajo (ya está) | No (definir checklist por empresa) |
 | CU-30 | Offboarding (checklist egreso) | Legajo/baja (ya está) | No (definir checklist por empresa) |
