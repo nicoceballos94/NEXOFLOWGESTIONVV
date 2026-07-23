@@ -148,6 +148,20 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
     this.setState({ sesion: true });
     await this.cargarTodo();
   }
+  // Al abrir un modal, a11yModal marca el fondo (aside + contenido) como `inert` para sacarlo del
+  // teclado y del lector de pantalla. Ese inert se limpia con a11yCerrar, pero SOLO closeModal lo
+  // llama: los botones de Guardar cierran con setState({modal:null}) sin pasar por ahí, así que el
+  // fondo quedaba inerte tras cada alta/edición y "no andaba más nada" hasta refrescar (afectaba a
+  // TODOS los modales: empleado, documento, novedad, empresa, sector, tipo de documento). En vez de
+  // parchear cada submit, se centraliza acá: cuando el modal pasa de abierto a cerrado por cualquier
+  // vía, se desarma el inert. a11yCerrar es idempotente, así que el closeModal explícito no molesta.
+  // OJO: el runtime de Claude Design invoca componentDidUpdate SIN prevProps/prevState (llegan
+  // undefined), así que NO se puede leer prevState.modal —tira TypeError en cada render y el fix
+  // nunca corría—. Se rastrea el modal anterior a mano en this._modalPrevio.
+  componentDidUpdate() {
+    if (this._modalPrevio && !this.state.modal) window.CeiboAPI.a11yCerrar();
+    this._modalPrevio = this.state.modal;
+  }
   renderVals() {
     const v = this.renderValsBase();
     // Dato utilizable: descarta null (sin cargar / fallo de red) y el marcador SIN_PERMISO (403).
