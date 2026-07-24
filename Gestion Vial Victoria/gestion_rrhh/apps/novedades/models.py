@@ -211,6 +211,15 @@ class Novedad(ModeloBase):
     def es_prorroga(self) -> bool:
         return self.novedad_origen_id is not None
 
+    @property
+    def empleado_auditado(self) -> "Empleado":  # noqa: F821
+        """De quién habla un evento de auditoría sobre esta novedad (ver `auditoria.services`).
+
+        Los eventos de adjuntos y de prórrogas se asientan sobre la novedad, así que también
+        aterrizan en la ficha de la persona por este camino.
+        """
+        return self.empleado
+
 
 def ruta_archivo_adjunto(instance: "AdjuntoNovedad", filename: str) -> str:
     return archivos.ruta_con_uuid("novedades", instance.novedad_id, filename)

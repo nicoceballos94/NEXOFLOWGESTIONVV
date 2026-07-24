@@ -29,3 +29,17 @@ class Usuario(AbstractUser):
     @property
     def es_rrhh(self) -> bool:
         return self.tiene_rol(roles.RRHH)
+
+    @property
+    def empleado_auditado(self) -> None:
+        """Un evento sobre un usuario no es de nadie en particular (ver `auditoria.services`).
+
+        Devuelve None **a propósito**, incluso cuando el usuario está enlazado a un empleado:
+        darle un rol a alguien es un hecho del sistema, no de su legajo. Atarlo a la persona
+        pondría "ascendido a Admin" en la pestaña Historial de su ficha de RRHH, mezclando
+        dos historias que se leen por motivos distintos.
+
+        Se declara explícito y no se omite para que "no tiene la propiedad" signifique
+        siempre "se la olvidaron", nunca "no aplica".
+        """
+        return None

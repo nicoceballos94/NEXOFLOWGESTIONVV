@@ -200,3 +200,12 @@ class ItemProceso(ModeloBase):
 
     def __str__(self):
         return f"{self.etiqueta} · {self.proceso}"
+
+    @property
+    def empleado_auditado(self):
+        """De quién habla un evento de auditoría sobre este ítem (ver `auditoria.services`).
+
+        El checklist cuelga de la RELACIÓN (para que el reingreso no pise el anterior), así
+        que hasta la persona hay dos saltos.
+        """
+        return self.proceso.relacion_laboral.empleado

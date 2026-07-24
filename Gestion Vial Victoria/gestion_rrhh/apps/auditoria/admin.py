@@ -16,11 +16,20 @@ from .models import RegistroAuditoria
 
 @admin.register(RegistroAuditoria)
 class RegistroAuditoriaAdmin(admin.ModelAdmin):
-    list_display = ("momento", "usuario_nombre", "accion", "entidad", "objeto_repr", "cambios")
+    list_display = (
+        "momento", "usuario_nombre", "accion", "empleado", "objeto_repr", "cambios"
+    )
     list_filter = ("accion", "entidad", "momento")
-    search_fields = ("usuario_nombre", "objeto_repr", "objeto_id")
+    # Buscar por legajo o apellido responde "mostrame todo lo de esta persona" sin filtro
+    # aparte: es la consulta que la columna `empleado` existe para hacer barata.
+    search_fields = (
+        "usuario_nombre",
+        "objeto_repr",
+        "empleado__legajo",
+        "empleado__apellido",
+    )
     date_hierarchy = "momento"
-    list_select_related = ("usuario",)
+    list_select_related = ("usuario", "empleado")
 
     @admin.display(description="Cambios")
     def cambios(self, obj):

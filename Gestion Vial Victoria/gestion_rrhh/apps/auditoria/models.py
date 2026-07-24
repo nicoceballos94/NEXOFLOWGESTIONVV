@@ -87,6 +87,18 @@ class RegistroAuditoria(models.Model):
     objeto_id = models.PositiveBigIntegerField(
         null=True, blank=True, help_text="PK del objeto. Queda null si el objeto se borró."
     )
+    empleado = models.ForeignKey(
+        "empleados.Empleado",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+        help_text="De qué PERSONA habla el evento, aunque `entidad` sea otra cosa. "
+        "Denormalizado a propósito: sin esto, 'el historial de la ficha de Juan' obliga a "
+        "juntar eventos de Empleado, RelacionLaboral, DocumentoEmpleado, Novedad e "
+        "ItemProceso averiguando antes cuáles son de Juan. Null en eventos que no son de "
+        "nadie en particular (un usuario del sistema sin empleado asociado).",
+    )
     objeto_repr = models.CharField(
         max_length=200,
         blank=True,
@@ -116,6 +128,8 @@ class RegistroAuditoria(models.Model):
             models.Index(fields=["entidad", "objeto_id", "-momento"], name="idx_audit_objeto"),
             # La consulta transversal: "¿qué hizo Juan el martes?".
             models.Index(fields=["usuario", "-momento"], name="idx_audit_usuario"),
+            # La pestaña "Historial" de la ficha: todo lo que le pasó a una persona.
+            models.Index(fields=["empleado", "-momento"], name="idx_audit_empleado"),
         ]
 
     def __str__(self):

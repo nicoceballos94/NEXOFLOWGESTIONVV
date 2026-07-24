@@ -143,6 +143,11 @@ class Empleado(ModeloBase):
     def activo(self) -> bool:
         return self.relacion_activa is not None
 
+    @property
+    def empleado_auditado(self) -> "Empleado":
+        """De quién habla un evento de auditoría sobre esta fila (ver `auditoria.services`)."""
+        return self
+
 
 class RelacionLaboral(ModeloBase):
     """Vínculo persona↔empresa con historial. R1: única ACTIVA por (empleado, empresa)."""
@@ -194,6 +199,11 @@ class RelacionLaboral(ModeloBase):
 
     def __str__(self):
         return f"{self.empleado} @ {self.empresa} ({self.estado})"
+
+    @property
+    def empleado_auditado(self) -> Empleado:
+        """La baja de una relación es un hecho de la historia de la persona (auditoría)."""
+        return self.empleado
 
     @property
     def antiguedad_en_dias(self) -> int | None:
@@ -274,3 +284,8 @@ class DocumentoEmpleado(ModeloBase):
 
     def __str__(self):
         return f"{self.tipo_documento} de {self.empleado}"
+
+    @property
+    def empleado_auditado(self) -> Empleado:
+        """Cargar o borrar un documento es un hecho de la historia de la persona (auditoría)."""
+        return self.empleado

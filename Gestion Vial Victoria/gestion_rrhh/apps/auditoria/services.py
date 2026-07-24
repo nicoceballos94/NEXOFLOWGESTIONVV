@@ -71,6 +71,26 @@ def _valor_json(objeto, campo):
     return str(valor)  # red final: registrar_evento no puede caerse por un tipo raro
 
 
+def _empleado_de(objeto):
+    """De qué persona habla el evento, preguntándoselo al propio objeto.
+
+    Cada modelo auditado declara una propiedad `empleado_auditado` con el camino hasta su
+    persona (`ItemProceso` la busca por proceso→relación→empleado; `Empleado` se devuelve a
+    sí mismo). Se resuelve por convención y no con un `if isinstance(...)` acá porque esta
+    app no tiene por qué conocer el mapa de las otras: cada modelo sabe mejor que nadie
+    dónde está su persona, y agregar una entidad auditable no obliga a tocar este archivo.
+
+    El contrato lo sostiene `test_empleado_id.py`, que recorre las entidades auditadas y
+    exige que cada una resuelva (o esté declarada como "no es de nadie"). Sin ese test, una
+    entidad nueva sin la propiedad guardaría `empleado=None` sin que nada se queje, y el
+    historial de la ficha quedaría incompleto en silencio.
+    """
+    try:
+        return getattr(objeto, "empleado_auditado", None)
+    except ObjectDoesNotExist:  # relación esperada que no está (usuario sin empleado)
+        return None
+
+
 def tomar_foto(objeto, *, campos: tuple[str, ...] | None = None) -> dict:
     """Estado serializable del objeto **en este instante**.
 
@@ -139,6 +159,7 @@ def registrar_evento(
         usuario_nombre=getattr(usuario, "username", "") or "",
         accion=accion,
         entidad=objeto._meta.object_name,
+        empleado=_empleado_de(objeto),
         objeto_id=objeto.pk,
         objeto_repr=str(objeto)[:200],
         valores_antes=valores_antes,
