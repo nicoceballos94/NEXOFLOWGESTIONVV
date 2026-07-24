@@ -1474,6 +1474,18 @@ EDICIONES = [
         '<button onClick="{{ toggleTheme }}" title="{{ temaToggleAria }}" aria-label="{{ temaToggleAria }}" style="width:38px;height:38px;border-radius:10px;border:1px solid var(--border);background:var(--surface);color:var(--text2);display:flex;align-items:center;justify-content:center;cursor:pointer;flex:none" style-hover="color:var(--text);border-color:var(--border2)">',
         "tema: título/aria dinámico del toggle",
     ),
+
+    # ===== Configuración: todas las secciones colapsadas al entrar (2026-07-23) =====
+    # Pedido del usuario. El canvas abre "Alertas" y "Notificaciones" de arranque; con seis
+    # acordeones la pantalla entra larguísima y hay que scrollear para ver qué hay. Es el
+    # default de un estado de UI (mismo criterio que el default día/noche), no color ni
+    # layout → va acá y NO al canvas. Las secciones nuevas (tiposdoc, checklists) ya arrancan
+    # cerradas porque no figuran en el objeto.
+    (
+        "cfgOpen: { alertas: true, notif: true, empresas: false, sectores: false },",
+        "cfgOpen: { alertas: false, notif: false, empresas: false, sectores: false },",
+        "Configuración: acordeones colapsados por defecto",
+    ),
 ]
 
 
