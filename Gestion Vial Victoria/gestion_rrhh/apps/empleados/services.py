@@ -8,6 +8,7 @@ El legajo lo asigna el backend: es un número de la organización, no un dato de
 from django.db import connection, transaction
 from rest_framework.exceptions import ValidationError
 
+from apps.auditoria.services import Accion, registrar_evento, tomar_foto
 from common.storage import borrar_archivo_al_confirmar
 
 from .models import DocumentoEmpleado, Empleado, EstadoRelacion, RelacionLaboral
@@ -40,15 +41,25 @@ def crear_empleado(*, actor, datos_empleado: dict, datos_relacion: dict) -> Empl
     empleado = Empleado.objects.create(
         creado_por=actor, legajo=_asignar_legajo(), **datos_empleado
     )
+    registrar_evento(actor=actor, accion=Accion.EMPLEADO_CREADO, objeto=empleado)
+    # La relación asienta su propio evento: son dos hechos, y la baja de mañana toca uno solo.
     crear_relacion_laboral(actor=actor, empleado=empleado, **datos_relacion)
     return empleado
 
 
 @transaction.atomic
 def actualizar_empleado(*, actor, empleado: Empleado, datos_empleado: dict) -> Empleado:
+    antes = tomar_foto(empleado)
     for campo, valor in datos_empleado.items():
         setattr(empleado, campo, valor)
     empleado.save()
+    registrar_evento(
+        actor=actor,
+        accion=Accion.EMPLEADO_ACTUALIZADO,
+        objeto=empleado,
+        antes=antes,
+        solo_si_cambia=True,  # abrir la ficha y guardarla sin tocar nada no es un hecho
+    )
     return empleado
 
 
@@ -64,9 +75,11 @@ def crear_relacion_laboral(
         raise ValidationError(
             {"empresa": "El empleado ya tiene una relación laboral activa en esta empresa."}
         )
-    return RelacionLaboral.objects.create(
+    relacion = RelacionLaboral.objects.create(
         creado_por=actor, empleado=empleado, estado=estado, **datos
     )
+    registrar_evento(actor=actor, accion=Accion.RELACION_CREADA, objeto=relacion)
+    return relacion
 
 
 @transaction.atomic
@@ -80,10 +93,15 @@ def finalizar_relacion(
         raise ValidationError(
             {"fecha_egreso": "La fecha de egreso no puede ser anterior al ingreso."}
         )
+    antes = tomar_foto(relacion)
     relacion.estado = EstadoRelacion.FINALIZADA
     relacion.fecha_egreso = fecha_egreso
     relacion.motivo_egreso = motivo_egreso
     relacion.save(update_fields=["estado", "fecha_egreso", "motivo_egreso", "actualizado_en"])
+    # La baja es EL evento que se le va a pedir a esta bitácora en una disputa laboral.
+    registrar_evento(
+        actor=actor, accion=Accion.RELACION_FINALIZADA, objeto=relacion, antes=antes
+    )
     return relacion
 
 
@@ -99,7 +117,11 @@ def crear_documento(*, actor, empleado: Empleado, **datos) -> DocumentoEmpleado:
                 "Para renovarlo, editá su vencimiento."
             }
         )
-    return DocumentoEmpleado.objects.create(creado_por=actor, empleado=empleado, **datos)
+    documento = DocumentoEmpleado.objects.create(
+        creado_por=actor, empleado=empleado, **datos
+    )
+    registrar_evento(actor=actor, accion=Accion.DOCUMENTO_CREADO, objeto=documento)
+    return documento
 
 
 
@@ -111,11 +133,13 @@ def actualizar_documento(*, actor, documento: DocumentoEmpleado, **datos) -> Doc
     Sin esto, el UNIQUE (empleado, tipo_documento) convertía cualquier documento cargado en
     un callejón sin salida: no se podía ni corregir un vencimiento mal tipeado.
 
-    Renovar (apto médico nuevo) es mover `fecha_vencimiento` y reemplazar el archivo: no
-    queda historial de la versión anterior. Es deliberado y acordado — un carnet o un CNRT
-    viejo es basura, no historia. El respaldo de un hecho puntual (el certificado de una
-    licencia, los estudios de un accidente) no vive acá: pertenece a su novedad, que lo
-    conserva sola porque las novedades no se borran nunca.
+    Renovar (apto médico nuevo) es mover `fecha_vencimiento` y reemplazar el archivo: no se
+    conserva el ARCHIVO anterior. Es deliberado y acordado — un carnet o un CNRT viejo es
+    basura, no historia. Lo que sí queda desde RP8 es el rastro del cambio en la bitácora
+    (qué vencimiento tenía antes, quién lo movió y cuándo), que es lo que se discute cuando
+    alguien pregunta por qué figuraba vigente. El respaldo de un hecho puntual (el
+    certificado de una licencia, los estudios de un accidente) no vive acá: pertenece a su
+    novedad, que lo conserva sola porque las novedades no se borran nunca.
 
     El tipo no se edita: cambiar el tipo es otro documento (borrá este y cargá el correcto).
     """
@@ -124,9 +148,17 @@ def actualizar_documento(*, actor, documento: DocumentoEmpleado, **datos) -> Doc
     archivo_viejo = None
     if "archivo" in datos and documento.archivo and datos["archivo"] != documento.archivo:
         archivo_viejo = documento.archivo
+    antes = tomar_foto(documento)
     for campo, valor in datos.items():
         setattr(documento, campo, valor)
     documento.save()
+    registrar_evento(
+        actor=actor,
+        accion=Accion.DOCUMENTO_ACTUALIZADO,
+        objeto=documento,
+        antes=antes,
+        solo_si_cambia=True,
+    )
     borrar_archivo_al_confirmar(archivo_viejo)
     return documento
 
@@ -139,8 +171,17 @@ def guardar_foto_empleado(*, actor, empleado: Empleado, foto) -> Empleado:
     documentos (`borrar_archivo_al_confirmar`), después del commit y no antes.
     """
     foto_vieja = empleado.foto if empleado.foto else None
+    antes = tomar_foto(empleado, campos=("foto",))
     empleado.foto = foto
     empleado.save(update_fields=["foto", "actualizado_en"])
+    # `campos` acota el diff a la foto: el resto de la ficha no cambió y sería ruido.
+    registrar_evento(
+        actor=actor,
+        accion=Accion.EMPLEADO_FOTO_CAMBIADA,
+        objeto=empleado,
+        antes=antes,
+        campos=("foto",),
+    )
     if foto_vieja and foto_vieja != empleado.foto:
         borrar_archivo_al_confirmar(foto_vieja)
     return empleado
@@ -150,8 +191,16 @@ def guardar_foto_empleado(*, actor, empleado: Empleado, foto) -> Empleado:
 def eliminar_foto_empleado(*, actor, empleado: Empleado) -> Empleado:
     """Quita la foto de perfil y borra el binario al confirmar."""
     foto = empleado.foto if empleado.foto else None
+    antes = tomar_foto(empleado, campos=("foto",))
     empleado.foto = None
     empleado.save(update_fields=["foto", "actualizado_en"])
+    registrar_evento(
+        actor=actor,
+        accion=Accion.EMPLEADO_FOTO_ELIMINADA,
+        objeto=empleado,
+        antes=antes,
+        campos=("foto",),
+    )
     borrar_archivo_al_confirmar(foto)
     return empleado
 
@@ -165,5 +214,14 @@ def eliminar_documento(*, actor, documento: DocumentoEmpleado) -> None:
     nada — quedaría un dato de salud en el disco sin ninguna fila que diga de quién es.
     """
     archivo = documento.archivo  # la referencia sobrevive al DELETE; el binario, no
+    # Se asienta ANTES del delete: después, Django deja el objeto sin pk y la constancia
+    # perdería de qué documento hablaba. Es el único rastro que va a quedar de él.
+    registrar_evento(
+        actor=actor,
+        accion=Accion.DOCUMENTO_ELIMINADO,
+        objeto=documento,
+        antes=tomar_foto(documento),
+        despues={},
+    )
     documento.delete()
     borrar_archivo_al_confirmar(archivo)

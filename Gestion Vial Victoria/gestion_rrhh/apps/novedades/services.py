@@ -4,9 +4,10 @@ Las transiciones de estado NO se hacen por PATCH: cada una es un service dedicad
 regla (R11: aprobar/rechazar exige rol RRHH/Admin, se valida en la capa de permisos). La
 cadena de prórrogas concentra RP1–RP7 en `prorrogar_novedad`, todo transaccional.
 
-TODO(RP8): registrar cada eslabón (creación, aprobación, rechazo, anulación, prórroga) en
-RegistroAuditoria con acción semántica. La app `auditoria` YA EXISTE (motor y acciones
-listos: `apps.auditoria.services.registrar_evento`); falta cablearla acá y en `empleados`.
+RP8 (auditoría): cada eslabón de la vida de una novedad se asienta en la bitácora con una
+acción semántica —`NOVEDAD_RECHAZADA` cuenta una historia, un diff `estado: … → …` no—.
+Los eventos de la CADENA (prórrogas, adjuntos) se asientan sobre la **madre**: la cadena es
+un solo período y su historia se lee en un solo lugar.
 """
 from datetime import timedelta
 
@@ -15,6 +16,7 @@ from django.db.models import Q
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
+from apps.auditoria.services import Accion, registrar_evento, tomar_foto
 from apps.empleados.models import Empleado
 from common.storage import borrar_archivo_al_confirmar
 
@@ -135,7 +137,9 @@ def crear_novedad(*, actor, datos: dict) -> Novedad:
     )
     if not datos.get("relacion_laboral"):
         datos["relacion_laboral"] = empleado.relacion_activa
-    return Novedad.objects.create(creado_por=actor, **datos)
+    novedad = Novedad.objects.create(creado_por=actor, **datos)
+    registrar_evento(actor=actor, accion=Accion.NOVEDAD_CREADA, objeto=novedad)
+    return novedad
 
 
 def _rechazar_campos_de_la_cadena(novedad: Novedad, datos: dict) -> None:
@@ -176,6 +180,7 @@ def actualizar_novedad(*, actor, novedad: Novedad, datos: dict) -> Novedad:
     if novedad.es_prorroga:
         _rechazar_campos_de_la_cadena(novedad, datos)
     _tomar_calendario(novedad.empleado)
+    antes = tomar_foto(novedad)
     for campo, valor in datos.items():
         setattr(novedad, campo, valor)  # mezcla lo editado con lo que ya tenía
     if novedad.fecha_hasta and novedad.fecha_hasta < novedad.fecha_desde:
@@ -190,6 +195,13 @@ def actualizar_novedad(*, actor, novedad: Novedad, datos: dict) -> Novedad:
         excluir_ids=_ids_de_la_cadena(novedad),
     )
     novedad.save()
+    registrar_evento(
+        actor=actor,
+        accion=Accion.NOVEDAD_ACTUALIZADA,
+        objeto=novedad,
+        antes=antes,
+        solo_si_cambia=True,
+    )
     return novedad
 
 
@@ -200,11 +212,15 @@ def aprobar_novedad(*, actor, novedad: Novedad) -> Novedad:
         raise ValidationError(
             {"estado": f"No se puede aprobar una novedad {novedad.get_estado_display()}."}
         )
+    antes = tomar_foto(novedad)
     novedad.estado = EstadoNovedad.APROBADA
     novedad.aprobada_por = actor
     novedad.aprobada_en = timezone.now()
     novedad.save(
         update_fields=["estado", "aprobada_por", "aprobada_en", "actualizado_en"]
+    )
+    registrar_evento(
+        actor=actor, accion=Accion.NOVEDAD_APROBADA, objeto=novedad, antes=antes
     )
     return novedad
 
@@ -215,10 +231,23 @@ def rechazar_novedad(*, actor, novedad: Novedad, motivo: str = "") -> Novedad:
         raise ValidationError(
             {"estado": f"No se puede rechazar una novedad {novedad.get_estado_display()}."}
         )
+    antes = tomar_foto(novedad)
     novedad.estado = EstadoNovedad.RECHAZADA
     if motivo:
         novedad.observaciones = f"{novedad.observaciones}\nRechazo: {motivo}".strip()
     novedad.save(update_fields=["estado", "observaciones", "actualizado_en"])
+    # El motivo se venía concatenando en `observaciones`, que es frágil (D2): acá queda
+    # como dato propio del evento, con su autor, sin depender de que nadie edite el texto.
+    despues = tomar_foto(novedad)
+    if motivo:
+        despues["motivo_rechazo"] = motivo
+    registrar_evento(
+        actor=actor,
+        accion=Accion.NOVEDAD_RECHAZADA,
+        objeto=novedad,
+        antes=antes,
+        despues=despues,
+    )
     return novedad
 
 
@@ -240,10 +269,21 @@ def anular_novedad(*, actor, novedad: Novedad, motivo: str = "") -> Novedad:
                     "Anulá primero cada prórroga."
                 }
             )
+    antes = tomar_foto(novedad)
     novedad.estado = EstadoNovedad.ANULADA
     if motivo:
         novedad.observaciones = f"{novedad.observaciones}\nAnulación: {motivo}".strip()
     novedad.save(update_fields=["estado", "observaciones", "actualizado_en"])
+    despues = tomar_foto(novedad)
+    if motivo:
+        despues["motivo_anulacion"] = motivo
+    registrar_evento(
+        actor=actor,
+        accion=Accion.NOVEDAD_ANULADA,
+        objeto=novedad,
+        antes=antes,
+        despues=despues,
+    )
     return novedad
 
 
@@ -305,7 +345,7 @@ def prorrogar_novedad(
         campo="fecha_hasta_nueva",
     )
 
-    return Novedad.objects.create(
+    prorroga = Novedad.objects.create(
         creado_por=actor,
         empleado=madre.empleado,
         relacion_laboral=madre.relacion_laboral,
@@ -317,6 +357,21 @@ def prorrogar_novedad(
         novedad_origen=madre,  # apunta SIEMPRE a la madre
         estado=EstadoNovedad.REGISTRADA,  # RP5: nace pendiente
     )
+    # Se asienta sobre la MADRE, no sobre la prórroga: quien audita abre la licencia y
+    # espera ver "se prorrogó hasta el 30/8" en su historia. Un evento colgado del eslabón
+    # nuevo dejaría la madre sin rastro de que la cadena creció.
+    registrar_evento(
+        actor=actor,
+        accion=Accion.NOVEDAD_PRORROGADA,
+        objeto=madre,
+        despues={
+            "prorroga_id": prorroga.pk,
+            "vigencia_anterior_hasta": hasta_actual.isoformat(),
+            "prorrogada_hasta": fecha_hasta_nueva.isoformat(),
+            "motivo": motivo,
+        },
+    )
+    return prorroga
 
 
 @transaction.atomic
@@ -341,6 +396,14 @@ def adjuntar_a_novedad(
         nombre_original=getattr(archivo, "name", "") or "archivo",
         descripcion=descripcion,
     )
+    # Sobre la NOVEDAD: el adjunto es un hecho de su historia, y nadie navega la lista de
+    # adjuntos por su cuenta. Solo el nombre del archivo, nunca el contenido.
+    registrar_evento(
+        actor=actor,
+        accion=Accion.ADJUNTO_AGREGADO,
+        objeto=novedad,
+        despues={"archivo": adjunto.nombre_original, "descripcion": descripcion},
+    )
     return adjunto
 
 
@@ -353,5 +416,13 @@ def quitar_adjunto(*, actor, adjunto: AdjuntoNovedad) -> None:
     bitácora conserva son los adjuntos correctos.
     """
     archivo = adjunto.archivo  # la referencia sobrevive al DELETE; el binario, no
+    # Antes del delete, y sobre la novedad: es el único rastro de que ese papel existió.
+    registrar_evento(
+        actor=actor,
+        accion=Accion.ADJUNTO_ELIMINADO,
+        objeto=adjunto.novedad,
+        antes={"archivo": adjunto.nombre_original, "descripcion": adjunto.descripcion},
+        despues={},
+    )
     adjunto.delete()
     borrar_archivo_al_confirmar(archivo)
