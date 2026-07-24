@@ -418,6 +418,85 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
         }
       }
     }
+    // ===== Bitácora (RP8) =====
+    // Módulo nuevo: el canvas no tiene mock, así que estos valores se calculan siempre acá.
+    v.isAud = this.state.view === 'auditoria';
+    v.navAud = this.navStyle('auditoria');
+    v.goAud = this.goAud;
+    // El mapa `titles` del canvas no conoce el módulo nuevo, así que sin esto el encabezado
+    // se queda con el título de la vista anterior ("Panel general" sobre la bitácora).
+    if (v.isAud) {
+      v.pageTitle = 'Bitácora';
+      v.crumb = 'Ceibo · Quién hizo qué y cuándo';
+    }
+    // Honestidad visual: sin la capacidad, la entrada del menú no aparece. La seguridad
+    // real es el 403 del backend, que igual se maneja abajo.
+    v.puedeAuditar = window.CeiboAPI.puede('auditoria_ver');
+    const _aud = this.state.auditoria;
+    const _audF = this.state.audFiltros || {};
+    const _btnPag = (activo) => 'height:36px;padding:0 14px;border-radius:10px;font-size:12.5px;font-weight:600;'
+      + (activo
+        ? 'border:1px solid var(--border2);background:var(--surface);color:var(--text2);cursor:pointer'
+        : 'border:1px solid var(--border);background:transparent;color:var(--text3);opacity:.45;cursor:default');
+    v.audUI = {
+      accion: _audF.accion || '',
+      desde: _audF.desde || '',
+      hasta: _audF.hasta || '',
+      setAccion: (e) => this.setAudFiltro('accion', e.target.value),
+      setDesde: (e) => this.setAudFiltro('desde', e.target.value),
+      setHasta: (e) => this.setAudFiltro('hasta', e.target.value),
+      limpiar: this.limpiarAudFiltros,
+      hayFiltro: !!(_audF.accion || _audF.desde || _audF.hasta || _audF.empleado),
+      // El total va con el filtro aplicado: "12 movimientos" tras filtrar por baja significa
+      // 12 bajas, no 12 registros en total. Decirlo evita leerlo como el tamaño de la tabla.
+      resumen: _aud ? (_aud.total + (_aud.total === 1 ? ' movimiento' : ' movimientos')) : '',
+      pagina: 'Página ' + (this.state.audPage || 1),
+      noHayMas: !(_aud && _aud.hayMas),
+      noHayAnterior: !(_aud && _aud.hayAnterior),
+      // Los handlers cortan solos en los bordes: pedir la página siguiente cuando no hay
+      // devuelve 404 y dejaría la pantalla en "no se puede mostrar" por apretar un botón
+      // que se ve apagado. El estilo dice que no se puede; el handler lo garantiza.
+      anterior: () => {
+        if (_aud && _aud.hayAnterior) this.reloadAuditoria(Math.max(1, (this.state.audPage || 1) - 1));
+      },
+      siguiente: () => {
+        if (_aud && _aud.hayMas) this.reloadAuditoria((this.state.audPage || 1) + 1);
+      },
+      estiloAnterior: _btnPag(!!(_aud && _aud.hayAnterior)),
+      estiloSiguiente: _btnPag(!!(_aud && _aud.hayMas)),
+      btn: 'height:38px;padding:0 14px;border-radius:10px;border:1px solid var(--border2);background:var(--surface);color:var(--text2);font-size:12.5px;font-weight:600;cursor:pointer',
+    };
+    v.audRows = _aud ? _aud.registros.map((r) => ({
+      fecha: window.CeiboAPI.fechaCorta(r.momento),
+      hora: window.CeiboAPI.horaCorta(r.momento),
+      quien: r.quien,
+      accionLabel: r.accionLabel,
+      badge: window.CeiboAPI.estiloAccion(r.accion),
+      objeto: r.objeto,
+      empleado: r.empleado,
+      // Sin cambios que mostrar (una prórroga, un adjunto) la fila igual cuenta el hecho:
+      // el nombre de la acción ES la información, el diff es accesorio.
+      cambios: r.cambios.map((c) => ({
+        campo: c.campo,
+        antes: window.CeiboAPI.valorLegible(c.antes),
+        despues: window.CeiboAPI.valorLegible(c.despues),
+      })),
+    })) : [];
+    // Los tres estados son excluyentes: o se está cargando, o falló, o hay algo que mostrar.
+    // Sin esto, al pasar de página la lista vieja convive con el cartel de "Cargando…".
+    v.audCargando = !!this.state.audCargando;
+    v.audHayErr = !!this.state.audErr && !v.audCargando;
+    v.audErr = this.state.audErr || '';
+    v.audVacio = !v.audCargando && !v.audHayErr && !!_aud && _aud.total === 0;
+    v.audHayLista = !v.audCargando && !v.audHayErr && v.audRows.length > 0;
+    v.audHayPag = v.audHayLista && !!(_aud && (_aud.hayMas || _aud.hayAnterior));
+    // Vacío por filtro y vacío de verdad no son lo mismo: el primero se resuelve limpiando
+    // los filtros, el segundo significa que todavía no pasó nada. Decir lo mismo en ambos
+    // casos manda a buscar un problema donde no lo hay.
+    v.audVacioTexto = v.audUI.hayFiltro
+      ? 'No hay movimientos que coincidan con los filtros. Probá ampliando el rango de fechas o limpiándolos.'
+      : 'Todavía no hay movimientos registrados. La bitácora empieza a llenarse a medida que se usa el sistema: '
+        + 'registra desde ahora en adelante, no reconstruye lo que pasó antes.';
     return v;
   }
   // ===== accesibilidad de los modales (BUG-12) =====
@@ -896,8 +975,152 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
       this.setState({ fichaChkData: tarjeta });
     } catch (e) { console.error('[ceibo] tildar checklist ficha', e); window.CeiboAPI.toast(e.message || String(e), 'error'); }
   };
+
+  // ===== Bitácora (RP8) ==================================================================
+  // Módulo nuevo, sin mock en el canvas: arranca en null y se carga al entrar. Solo Admin
+  // llega hasta acá (la entrada del menú se esconde con la capacidad `auditoria_ver`), pero
+  // igual se maneja el 403 por si alguien navega con un token de otro rol.
+  goAud = () => { this.setView('auditoria'); this.reloadAuditoria(1); };
+
+  reloadAuditoria = async (page) => {
+    const pagina = page || 1;
+    this.setState({ audCargando: true });
+    try {
+      const f = this.state.audFiltros || {};
+      const data = await window.CeiboAPI.listAuditoria({
+        accion: f.accion, desde: f.desde, hasta: f.hasta,
+        empleado: f.empleado, page: pagina,
+      });
+      this.setState({ auditoria: data, audPage: pagina, audCargando: false, audErr: null });
+    } catch (e) {
+      console.error('[ceibo] bitácora', e);
+      // El 403 no es un error a gritar: es el backend diciendo que este rol no audita.
+      // Se muestra como estado de la pantalla, no como toast rojo de "algo se rompió".
+      const err = e && e.status === 403
+        ? 'Tu rol no tiene acceso a la bitácora. Solo Administración puede consultarla.'
+        : (e.message || String(e));
+      this.setState({ auditoria: null, audCargando: false, audErr: err });
+    }
+  };
+
+  // Los filtros recargan desde la página 1: quedarse en la 7 después de filtrar deja la
+  // pantalla vacía sin explicación (hay resultados, pero no tantas páginas).
+  setAudFiltro = (clave, valor) => {
+    this.setState(
+      (s) => ({ audFiltros: { ...s.audFiltros, [clave]: valor } }),
+      () => this.reloadAuditoria(1),
+    );
+  };
+  limpiarAudFiltros = () => {
+    this.setState({ audFiltros: { accion: '', desde: '', hasta: '', empleado: '' } },
+      () => this.reloadAuditoria(1));
+  };
+  // Ver el historial de una persona desde su ficha: filtra la bitácora por ese empleado.
+  verBitacoraDe = (empId) => {
+    this.setState(
+      { view: 'auditoria', audFiltros: { accion: '', desde: '', hasta: '', empleado: empId } },
+      () => this.reloadAuditoria(1),
+    );
+    window.CeiboAPI.scrollMainTop();
+  };
 }
 """
+
+# ===== Bitácora (RP8) — markup de la pantalla ==========================================
+# Provisorio en build.py hasta que el módulo exista en el canvas (ver la edición que lo
+# inyecta). Se escribe en el mismo dialecto del canvas (sc-if / sc-for / {{ }}) justamente
+# para que subirlo a Claude Design sea copiar y pegar, sin traducir nada.
+#
+# La lista es una TIMELINE y no una tabla a propósito: los diffs tienen largo variable (una
+# baja toca 3 campos, una edición 1) y en una tabla eso obliga a una columna que o desborda
+# o corta. Acá cada fila crece lo que necesita.
+BLOQUE_BITACORA = r"""      <!-- ===================== BITÁCORA (RP8) ===================== -->
+      <sc-if value="{{ isAud }}" hint-placeholder-val="{{ false }}">
+      <div style="animation:fin .35s ease both">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:16px">
+          <select value="{{ audUI.accion }}" onChange="{{ audUI.setAccion }}" aria-label="Filtrar por tipo de movimiento" style="{{ selStyle }}">
+            <option value="">Todos los movimientos</option>
+            <option value="EMPLEADO_CREADO">Alta de empleado</option>
+            <option value="EMPLEADO_ACTUALIZADO">Edición de ficha</option>
+            <option value="RELACION_FINALIZADA">Bajas</option>
+            <option value="RELACION_CREADA">Altas de relación laboral</option>
+            <option value="DOCUMENTO_CREADO">Documentos cargados</option>
+            <option value="DOCUMENTO_ACTUALIZADO">Documentos editados</option>
+            <option value="DOCUMENTO_ELIMINADO">Documentos eliminados</option>
+            <option value="NOVEDAD_CREADA">Novedades cargadas</option>
+            <option value="NOVEDAD_APROBADA">Novedades aprobadas</option>
+            <option value="NOVEDAD_RECHAZADA">Novedades rechazadas</option>
+            <option value="NOVEDAD_ANULADA">Novedades anuladas</option>
+            <option value="NOVEDAD_PRORROGADA">Prórrogas</option>
+            <option value="CHECKLIST_ITEM_COMPLETADO">Checklist completado</option>
+            <option value="CHECKLIST_ITEM_REVERTIDO">Checklist revertido</option>
+            <option value="USUARIO_CREADO">Usuarios creados</option>
+            <option value="USUARIO_ACTUALIZADO">Usuarios editados</option>
+            <option value="USUARIO_DESACTIVADO">Usuarios desactivados</option>
+          </select>
+          <input type="date" value="{{ audUI.desde }}" onChange="{{ audUI.setDesde }}" aria-label="Desde qué fecha" style="{{ selStyle }}"/>
+          <input type="date" value="{{ audUI.hasta }}" onChange="{{ audUI.setHasta }}" aria-label="Hasta qué fecha" style="{{ selStyle }}"/>
+          <sc-if value="{{ audUI.hayFiltro }}" hint-placeholder-val="{{ true }}">
+          <button type="button" onClick="{{ audUI.limpiar }}" style="{{ audUI.btn }}">Limpiar filtros</button>
+          </sc-if>
+          <div style="margin-left:auto;font-size:12px;color:var(--text3)">{{ audUI.resumen }}</div>
+        </div>
+
+        <sc-if value="{{ audHayErr }}" hint-placeholder-val="{{ false }}">
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:34px 24px;text-align:center;box-shadow:var(--shadow)">
+          <div style="font-weight:600;font-size:14.5px;color:var(--text);margin-bottom:6px">No se puede mostrar la bitácora</div>
+          <div style="font-size:13px;color:var(--text3);max-width:460px;margin:0 auto">{{ audErr }}</div>
+        </div>
+        </sc-if>
+
+        <sc-if value="{{ audCargando }}" hint-placeholder-val="{{ false }}">
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:34px 24px;text-align:center;color:var(--text3);font-size:13px;box-shadow:var(--shadow)">Cargando movimientos…</div>
+        </sc-if>
+
+        <sc-if value="{{ audHayLista }}" hint-placeholder-val="{{ true }}">
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow:hidden;box-shadow:var(--shadow)">
+          <sc-for list="{{ audRows }}" as="r" hint-placeholder-count="4">
+            <div class="ceibo-aud-row" style="display:grid;grid-template-columns:104px 168px 1fr;gap:16px;padding:14px 20px;border-bottom:1px solid var(--border);align-items:start">
+              <div>
+                <div style="font-size:12.5px;color:var(--text);font-weight:500">{{ r.fecha }}</div>
+                <div style="font-size:11.5px;color:var(--text3);margin-top:2px">{{ r.hora }}</div>
+              </div>
+              <div style="min-width:0">
+                <span style="{{ r.badge }}">{{ r.accionLabel }}</span>
+                <div style="font-size:11.5px;color:var(--text3);margin-top:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ r.quien }}</div>
+              </div>
+              <div style="min-width:0">
+                <div style="font-size:13px;color:var(--text);font-weight:500">{{ r.objeto }}</div>
+                <sc-for list="{{ r.cambios }}" as="c" hint-placeholder-count="2">
+                  <div style="font-size:12px;color:var(--text2);margin-top:5px">
+                    <span style="color:var(--text3)">{{ c.campo }}</span>
+                    <span style="color:var(--text3)"> · </span>{{ c.antes }}
+                    <span style="color:var(--text3)"> → </span><span style="font-weight:500">{{ c.despues }}</span>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+        </sc-if>
+
+        <sc-if value="{{ audVacio }}" hint-placeholder-val="{{ false }}">
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:34px 24px;text-align:center;box-shadow:var(--shadow)">
+          <div style="font-size:13px;color:var(--text3);max-width:520px;margin:0 auto">{{ audVacioTexto }}</div>
+        </div>
+        </sc-if>
+
+        <sc-if value="{{ audHayPag }}" hint-placeholder-val="{{ true }}">
+        <div style="display:flex;align-items:center;gap:12px;margin-top:14px">
+          <button type="button" onClick="{{ audUI.anterior }}" aria-disabled="{{ audUI.noHayAnterior }}" style="{{ audUI.estiloAnterior }}">← Anterior</button>
+          <div style="font-size:12px;color:var(--text3)">{{ audUI.pagina }}</div>
+          <button type="button" onClick="{{ audUI.siguiente }}" aria-disabled="{{ audUI.noHayMas }}" style="{{ audUI.estiloSiguiente }}">Siguiente →</button>
+        </div>
+        </sc-if>
+      </div>
+      </sc-if>
+"""
+
 
 # (ancla_a_buscar, texto_de_reemplazo, descripción). Cada ancla debe existir 1+ vez.
 EDICIONES = [
@@ -1490,6 +1713,38 @@ EDICIONES = [
         "cfgOpen: { alertas: true, notif: true, empresas: false, sectores: false },",
         "cfgOpen: { alertas: false, notif: false, empresas: false, sectores: false },",
         "Configuración: acordeones colapsados por defecto",
+    ),
+
+    # ===== Bitácora / auditoría (RP8, 2026-07-24) =====================================
+    # MARKUP provisorio: este módulo todavía no existe en el canvas. Se inyecta acá para
+    # poder verlo funcionando contra la API real; una vez subido a Claude Design y promovido
+    # a design/, estas dos inyecciones de markup se BORRAN y quedan solo las de cableado
+    # (mismo camino que recorrieron CU-31 y CU-29/30).
+    (
+        "cargaInicial: 'cargando',",
+        "cargaInicial: 'cargando',\n    auditoria: null, audPage: 1, audCargando: false, audErr: null,\n"
+        "    audFiltros: { accion: '', desde: '', hasta: '', empleado: '' },",
+        "Bitácora: estado",
+    ),
+    # --- menú lateral: entrada nueva bajo ANÁLISIS, al lado de Configuración ---
+    (
+        '          <span class="ceibo-navlbl">Configuración</span>\n        </button>\n      </nav>',
+        '          <span class="ceibo-navlbl">Configuración</span>\n        </button>\n'
+        '        <sc-if value="{{ puedeAuditar }}" hint-placeholder-val="{{ true }}">\n'
+        '        <button type="button" onClick="{{ goAud }}" style="{{ navAud }}" style-hover="background:var(--surface2);color:var(--text)">\n'
+        '          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">'
+        '<path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H16l4 4v10.5a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18.5z"/>'
+        '<path d="M15 4v4.5h4.5"/><path d="M8 12.5h7M8 16h4.5"/></svg>\n'
+        '          <span class="ceibo-navlbl">Bitácora</span>\n'
+        '        </button>\n'
+        '        </sc-if>\n      </nav>',
+        "Bitácora: entrada en el menú",
+    ),
+    # --- la pantalla, al final del <main> (después de Configuración) ---
+    (
+        "      </sc-if>\n\n    </main>",
+        "      </sc-if>\n\n" + BLOQUE_BITACORA + "\n    </main>",
+        "Bitácora: pantalla",
     ),
 ]
 

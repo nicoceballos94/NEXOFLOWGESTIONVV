@@ -878,6 +878,51 @@
       setTimeout(irArriba, 0);
     },
 
+    // ---------- formato de la bitácora (RP8) ----------
+    // El backend manda ISO con offset (…T14:32:10-03:00). `new Date` lo interpreta bien y
+    // `toLocale*` lo pasa a la hora local del navegador, que es la que el usuario reconoce
+    // como "cuándo pasó". Formatear a mano cortando el string dejaría la hora en UTC.
+    fechaCorta(iso) {
+      if (!iso) return "";
+      var d = new Date(iso);
+      if (isNaN(d.getTime())) return String(iso);
+      return d.toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric" });
+    },
+    horaCorta(iso) {
+      if (!iso) return "";
+      var d = new Date(iso);
+      if (isNaN(d.getTime())) return "";
+      // hour12:false explícito: es-AR devuelve "11:19 p. m." por default, y acá se leen
+      // horarios laborales uno debajo del otro — el reloj de 24 h se compara de un vistazo.
+      return d.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", hour12: false });
+    },
+
+    // Un valor vacío en un diff no es lo mismo que el texto "": mostrarlo en blanco haría
+    // leer "teléfono:  → 2664…" como si faltara algo. El guion dice "no había nada".
+    valorLegible(v) {
+      if (v === null || v === undefined || v === "") return "—";
+      if (v === true) return "Sí";
+      if (v === false) return "No";
+      return String(v);
+    },
+
+    // Color por FAMILIA de acción, no por acción: son 23 y crecen. Lo que el ojo necesita
+    // distinguir de un vistazo es qué se destruyó (rojo), qué se aprobó (verde) y qué se
+    // creó (acento); el resto es una edición y va neutra.
+    estiloAccion(accion) {
+      var base = "display:inline-block;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:600;white-space:nowrap;";
+      var a = String(accion || "");
+      var color = "background:var(--surface2);color:var(--text2)";
+      if (/RECHAZADA|ANULADA|ELIMINAD|FINALIZADA|DESACTIVADO|REVERTIDO/.test(a)) {
+        color = "background:var(--bad-dim,rgba(248,113,113,.14));color:var(--bad)";
+      } else if (/APROBADA|COMPLETADO/.test(a)) {
+        color = "background:var(--ok-dim,rgba(52,211,153,.14));color:var(--ok)";
+      } else if (/CREAD|CREAR|AGREGADO|PRORROGADA/.test(a)) {
+        color = "background:var(--accent-dim);color:var(--accent)";
+      }
+      return base + color;
+    },
+
     // ---------- sesión (A1) ----------
     // Antes acá había un usuario y una clave de superusuario hardcodeados: cualquiera que
     // abriera el front era admin y los roles del backend no protegían nada. Ahora la
@@ -1243,6 +1288,54 @@
     // los activos para el dropdown de "Cargar documento"— es que el ABM lista TODOS (activos e
     // inactivos) para poder reactivar. `dias_aviso` se edita en "Parametría de alertas"; acá se
     // muestra como dato (un tipo nuevo nace en 30 por el default del modelo).
+    // ===== Bitácora / auditoría (RP8) =====================================================
+    // Solo Admin: el backend devuelve 403 a cualquier otro rol. El front además esconde la
+    // entrada del menú con la capacidad `auditoria_ver` — eso es honestidad visual, no
+    // seguridad; el 403 sigue estando.
+    //
+    // A diferencia del resto de los listados, acá NO se usa `getAllPages`: la bitácora crece
+    // sin techo (cada alta, edición y aprobación suma un renglón), así que traerla entera
+    // sería descargar el historial completo del sistema para mostrar 25 líneas. Se pide una
+    // página por vez y se devuelve el total para paginar.
+    //
+    // `filtros`: { empleado, entidad, objeto_id, usuario, accion, desde, hasta, page }.
+    async listAuditoria(filtros) {
+      var f = filtros || {};
+      var qs = [];
+      ["empleado", "entidad", "objeto_id", "usuario", "accion", "desde", "hasta", "page"]
+        .forEach(function (k) {
+          var v = f[k];
+          if (v !== undefined && v !== null && String(v).trim() !== "") {
+            qs.push(encodeURIComponent(k) + "=" + encodeURIComponent(String(v).trim()));
+          }
+        });
+      var d = await jget("/auditoria/registros/" + (qs.length ? "?" + qs.join("&") : ""));
+      return {
+        total: d.count || 0,
+        hayMas: !!d.next,
+        hayAnterior: !!d.previous,
+        registros: (d.results || []).map(function (r) {
+          return {
+            id: r.id,
+            momento: r.momento,
+            // El backend ya congela el nombre del autor: si el usuario se borró, la
+            // bitácora igual dice quién fue. Solo queda el caso del proceso automático.
+            quien: r.usuario_nombre || "Sistema",
+            accion: r.accion,
+            accionLabel: r.accion_display || r.accion,
+            entidad: r.entidad,
+            objetoId: r.objeto_id,
+            objeto: r.objeto_repr || "",
+            empleadoId: r.empleado,
+            empleado: r.empleado_nombre || "",
+            // Ya viene como [{campo, antes, despues}] desde la API: el front no tiene que
+            // cruzar dos diccionarios para saber qué cambió.
+            cambios: r.cambios || [],
+          };
+        }),
+      };
+    },
+
     async listTiposDocCfg() {
       var rows = await getAllPages("/tipos-documento/?page_size=100");
       return rows.map(function (t) {
