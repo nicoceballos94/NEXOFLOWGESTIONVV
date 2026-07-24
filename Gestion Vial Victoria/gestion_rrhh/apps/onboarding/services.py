@@ -12,6 +12,8 @@ from django.db import transaction
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
+from apps.auditoria.services import Accion, registrar_evento, tomar_foto
+
 from .models import (
     ItemPlantilla,
     ItemProceso,
@@ -140,6 +142,7 @@ def tildar_item(*, actor, item: ItemProceso, hecho: bool) -> ItemProceso:
         raise ValidationError(
             {"tipo_item": "Este ítem se completa cargando su documento en el legajo, no se tilda."}
         )
+    antes = tomar_foto(item, campos=("completado",))
     item.completado = hecho
     if hecho:
         item.completado_por = actor
@@ -149,5 +152,18 @@ def tildar_item(*, actor, item: ItemProceso, hecho: bool) -> ItemProceso:
         item.completado_en = None
     item.save(
         update_fields=["completado", "completado_por", "completado_en", "actualizado_en"]
+    )
+    # Destildar es lo que importa auditar: el ítem guarda la constancia de quién lo tildó
+    # (`completado_por`), pero al destildarlo esa constancia SE BORRA. Sin la bitácora, un
+    # ítem revertido no deja ni rastro de que alguna vez estuvo hecho, ni de quién lo revirtió.
+    # `campos` acota el diff a `completado`: el quién/cuándo ya son el autor y el momento del
+    # propio evento, repetirlos en el diff sería decir dos veces lo mismo.
+    registrar_evento(
+        actor=actor,
+        accion=Accion.CHECKLIST_ITEM_COMPLETADO if hecho else Accion.CHECKLIST_ITEM_REVERTIDO,
+        objeto=item,
+        antes=antes,
+        campos=("completado",),
+        solo_si_cambia=True,  # volver a tildar lo ya tildado no es un hecho nuevo
     )
     return item

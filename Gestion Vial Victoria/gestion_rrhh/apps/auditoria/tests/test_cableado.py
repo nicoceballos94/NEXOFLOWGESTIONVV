@@ -257,3 +257,133 @@ def test_un_proceso_sin_usuario_no_rompe_el_alta(empresa):
 
     assert RelacionLaboral.objects.count() == 1
     assert RegistroAuditoria.objects.filter(usuario__isnull=True).count() == 2
+
+
+# --- Onboarding / offboarding ----------------------------------------------------------
+
+
+@pytest.fixture
+def item_checklist(actor, empleado, empresa):
+    from apps.onboarding import services as onb_services
+    from apps.onboarding.models import TipoItem, TipoProceso
+
+    plantilla = onb_services.crear_plantilla(
+        actor=actor, empresa=empresa, tipo_proceso=TipoProceso.INGRESO
+    )
+    onb_services.agregar_item(
+        actor=actor, plantilla=plantilla, etiqueta="Alta AFIP/ARCA", tipo_item=TipoItem.ACCION
+    )
+    proceso = onb_services.obtener_o_crear_proceso(
+        actor=actor, relacion=empleado.relacion_activa, tipo_proceso=TipoProceso.INGRESO
+    )
+    return proceso.items.get()
+
+
+def test_destildar_un_item_deja_el_rastro_que_el_propio_item_borra(actor, item_checklist):
+    from apps.onboarding import services as onb_services
+
+    onb_services.tildar_item(actor=actor, item=item_checklist, hecho=True)
+    RegistroAuditoria.objects.all().delete()
+
+    onb_services.tildar_item(actor=actor, item=item_checklist, hecho=False)
+
+    # Al destildar, `completado_por` se borra del ítem: sin esto no quedaría ni rastro
+    # de que estuvo hecho, ni de quién lo revirtió.
+    registro = RegistroAuditoria.objects.get()
+    assert registro.accion == Accion.CHECKLIST_ITEM_REVERTIDO
+    assert registro.valores_antes == {"completado": True}
+    assert registro.valores_despues == {"completado": False}
+    assert "Alta AFIP/ARCA" in registro.objeto_repr
+
+
+def test_volver_a_tildar_lo_ya_tildado_no_es_un_hecho_nuevo(actor, item_checklist):
+    from apps.onboarding import services as onb_services
+
+    onb_services.tildar_item(actor=actor, item=item_checklist, hecho=True)
+    RegistroAuditoria.objects.all().delete()
+
+    onb_services.tildar_item(actor=actor, item=item_checklist, hecho=True)
+
+    assert RegistroAuditoria.objects.count() == 0
+
+
+# --- Usuarios (por el admin: en MVP1 no hay ABM por API) -------------------------------
+
+
+@pytest.fixture
+def admin_logueado(client, django_user_model):
+    django_user_model.objects.create_superuser(username="jefe", password="clave-segura-123")
+    client.login(username="jefe", password="clave-segura-123")
+    return client
+
+
+def test_crear_un_usuario_desde_el_admin_queda_asentado(admin_logueado):
+    resp = admin_logueado.post(
+        "/admin/usuarios/usuario/add/",
+        {
+            "username": "nuevo_rrhh",
+            "password1": "clave-segura-123",
+            "password2": "clave-segura-123",
+        },
+    )
+
+    assert resp.status_code == 302, "el alta no pasó la validación del form"
+    registro = RegistroAuditoria.objects.get(entidad="Usuario")
+    assert registro.accion == Accion.USUARIO_CREADO
+    assert registro.usuario_nombre == "jefe"
+    assert registro.valores_despues["username"] == "nuevo_rrhh"
+    assert registro.valores_despues["password"] == "«oculto»"
+
+
+def test_el_cambio_de_rol_queda_asentado(admin_logueado, crear_usuario):
+    from django.contrib.auth.models import Group
+
+    from common import roles
+
+    usuario = crear_usuario(username="asciende")
+    grupo_admin = Group.objects.create(name=roles.ADMIN)
+    RegistroAuditoria.objects.all().delete()
+
+    resp = admin_logueado.post(
+        f"/admin/usuarios/usuario/{usuario.pk}/change/",
+        {
+            "username": "asciende",
+            "first_name": "",
+            "last_name": "",
+            "email": "",
+            "is_active": "on",
+            "date_joined_0": "2026-01-01",
+            "date_joined_1": "00:00:00",
+            "groups": [str(grupo_admin.pk)],
+        },
+    )
+
+    assert resp.status_code == 302, "la edición no pasó la validación del form"
+    # Quién es Admin y desde cuándo: los roles son Grupos y no dejan huella en la fila.
+    registro = RegistroAuditoria.objects.get(entidad="Usuario")
+    assert registro.accion == Accion.USUARIO_ACTUALIZADO
+    assert registro.valores_antes["roles"] == []
+    assert registro.valores_despues["roles"] == [roles.ADMIN]
+
+
+def test_desactivar_un_usuario_tiene_nombre_propio(admin_logueado, crear_usuario):
+    usuario = crear_usuario(username="se_va")
+    RegistroAuditoria.objects.all().delete()
+
+    resp = admin_logueado.post(
+        f"/admin/usuarios/usuario/{usuario.pk}/change/",
+        {
+            "username": "se_va",
+            "first_name": "",
+            "last_name": "",
+            "email": "",
+            "date_joined_0": "2026-01-01",
+            "date_joined_1": "00:00:00",
+            # sin is_active: el checkbox desmarcado no se envía
+        },
+    )
+
+    assert resp.status_code == 302
+    registro = RegistroAuditoria.objects.get(entidad="Usuario")
+    assert registro.accion == Accion.USUARIO_DESACTIVADO
+    assert registro.valores_despues["is_active"] is False
