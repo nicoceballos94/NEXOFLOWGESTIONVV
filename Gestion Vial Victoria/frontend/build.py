@@ -1365,10 +1365,15 @@ EDICIONES = [
         "tema: default día + restaurar de localStorage",
     ),
     # (b) el botón: además de cambiar, guarda la elección y sincroniza la barra del navegador.
+    #     También reescribe data-th en <html>. Es obligatorio, no cosmético: el script del head
+    #     deja data-th="light" pegado en <html>, y como el CSS es :root = noche y
+    #     [data-th="light"] = día, las variables de día quedan seteadas en <html> y se heredan.
+    #     El data-th="dark" del shell no matchea ninguna regla, así que sin esta línea el botón
+    #     cambia el ícono pero la pantalla se queda en día.
     (
         "toggleTheme = ()=> this.setState(s=>({theme:s.theme==='dark'?'light':'dark'}));",
-        "toggleTheme = ()=> this.setState(s=>{var t=s.theme==='dark'?'light':'dark';try{localStorage.setItem('ceibo-th',t);}catch(e){}try{var m=document.getElementsByName('theme-color')[0];if(m)m.setAttribute('content',t==='dark'?'#0A1120':'#EEF2F7');}catch(e){}return {theme:t};});",
-        "tema: persistir elección + sincronizar theme-color",
+        "toggleTheme = ()=> this.setState(s=>{var t=s.theme==='dark'?'light':'dark';try{localStorage.setItem('ceibo-th',t);}catch(e){}try{document.documentElement.setAttribute('data-th',t);}catch(e){}try{var m=document.getElementsByName('theme-color')[0];if(m)m.setAttribute('content',t==='dark'?'#0A1120':'#EEF2F7');}catch(e){}return {theme:t};});",
+        "tema: persistir elección + sincronizar <html data-th> y theme-color",
     ),
 
     # ===== accesibilidad (auditoría 2026-07-23) =====
