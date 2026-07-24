@@ -493,6 +493,36 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
     // Vacío por filtro y vacío de verdad no son lo mismo: el primero se resuelve limpiando
     // los filtros, el segundo significa que todavía no pasó nada. Decir lo mismo en ambos
     // casos manda a buscar un problema donde no lo hay.
+    // ===== tarjeta "Movimientos recientes" de la ficha =====
+    // Resumen, no la bitácora entera: 5 renglones y un enlace al módulo con el filtro puesto.
+    const _fa = this.state.fichaAudData;
+    v.fichaAud = {
+      hay: !!(_fa && _fa.registros.length),
+      verTodo: () => this.verBitacoraDe(this.state.selEmp),
+      verTodoLabel: _fa && _fa.total > 5 ? 'Ver los ' + _fa.total + ' →' : 'Ver en Bitácora →',
+      linkStyle: 'border:none;background:none;padding:0;font-family:inherit;font-size:12px;font-weight:600;color:var(--accent);cursor:pointer',
+      items: (_fa ? _fa.registros : []).map((r) => {
+        // El diff se resume en una línea: la tarjeta cuenta QUÉ pasó; el detalle campo por
+        // campo vive en el módulo. Con 5 renglones y diffs de 3 campos, mostrarlo entero
+        // convertiría el resumen en la pantalla completa.
+        const detalle = r.cambios
+          .map((c) => c.campo + ' ' + window.CeiboAPI.valorLegible(c.antes)
+            + ' → ' + window.CeiboAPI.valorLegible(c.despues))
+          .join(' · ');
+        return {
+          cuando: window.CeiboAPI.fechaCorta(r.momento) + ' ' + window.CeiboAPI.horaCorta(r.momento),
+          quien: r.quien,
+          accionLabel: r.accionLabel,
+          badge: window.CeiboAPI.estiloAccion(r.accion),
+          detalle: detalle.length > 110 ? detalle.slice(0, 110) + '…' : detalle,
+          // Sin cambios (una prórroga, un adjunto) el renglón vacío dejaría un hueco raro
+          // debajo del badge: se apaga el <div> en vez de imprimir una línea en blanco.
+          detalleShow: detalle
+            ? 'font-size:12px;color:var(--text2);margin-top:4px;word-break:break-word'
+            : 'display:none',
+        };
+      }),
+    };
     v.audVacioTexto = v.audUI.hayFiltro
       ? 'No hay movimientos que coincidan con los filtros. Probá ampliando el rango de fechas o limpiándolos.'
       : 'Todavía no hay movimientos registrados. La bitácora empieza a llenarse a medida que se usa el sistema: '
@@ -678,9 +708,11 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
     } catch (e) { console.error('[ceibo] reingreso', e); window.CeiboAPI.toast(e.message || String(e), 'error'); }
   };
   selectEmp = (id) => {
-    this.setState({ selEmp: id, view: 'ficha', fichaChkData: null, fichaChkExpandido: false });
+    this.setState({ selEmp: id, view: 'ficha', fichaChkData: null, fichaChkExpandido: false,
+      fichaAudData: null });
     this.recargarDocs(id);
     this.recargarChecklistFicha(id);
+    this.recargarFichaAud(id);
     this.ensureFoto(id);
   };
   // ===== foto de perfil de la ficha (el canvas la deja en avatar de iniciales) =====
@@ -1015,6 +1047,21 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
     this.setState({ audFiltros: { accion: '', desde: '', hasta: '', empleado: '' } },
       () => this.reloadAuditoria(1));
   };
+  // Últimos movimientos de UNA persona, para la tarjeta de la ficha. Se piden los de la
+  // primera página y se recortan a 5: la tarjeta es un resumen, el detalle está en Bitácora.
+  // Falla en silencio a propósito — si el rol no audita (403), la tarjeta simplemente no
+  // aparece; no es un error que el usuario deba ver mientras mira un legajo.
+  recargarFichaAud = async (id) => {
+    if (!window.CeiboAPI.puede('auditoria_ver')) return;
+    try {
+      const d = await window.CeiboAPI.listAuditoria({ empleado: id });
+      this.setState({ fichaAudData: { total: d.total, registros: d.registros.slice(0, 5) } });
+    } catch (e) {
+      console.warn('[ceibo] bitácora de la ficha', e);
+      this.setState({ fichaAudData: null });
+    }
+  };
+
   // Ver el historial de una persona desde su ficha: filtra la bitácora por ese empleado.
   verBitacoraDe = (empId) => {
     this.setState(
@@ -1025,102 +1072,6 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
   };
 }
 """
-
-# ===== Bitácora (RP8) — markup de la pantalla ==========================================
-# Provisorio en build.py hasta que el módulo exista en el canvas (ver la edición que lo
-# inyecta). Se escribe en el mismo dialecto del canvas (sc-if / sc-for / {{ }}) justamente
-# para que subirlo a Claude Design sea copiar y pegar, sin traducir nada.
-#
-# La lista es una TIMELINE y no una tabla a propósito: los diffs tienen largo variable (una
-# baja toca 3 campos, una edición 1) y en una tabla eso obliga a una columna que o desborda
-# o corta. Acá cada fila crece lo que necesita.
-BLOQUE_BITACORA = r"""      <!-- ===================== BITÁCORA (RP8) ===================== -->
-      <sc-if value="{{ isAud }}" hint-placeholder-val="{{ false }}">
-      <div style="animation:fin .35s ease both">
-        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:16px">
-          <select value="{{ audUI.accion }}" onChange="{{ audUI.setAccion }}" aria-label="Filtrar por tipo de movimiento" style="{{ selStyle }}">
-            <option value="">Todos los movimientos</option>
-            <option value="EMPLEADO_CREADO">Alta de empleado</option>
-            <option value="EMPLEADO_ACTUALIZADO">Edición de ficha</option>
-            <option value="RELACION_FINALIZADA">Bajas</option>
-            <option value="RELACION_CREADA">Altas de relación laboral</option>
-            <option value="DOCUMENTO_CREADO">Documentos cargados</option>
-            <option value="DOCUMENTO_ACTUALIZADO">Documentos editados</option>
-            <option value="DOCUMENTO_ELIMINADO">Documentos eliminados</option>
-            <option value="NOVEDAD_CREADA">Novedades cargadas</option>
-            <option value="NOVEDAD_APROBADA">Novedades aprobadas</option>
-            <option value="NOVEDAD_RECHAZADA">Novedades rechazadas</option>
-            <option value="NOVEDAD_ANULADA">Novedades anuladas</option>
-            <option value="NOVEDAD_PRORROGADA">Prórrogas</option>
-            <option value="CHECKLIST_ITEM_COMPLETADO">Checklist completado</option>
-            <option value="CHECKLIST_ITEM_REVERTIDO">Checklist revertido</option>
-            <option value="USUARIO_CREADO">Usuarios creados</option>
-            <option value="USUARIO_ACTUALIZADO">Usuarios editados</option>
-            <option value="USUARIO_DESACTIVADO">Usuarios desactivados</option>
-          </select>
-          <input type="date" value="{{ audUI.desde }}" onChange="{{ audUI.setDesde }}" aria-label="Desde qué fecha" style="{{ selStyle }}"/>
-          <input type="date" value="{{ audUI.hasta }}" onChange="{{ audUI.setHasta }}" aria-label="Hasta qué fecha" style="{{ selStyle }}"/>
-          <sc-if value="{{ audUI.hayFiltro }}" hint-placeholder-val="{{ true }}">
-          <button type="button" onClick="{{ audUI.limpiar }}" style="{{ audUI.btn }}">Limpiar filtros</button>
-          </sc-if>
-          <div style="margin-left:auto;font-size:12px;color:var(--text3)">{{ audUI.resumen }}</div>
-        </div>
-
-        <sc-if value="{{ audHayErr }}" hint-placeholder-val="{{ false }}">
-        <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:34px 24px;text-align:center;box-shadow:var(--shadow)">
-          <div style="font-weight:600;font-size:14.5px;color:var(--text);margin-bottom:6px">No se puede mostrar la bitácora</div>
-          <div style="font-size:13px;color:var(--text3);max-width:460px;margin:0 auto">{{ audErr }}</div>
-        </div>
-        </sc-if>
-
-        <sc-if value="{{ audCargando }}" hint-placeholder-val="{{ false }}">
-        <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:34px 24px;text-align:center;color:var(--text3);font-size:13px;box-shadow:var(--shadow)">Cargando movimientos…</div>
-        </sc-if>
-
-        <sc-if value="{{ audHayLista }}" hint-placeholder-val="{{ true }}">
-        <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow:hidden;box-shadow:var(--shadow)">
-          <sc-for list="{{ audRows }}" as="r" hint-placeholder-count="4">
-            <div class="ceibo-aud-row" style="display:grid;grid-template-columns:104px 168px 1fr;gap:16px;padding:14px 20px;border-bottom:1px solid var(--border);align-items:start">
-              <div>
-                <div style="font-size:12.5px;color:var(--text);font-weight:500">{{ r.fecha }}</div>
-                <div style="font-size:11.5px;color:var(--text3);margin-top:2px">{{ r.hora }}</div>
-              </div>
-              <div style="min-width:0">
-                <span style="{{ r.badge }}">{{ r.accionLabel }}</span>
-                <div style="font-size:11.5px;color:var(--text3);margin-top:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ r.quien }}</div>
-              </div>
-              <div style="min-width:0">
-                <div style="font-size:13px;color:var(--text);font-weight:500">{{ r.objeto }}</div>
-                <sc-for list="{{ r.cambios }}" as="c" hint-placeholder-count="2">
-                  <div style="font-size:12px;color:var(--text2);margin-top:5px">
-                    <span style="color:var(--text3)">{{ c.campo }}</span>
-                    <span style="color:var(--text3)"> · </span>{{ c.antes }}
-                    <span style="color:var(--text3)"> → </span><span style="font-weight:500">{{ c.despues }}</span>
-                  </div>
-                </sc-for>
-              </div>
-            </div>
-          </sc-for>
-        </div>
-        </sc-if>
-
-        <sc-if value="{{ audVacio }}" hint-placeholder-val="{{ false }}">
-        <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:34px 24px;text-align:center;box-shadow:var(--shadow)">
-          <div style="font-size:13px;color:var(--text3);max-width:520px;margin:0 auto">{{ audVacioTexto }}</div>
-        </div>
-        </sc-if>
-
-        <sc-if value="{{ audHayPag }}" hint-placeholder-val="{{ true }}">
-        <div style="display:flex;align-items:center;gap:12px;margin-top:14px">
-          <button type="button" onClick="{{ audUI.anterior }}" aria-disabled="{{ audUI.noHayAnterior }}" style="{{ audUI.estiloAnterior }}">← Anterior</button>
-          <div style="font-size:12px;color:var(--text3)">{{ audUI.pagina }}</div>
-          <button type="button" onClick="{{ audUI.siguiente }}" aria-disabled="{{ audUI.noHayMas }}" style="{{ audUI.estiloSiguiente }}">Siguiente →</button>
-        </div>
-        </sc-if>
-      </div>
-      </sc-if>
-"""
-
 
 # (ancla_a_buscar, texto_de_reemplazo, descripción). Cada ancla debe existir 1+ vez.
 EDICIONES = [
@@ -1726,10 +1677,17 @@ EDICIONES = [
         "    audFiltros: { accion: '', desde: '', hasta: '', empleado: '' },",
         "Bitácora: estado",
     ),
-    # --- menú lateral: entrada nueva bajo ANÁLISIS, al lado de Configuración ---
+    # --- CABLEADO: la entrada del menú solo para quien puede auditar ---
+    # El canvas trae el botón PLANO (siempre visible), que es lo correcto para un diseño.
+    # Quién lo ve depende del rol, y eso es cableado: la capacidad `auditoria_ver` la calcula
+    # el backend. Sin esto, RRHH vería una entrada que le devuelve 403 al entrar.
     (
-        '          <span class="ceibo-navlbl">Configuración</span>\n        </button>\n      </nav>',
-        '          <span class="ceibo-navlbl">Configuración</span>\n        </button>\n'
+        '        <button type="button" onClick="{{ goAud }}" style="{{ navAud }}" style-hover="background:var(--surface2);color:var(--text)">\n'
+        '          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">'
+        '<path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H16l4 4v10.5a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18.5z"/>'
+        '<path d="M15 4v4.5h4.5"/><path d="M8 12.5h7M8 16h4.5"/></svg>\n'
+        '          <span class="ceibo-navlbl">Bitácora</span>\n'
+        '        </button>\n',
         '        <sc-if value="{{ puedeAuditar }}" hint-placeholder-val="{{ true }}">\n'
         '        <button type="button" onClick="{{ goAud }}" style="{{ navAud }}" style-hover="background:var(--surface2);color:var(--text)">\n'
         '          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">'
@@ -1737,14 +1695,14 @@ EDICIONES = [
         '<path d="M15 4v4.5h4.5"/><path d="M8 12.5h7M8 16h4.5"/></svg>\n'
         '          <span class="ceibo-navlbl">Bitácora</span>\n'
         '        </button>\n'
-        '        </sc-if>\n      </nav>',
-        "Bitácora: entrada en el menú",
+        '        </sc-if>\n',
+        "Bitácora cableado: capacidad para ver la entrada del menú",
     ),
-    # --- la pantalla, al final del <main> (después de Configuración) ---
+    # --- state de la tarjeta de la ficha ---
     (
-        "      </sc-if>\n\n    </main>",
-        "      </sc-if>\n\n" + BLOQUE_BITACORA + "\n    </main>",
-        "Bitácora: pantalla",
+        "    auditoria: null, audPage: 1, audCargando: false, audErr: null,",
+        "    auditoria: null, audPage: 1, audCargando: false, audErr: null, fichaAudData: null,",
+        "Bitácora: estado de la tarjeta de la ficha",
     ),
 ]
 
