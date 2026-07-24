@@ -14,8 +14,8 @@ from django.core.management.base import BaseCommand, CommandError
 from apps.empleados.models import Empleado
 from common import roles
 
-# username → rol. El Servicio (n8n/bots) se incluye por completitud aunque su uso real
-# sea vía token, no login interactivo.
+# username → rol. Servicio se incluye para poder probar que el login humano se rechaza;
+# su autenticación M2M todavía no existe en el MVP1.
 USUARIOS_DEMO = {
     "demo_admin": roles.ADMIN,
     "demo_rrhh": roles.RRHH,
@@ -31,8 +31,8 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument(
             "--password",
-            default="demo1234",
-            help="Contraseña para todos los usuarios demo (default: demo1234).",
+            default="demo-local-2026",
+            help="Contraseña para todos los usuarios demo (default: demo-local-2026).",
         )
         parser.add_argument(
             "--empleado-legajo",

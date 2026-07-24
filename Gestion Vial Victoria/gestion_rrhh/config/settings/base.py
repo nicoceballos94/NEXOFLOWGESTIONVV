@@ -4,17 +4,44 @@ Convenciones del proyecto (ver Conocimiento/DISENO_TECNICO_BACKEND.md):
 - Dominio en español, código idiomático en inglés donde corresponda.
 - Todo en UTC en DB; zona operativa América/Argentina/Buenos Aires (P5).
 """
-from datetime import timedelta
+import os
 from pathlib import Path
 
 import environ
+from django.core.exceptions import ImproperlyConfigured
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 env = environ.Env()
-environ.Env.read_env(BASE_DIR / ".env")
+_SIN_DEFAULT = object()
 
-SECRET_KEY = env("SECRET_KEY", default="insegura-solo-para-dev")
+
+def valor_entorno_o_archivo(nombre: str, *, default=_SIN_DEFAULT) -> str:
+    """Lee NAME_FILE antes que NAME para que producción use secretos montados.
+
+    Docker Compose monta cada secreto como archivo bajo ``/run/secrets``. Mantener el
+    contenido fuera del environment evita que aparezca en ``docker inspect``. Desarrollo
+    sigue usando las variables cargadas desde ``.env`` por ``dev.py``.
+    """
+    ruta = os.environ.get(f"{nombre}_FILE")
+    if ruta:
+        try:
+            valor = Path(ruta).read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise ImproperlyConfigured(
+                f"No se pudo leer el secreto {nombre}_FILE."
+            ) from exc
+        if not valor:
+            raise ImproperlyConfigured(f"El secreto {nombre}_FILE está vacío.")
+        return valor
+    if default is _SIN_DEFAULT:
+        return env(nombre)
+    return env(nombre, default=default)
+
+
+SECRET_KEY = valor_entorno_o_archivo(
+    "SECRET_KEY", default="insegura-solo-para-dev"
+)
 DEBUG = False
 ALLOWED_HOSTS: list[str] = env.list("ALLOWED_HOSTS", default=[])
 
@@ -28,7 +55,6 @@ INSTALLED_APPS = [
     "django.contrib.postgres",  # ExclusionConstraint + btree_gist (novedades)
     # terceros
     "rest_framework",
-    "rest_framework_simplejwt.token_blacklist",
     "django_filters",
     "drf_spectacular",
     "corsheaders",
@@ -45,11 +71,13 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "common.middleware.NoCacheAPIMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "apps.auditoria.contexto.ContextoAuditoriaMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
@@ -75,7 +103,22 @@ TEMPLATES = [
 # Postgres y solo Postgres: el fallback a sqlite murió cuando `novedades` incorporó el
 # ExclusionConstraint de solapamiento (btree_gist). Las migraciones no corren en sqlite.
 # Levantar la base con `docker compose up` antes de migrar o correr los tests.
-DATABASES = {"default": env.db("DATABASE_URL")}
+_DATABASE_URL = valor_entorno_o_archivo("DATABASE_URL", default="")
+if _DATABASE_URL:
+    DATABASES = {"default": env.db_url_config(_DATABASE_URL)}
+else:
+    # Producción evita una URL con contraseña dentro del environment: recibe la contraseña
+    # mediante POSTGRES_PASSWORD_FILE y el resto son valores no secretos.
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.postgresql",
+            "HOST": env("POSTGRES_HOST", default="db"),
+            "PORT": env.int("POSTGRES_PORT", default=5432),
+            "NAME": env("POSTGRES_DB"),
+            "USER": env("POSTGRES_USER"),
+            "PASSWORD": valor_entorno_o_archivo("POSTGRES_PASSWORD"),
+        }
+    }
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
@@ -83,9 +126,19 @@ AUTH_USER_MODEL = "usuarios.Usuario"
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
-    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
+    {
+        "NAME": "django.contrib.auth.password_validation.MinimumLengthValidator",
+        "OPTIONS": {"min_length": 12},
+    },
     {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
+]
+
+PASSWORD_HASHERS = [
+    "django.contrib.auth.hashers.Argon2PasswordHasher",
+    "django.contrib.auth.hashers.PBKDF2PasswordHasher",
+    "django.contrib.auth.hashers.PBKDF2SHA1PasswordHasher",
+    "django.contrib.auth.hashers.ScryptPasswordHasher",
 ]
 
 LANGUAGE_CODE = "es-ar"
@@ -109,17 +162,28 @@ MEDIA_ROOT = env("MEDIA_ROOT", default=str(BASE_DIR / "media"))
 # Tope de subida. El default de Django (2.5 MB en memoria) deja pasar archivos enormes a
 # disco temporal; acá se corta antes, en el serializer.
 DOCUMENTO_MAX_BYTES = env.int("DOCUMENTO_MAX_BYTES", default=10 * 1024 * 1024)  # 10 MB
-DOCUMENTO_EXTENSIONES = ("pdf", "jpg", "jpeg", "png", "webp", "heic")
+DOCUMENTO_EXTENSIONES = ("pdf", "jpg", "jpeg", "png", "webp")
 
 # Foto de perfil del empleado: solo imágenes raster (sin PDF ni SVG). Se sirve inline por el
 # mismo tipo de endpoint protegido que los documentos; el SVG queda afuera porque se ejecuta
 # como HTML en el navegador y esta imagen sí se muestra en vez de descargarse.
 FOTO_MAX_BYTES = env.int("FOTO_MAX_BYTES", default=5 * 1024 * 1024)  # 5 MB
-FOTO_EXTENSIONES = ("jpg", "jpeg", "png", "webp", "heic")
+FOTO_EXTENSIONES = ("jpg", "jpeg", "png", "webp")
+IMAGEN_MAX_PIXELES = env.int("IMAGEN_MAX_PIXELES", default=40_000_000)
+
+# Defensa temprana además del límite de 12 MB en Nginx Proxy Manager. El handler corta
+# cada archivo antes de que llegue al serializer o al almacenamiento temporal.
+DATA_UPLOAD_MAX_MEMORY_SIZE = 12 * 1024 * 1024
+FILE_UPLOAD_MAX_MEMORY_SIZE = 2 * 1024 * 1024
+FILE_UPLOAD_HANDLERS = [
+    "common.uploads.LimiteArchivoUploadHandler",
+    "django.core.files.uploadhandler.MemoryFileUploadHandler",
+    "django.core.files.uploadhandler.TemporaryFileUploadHandler",
+]
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
-        "rest_framework_simplejwt.authentication.JWTAuthentication",
+        "common.authentication.SessionAuthentication401",
     ),
     "DEFAULT_PERMISSION_CLASSES": ("rest_framework.permissions.IsAuthenticated",),
     "DEFAULT_PAGINATION_CLASS": "common.pagination.PaginacionEstandar",
@@ -139,20 +203,14 @@ REST_FRAMEWORK = {
         "anon": "20/min",
         "user": "300/min",
         "login": "5/min",
-        # Scope propio, y no el de `login`: compartirlo hacía que varias pestañas renovando
-        # su access (dura 15 min) se comieran los 5/min y cortaran sesiones válidas, y de
-        # paso le regalaba cupo a un ataque de fuerza bruta contra el login. El refresh ya
-        # exige un token válido, así que puede ser holgado sin aflojar la puerta.
-        "refresh": "30/min",
     },
 }
 
-SIMPLE_JWT = {
-    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=15),
-    "REFRESH_TOKEN_LIFETIME": timedelta(hours=12),
-    "ROTATE_REFRESH_TOKENS": True,
-    "BLACKLIST_AFTER_ROTATION": True,
-}
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SAMESITE = "Lax"
+SESSION_COOKIE_AGE = 8 * 60 * 60
+SESSION_SAVE_EVERY_REQUEST = True
+AUDIT_TRUST_X_FORWARDED_FOR = False
 
 SPECTACULAR_SETTINGS = {
     "TITLE": "API Gestión RRHH — Grupo Vial Victoria",
@@ -166,9 +224,4 @@ SPECTACULAR_SETTINGS = {
 }
 
 CORS_ALLOWED_ORIGINS = env.list("CORS_ALLOWED_ORIGINS", default=[])
-# El front corre en otro origen y descarga los respaldos con fetch (necesita mandar el
-# header Authorization, cosa que un <a href> no hace). De una respuesta cross-origin, el
-# navegador solo deja leer a JS un puñado de headers: Content-Disposition no está entre
-# ellos salvo que el servidor lo exponga. Sin esto, el nombre que arma la vista no llega
-# y el apto médico se descarga como "documento", sin extensión ni con qué abrirlo.
 CORS_EXPOSE_HEADERS = ["Content-Disposition"]

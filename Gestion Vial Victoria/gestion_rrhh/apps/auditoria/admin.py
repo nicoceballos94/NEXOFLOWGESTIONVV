@@ -11,6 +11,8 @@ esto, permite exactamente eso con dos clics.
 from django.contrib import admin
 from django.utils.html import format_html_join
 
+from common import roles
+
 from .models import RegistroAuditoria
 
 
@@ -30,6 +32,16 @@ class RegistroAuditoriaAdmin(admin.ModelAdmin):
     )
     date_hierarchy = "momento"
     list_select_related = ("usuario", "empleado")
+
+    def has_view_permission(self, request, obj=None):
+        """La puerta del admin respeta la misma política que la API: solo Admin."""
+        return bool(
+            request.user.is_authenticated
+            and request.user.tiene_rol(roles.ADMIN)
+        )
+
+    def has_module_permission(self, request):
+        return self.has_view_permission(request)
 
     @admin.display(description="Cambios")
     def cambios(self, obj):

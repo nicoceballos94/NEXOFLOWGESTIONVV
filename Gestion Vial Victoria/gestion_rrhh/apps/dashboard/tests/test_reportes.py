@@ -12,7 +12,7 @@ from rest_framework.test import APIClient
 from apps.dashboard import reportes
 from apps.empleados.models import Empleado, MotivoEgreso, RelacionLaboral
 from apps.novedades.models import EstadoNovedad, Novedad, TipoNovedad
-from apps.organizacion.models import Empresa
+from apps.organizacion.models import Empresa, Puesto, Sector
 from common import roles
 
 pytestmark = pytest.mark.django_db
@@ -22,7 +22,12 @@ HOY = date(2026, 7, 13)
 
 @pytest.fixture
 def empresa():
-    return Empresa.objects.create(nombre="VIAL VICTORIA")
+    empresa = Empresa.objects.create(nombre="VIAL VICTORIA")
+    empresa._sector_prueba = Sector.objects.create(nombre="Operaciones")
+    empresa._puesto_prueba = Puesto.objects.create(
+        nombre="Chofer", sector=empresa._sector_prueba
+    )
+    return empresa
 
 
 @pytest.fixture
@@ -46,8 +51,14 @@ def tipos():
 def _emp(empresa, legajo, dni, nombre, apellido, ingreso, egreso=None, motivo=""):
     e = Empleado.objects.create(legajo=legajo, dni=dni, nombre=nombre, apellido=apellido)
     RelacionLaboral.objects.create(
-        empleado=e, empresa=empresa, fecha_ingreso=ingreso, fecha_egreso=egreso,
-        motivo_egreso=motivo, estado="FINALIZADA" if egreso else "ACTIVA",
+        empleado=e,
+        empresa=empresa,
+        sector=empresa._sector_prueba,
+        puesto=empresa._puesto_prueba,
+        fecha_ingreso=ingreso,
+        fecha_egreso=egreso,
+        motivo_egreso=(motivo or MotivoEgreso.RENUNCIA) if egreso else "",
+        estado="FINALIZADA" if egreso else "ACTIVA",
     )
     return e
 
@@ -86,7 +97,11 @@ def test_ausentismo_por_tipo_solo_ocupa_periodo_y_sin_anuladas(empresa, tipos):
         # novedades que ocupan período en el mismo empleado.
         return Novedad.objects.create(
             empleado=e, relacion_laboral=rel, tipo_novedad=tipo,
-            fecha_desde=desde, fecha_hasta=desde, estado=estado, novedad_origen=origen,
+            fecha_desde=desde,
+            fecha_hasta=desde,
+            estado=estado,
+            motivo_anulacion="Dato de prueba" if estado == EstadoNovedad.ANULADA else "",
+            novedad_origen=origen,
         )
 
     madre = nov(tipos["FALTA"], date(2026, 3, 1))
@@ -105,6 +120,45 @@ def test_ausentismo_por_tipo_solo_ocupa_periodo_y_sin_anuladas(empresa, tipos):
     assert items["Licencia médica"]["cantidad"] == 1
     assert "Horas extra" not in items
     assert items["Falta"]["pct"] == 67                             # 2/3 redondeado
+
+
+def test_reporte_anual_incluye_madre_del_anio_anterior_extendida_en_el_actual(
+    empresa,
+    tipos,
+):
+    empleado = _emp(
+        empresa,
+        "EXT-2",
+        "40111992",
+        "Reporte",
+        "Extendido",
+        date(2024, 1, 1),
+    )
+    relacion = empleado.relaciones.get()
+    madre = Novedad.objects.create(
+        empleado=empleado,
+        relacion_laboral=relacion,
+        tipo_novedad=tipos["LICENCIA_MEDICA"],
+        fecha_desde=date(2025, 12, 20),
+        fecha_hasta=date(2025, 12, 31),
+        estado=EstadoNovedad.APROBADA,
+    )
+    Novedad.objects.create(
+        empleado=empleado,
+        relacion_laboral=relacion,
+        tipo_novedad=tipos["LICENCIA_MEDICA"],
+        fecha_desde=date(2026, 1, 1),
+        fecha_hasta=date(2026, 1, 10),
+        estado=EstadoNovedad.CERRADA,
+        novedad_origen=madre,
+    )
+
+    resultado = reportes.metricas_reportes(hoy=HOY)["ausentismo"]
+
+    assert resultado["total"] == 1
+    assert resultado["items"] == [
+        {"label": "Licencia médica", "cantidad": 1, "pct": 100}
+    ]
 
 
 def test_motivos_de_egreso_ultimos_12_meses(empresa):

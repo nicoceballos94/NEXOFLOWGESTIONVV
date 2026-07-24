@@ -1,0 +1,272 @@
+name: gestion-rrhh
+
+services:
+  db:
+    image: ${RRHH_POSTGRES_IMAGE:-gestion-rrhh-postgres:local}
+    build:
+      context: .
+      dockerfile: Dockerfile.postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?Defina POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_ADMIN_USER:?Defina POSTGRES_ADMIN_USER}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_admin_password
+    secrets:
+      - postgres_admin_password
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\"",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      - rrhh-db
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    stop_grace_period: 60s
+    pids_limit: 256
+
+  db-provision:
+    image: ${RRHH_POSTGRES_IMAGE:-gestion-rrhh-postgres:local}
+    restart: "no"
+    user: "70:70"
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB:?Defina POSTGRES_DB}
+      POSTGRES_ADMIN_USER: ${POSTGRES_ADMIN_USER:?Defina POSTGRES_ADMIN_USER}
+      POSTGRES_APP_USER: ${POSTGRES_APP_USER:?Defina POSTGRES_APP_USER}
+    secrets:
+      - postgres_admin_password
+      - postgres_app_password
+    volumes:
+      - ./deploy/db/provision-app-role.sh:/opt/rrhh/provision-app-role.sh:ro
+    command: ["/bin/sh", "/opt/rrhh/provision-app-role.sh"]
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - rrhh-db
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+    pids_limit: 64
+
+  api:
+    image: ${RRHH_IMAGE:-gestion-rrhh:local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    init: true
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.prod
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:?Defina ALLOWED_HOSTS}
+      CSRF_TRUSTED_ORIGINS: ${CSRF_TRUSTED_ORIGINS:?Defina CSRF_TRUSTED_ORIGINS}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-}
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB:?Defina POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_APP_USER:?Defina POSTGRES_APP_USER}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_app_password
+      SECRET_KEY_FILE: /run/secrets/django_secret_key
+      MEDIA_ROOT: /app/media
+      CACHE_LOCATION: /tmp/django-cache
+      SESSION_COOKIE_AGE: ${SESSION_COOKIE_AGE:-28800}
+    secrets:
+      - django_secret_key
+      - postgres_app_password
+    volumes:
+      - media:/app/media
+    expose:
+      - "8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      db-provision:
+        condition: service_completed_successfully
+    networks:
+      rrhh-app:
+      rrhh-db:
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    stop_grace_period: 30s
+    pids_limit: 256
+
+  migrate:
+    profiles: ["ops"]
+    image: ${RRHH_IMAGE:-gestion-rrhh:local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    init: true
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.prod
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:?Defina ALLOWED_HOSTS}
+      CSRF_TRUSTED_ORIGINS: ${CSRF_TRUSTED_ORIGINS:?Defina CSRF_TRUSTED_ORIGINS}
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB:?Defina POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_ADMIN_USER:?Defina POSTGRES_ADMIN_USER}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_admin_password
+      SECRET_KEY_FILE: /run/secrets/django_secret_key
+      CACHE_LOCATION: /tmp/django-cache
+    secrets:
+      - django_secret_key
+      - postgres_admin_password
+    command: ["python", "manage.py", "migrate", "--noinput"]
+    depends_on:
+      db:
+        condition: service_healthy
+      db-provision:
+        condition: service_completed_successfully
+    networks:
+      - rrhh-db
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    pids_limit: 128
+
+  db-permissions-check:
+    profiles: ["ops"]
+    image: ${RRHH_POSTGRES_IMAGE:-gestion-rrhh-postgres:local}
+    restart: "no"
+    user: "70:70"
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB:?Defina POSTGRES_DB}
+      POSTGRES_ADMIN_USER: ${POSTGRES_ADMIN_USER:?Defina POSTGRES_ADMIN_USER}
+      POSTGRES_APP_USER: ${POSTGRES_APP_USER:?Defina POSTGRES_APP_USER}
+    secrets:
+      - postgres_admin_password
+      - postgres_app_password
+    volumes:
+      - ./deploy/db/verify-app-role.sh:/opt/rrhh/verify-app-role.sh:ro
+    command: ["/bin/sh", "/opt/rrhh/verify-app-role.sh"]
+    depends_on:
+      db:
+        condition: service_healthy
+      db-provision:
+        condition: service_completed_successfully
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - rrhh-db
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+    pids_limit: 64
+
+  web:
+    image: ${RRHH_WEB_IMAGE:-gestion-rrhh-web:local}
+    build:
+      context: ..
+      dockerfile: gestion_rrhh/Dockerfile.web
+    restart: unless-stopped
+    init: true
+    expose:
+      - "8080"
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      proxy:
+        aliases:
+          - rrhh-web
+      rrhh-app:
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    stop_grace_period: 15s
+    pids_limit: 128
+
+networks:
+  proxy:
+    external: true
+    name: ${PROXY_NETWORK:-reverse-proxy}
+  rrhh-app:
+    internal: true
+  rrhh-db:
+    internal: true
+
+volumes:
+  pgdata:
+    external: true
+    name: ${RRHH_POSTGRES_VOLUME:?Defina RRHH_POSTGRES_VOLUME}
+  media:
+    external: true
+    name: ${RRHH_MEDIA_VOLUME:?Defina RRHH_MEDIA_VOLUME}
+
+secrets:
+  django_secret_key:
+    file: ${RRHH_SECRET_KEY_FILE:?Defina RRHH_SECRET_KEY_FILE}
+  postgres_admin_password:
+    file: ${RRHH_DB_ADMIN_PASSWORD_FILE:?Defina RRHH_DB_ADMIN_PASSWORD_FILE}
+  postgres_app_password:
+    file: ${RRHH_DB_APP_PASSWORD_FILE:?Defina RRHH_DB_APP_PASSWORD_FILE}

@@ -1,5 +1,11 @@
 # Sistema de RRHH — Casos de uso del MVP 1
 
+> **Nota de vigencia (2026-07-24):** leer junto con
+> [`ARQUITECTURA_MVP1_PRODUCCION.md`](ARQUITECTURA_MVP1_PRODUCCION.md). Si este catálogo
+> menciona documentos del empleado sin relación, puestos globales, JWT, importación Excel
+> obligatoria o un Supervisor con acceso a toda la dotación, esa parte quedó reemplazada
+> por la arquitectura canónica y los tests.
+
 > **Para qué sirve este documento:** describir, en lenguaje sencillo, **qué va a poder hacer cada persona** con el sistema en su primera versión (MVP 1). No entra en detalles técnicos: es una guía para acordar con el cliente el alcance y validar que no falte nada importante.
 >
 > **Empresas del grupo:** Vial Victoria y Premocor. Una misma persona puede haber trabajado en las dos, y el sistema lo tiene en cuenta.
@@ -26,6 +32,7 @@ Hoy la información de empleados, licencias y vencimientos vive en planillas de 
 | **RRHH** | Equipo de Recursos Humanos | El usuario principal: da de alta empleados, carga documentos, aprueba licencias, mira reportes. Ve a todas las empresas. |
 | **Supervisor** | Jefe de sector / obra | Carga novedades de **su equipo** (quedan pendientes de aprobación de RRHH). Ve solo su gente. |
 | **Empleado** | El trabajador | Solo consulta lo suyo: sus licencias, sus documentos y vencimientos. En esta etapa no carga nada. |
+| **Servicio** | Integración técnica futura | Reservado para n8n u otros consumidores. No inicia sesión humana ni tiene credencial M2M en el MVP1. |
 
 ---
 
@@ -39,21 +46,31 @@ Cada caso describe una situación real del día a día y qué hace el sistema.
 RRHH carga a la persona (nombre, DNI, datos de contacto) y su relación laboral: en qué empresa entra, en qué puesto/sector y desde qué fecha. En un solo paso queda el empleado activo y listo para operar.
 
 **CU-02 — Editar los datos de un empleado**
-RRHH corrige o completa datos de una persona ya cargada (teléfono, puesto, sector, etc.).
+RRHH corrige o completa datos personales. En la relación activa puede actualizar sector,
+puesto, jornada y contrato. Empresa, fecha de ingreso, baja y supervisor conservan flujos
+separados para no reescribir la historia. Si el onboarding/offboarding ya comenzó, no se
+puede cambiar de sector; una promoción dentro del sector sí es válida.
 
 **CU-03 — Dar de baja a un empleado**
 Cuando alguien deja la empresa, RRHH registra la baja con **fecha y motivo de egreso**. El empleado **no se borra**: se conserva todo su historial para poder calcular antigüedad, rotación y, si vuelve, una reincorporación.
 
 **CU-04 — Reincorporar / historial en dos empresas**
-Si una persona vuelve a trabajar, o pasa de una empresa del grupo a la otra, el sistema guarda cada etapa como una relación laboral distinta. Así queda claro todo su recorrido sin perder información previa.
+Si una persona vuelve a trabajar, primero debe estar finalizada su etapa anterior. El
+sistema crea una relación laboral nueva y vuelve a pedir empresa, sector, puesto, fecha,
+documentación y onboarding. En todo el grupo solo puede existir una relación activa por
+persona y ninguna etapa histórica puede solaparse con otra.
 
 **CU-05 — Consultar y buscar empleados**
-Cualquier usuario autorizado busca empleados y los filtra por empresa, estado (activo / dado de baja), sector o nombre.
+Cualquier usuario autorizado busca por nombre, apellido o legajo y filtra por empresa,
+estado o sector dentro de su scope. El listado no expone DNI/CUIL. Para decidir entre alta
+y reingreso, Admin/RRHH dispone de una consulta exacta y auditada por DNI.
 
 ### B. Documentación y vencimientos
 
 **CU-06 — Cargar documentos con fecha de vencimiento**
-RRHH registra los documentos de cada empleado (carnet de conducir, apto médico, CNRT, contrato) con su fecha de vencimiento. El objetivo es **evitar irregularidades**: que nadie maneje con el carnet o el apto vencido.
+RRHH registra los documentos de la relación laboral vigente (carnet de conducir, apto
+médico, CNRT, contrato) con su fecha de vencimiento. Un reingreso abre un juego documental
+nuevo; los archivos de la relación anterior quedan congelados como historia.
 
 **CU-07 — Ver quién tiene documentación por vencer o vencida**
 El sistema muestra un listado de documentos próximos a vencer o ya vencidos, para actuar antes de que sea un problema.
@@ -109,8 +126,10 @@ El sistema registra **quién hizo qué y cuándo** sobre la información sensibl
 **CU-18 — Cada uno ve lo que le corresponde**
 El acceso está separado por perfil: un supervisor ve solo a su equipo, un empleado solo lo suyo, y los datos sensibles (como el DNI completo) quedan reservados a RRHH y Administración.
 
-**CU-19 — Migrar la información actual desde Excel**
-Al arrancar, los datos que hoy están en la planilla de empleados se cargan al sistema en un solo paso, para no tener que reescribir todo a mano y dejar de depender del Excel.
+**CU-19 — Importación desde Excel (diferida)**
+No es requisito del MVP1. Se construirá solo si se confirma que existe una fuente real,
+estable y suficientemente voluminosa; de lo contrario los datos se cargarán desde el
+frontend.
 
 ---
 
@@ -123,7 +142,9 @@ Para que quede claro el límite de esta primera versión, esto **no** entra ahor
 - **Envío automático de avisos por WhatsApp.**
 - Turnos rotativos y su asignación.
 - Portal de autogestión para que el empleado cargue o pida cosas por su cuenta.
-- Medidas disciplinarias, carga de archivos adjuntos (PDFs) y firma digital de recibos.
+- Medidas disciplinarias y firma digital de recibos.
+- Credenciales M2M revocables y scopes mínimos para Servicio/n8n.
+- Importación Excel, solo si se confirma su necesidad.
 
 ---
 

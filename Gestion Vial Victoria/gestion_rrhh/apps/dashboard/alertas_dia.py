@@ -18,9 +18,12 @@ from __future__ import annotations
 
 from datetime import date
 
+from django.utils import timezone
+
 from apps.empleados.models import Empleado, EstadoRelacion
 from apps.novedades.models import EstadoNovedad, Novedad
 
+from . import scope
 from .vencimientos import vencimientos_de_la_dotacion
 
 MAX_ITEMS = 6
@@ -68,10 +71,10 @@ def _texto_vencimiento(item: dict, hoy: date) -> str:
     return f"{item['empleado']} — {cuando} ({_dmy(item['fecha'])})"
 
 
-def _de_vencimientos(hoy: date) -> list[dict]:
+def _de_vencimientos(hoy: date, *, usuario=None) -> list[dict]:
     """Documentos y contratos vencidos o por vencer. Los que están al día no son alerta."""
     items = []
-    for grupo in vencimientos_de_la_dotacion(hoy=hoy)["grupos"]:
+    for grupo in vencimientos_de_la_dotacion(hoy=hoy, usuario=usuario)["grupos"]:
         # El nombre del grupo ya es el rótulo ("Apto médico", "Contrato a plazo", …).
         etiqueta = grupo["tipo"]
         for i in grupo["items"]:
@@ -94,22 +97,22 @@ def _de_vencimientos(hoy: date) -> list[dict]:
     return items
 
 
-def _certificados_pendientes(hoy: date) -> list[dict]:
+def _certificados_pendientes(hoy: date, *, usuario=None) -> list[dict]:
     """Novedades que exigen certificado y no lo tienen, ya empezadas.
 
     Antes de la fecha de inicio no falta nada: el certificado se presenta cuando el hecho
     ocurre, no antes.
     """
     novedades = (
-        Novedad.objects.filter(
+        scope.novedades(Novedad.objects.all(), usuario)
+        .filter(
             tipo_novedad__requiere_certificado=True,
             certificado_recibido_en__isnull=True,
             fecha_desde__lte=hoy,
             estado__in=ESTADOS_VIGENTES,
-            empleado__relaciones__estado=EstadoRelacion.ACTIVA,
+            relacion_laboral__estado=EstadoRelacion.ACTIVA,
         )
         .select_related("empleado", "tipo_novedad")
-        .distinct()  # relación activa en las dos empresas del grupo → doble match del JOIN
     )
     return [
         {
@@ -123,17 +126,17 @@ def _certificados_pendientes(hoy: date) -> list[dict]:
     ]
 
 
-def _cumpleanos(hoy: date) -> list[dict]:
+def _cumpleanos(hoy: date, *, usuario=None) -> list[dict]:
     """Cumpleaños de hoy. `fecha_nacimiento` se carga desde siempre y no alimentaba nada.
 
     Se filtra por mes y día en la base (no en Python) para no traer la dotación entera.
     """
     nombres = [
         e.nombre_natural
-        for e in Empleado.objects.filter(
+        for e in scope.empleados_activos(Empleado.objects.all(), usuario)
+        .filter(
             fecha_nacimiento__month=hoy.month,
             fecha_nacimiento__day=hoy.day,
-            relaciones__estado=EstadoRelacion.ACTIVA,
         )
         .distinct()
         .order_by("apellido", "nombre")
@@ -149,10 +152,14 @@ def _cumpleanos(hoy: date) -> list[dict]:
     return [{"title": "Cumpleaños del día", "text": texto, "estado": "info", "_orden": date.min}]
 
 
-def alertas_del_dia(*, hoy: date | None = None) -> dict:
+def alertas_del_dia(*, hoy: date | None = None, usuario=None) -> dict:
     """Las alertas de hoy, ya ordenadas y recortadas para la tarjeta del panel."""
-    hoy = hoy or date.today()
-    items = _de_vencimientos(hoy) + _certificados_pendientes(hoy) + _cumpleanos(hoy)
+    hoy = hoy or timezone.localdate()
+    items = (
+        _de_vencimientos(hoy, usuario=usuario)
+        + _certificados_pendientes(hoy, usuario=usuario)
+        + _cumpleanos(hoy, usuario=usuario)
+    )
 
     # Vencido antes que por vencer antes que cumpleaños; dentro de cada grupo, lo más viejo
     # primero. `total` se cuenta ANTES de recortar: la tarjeta mentiría si mostrara 6 de 20

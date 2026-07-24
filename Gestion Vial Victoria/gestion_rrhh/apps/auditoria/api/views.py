@@ -35,7 +35,17 @@ class RegistroAuditoriaFilter(django_filters.FilterSet):
 
     class Meta:
         model = RegistroAuditoria
-        fields = ("empleado", "entidad", "objeto_id", "usuario", "accion", "desde", "hasta")
+        fields = (
+            "empleado",
+            "entidad",
+            "objeto_id",
+            "agregado_entidad",
+            "agregado_id",
+            "usuario",
+            "accion",
+            "desde",
+            "hasta",
+        )
 
 
 class RegistroAuditoriaViewSet(

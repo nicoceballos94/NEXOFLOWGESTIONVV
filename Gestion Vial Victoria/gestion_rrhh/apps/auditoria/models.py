@@ -36,9 +36,17 @@ class Accion(models.TextChoices):
     EMPLEADO_ACTUALIZADO = "EMPLEADO_ACTUALIZADO", "Empleado actualizado"
     EMPLEADO_FOTO_CAMBIADA = "EMPLEADO_FOTO_CAMBIADA", "Foto de empleado cambiada"
     EMPLEADO_FOTO_ELIMINADA = "EMPLEADO_FOTO_ELIMINADA", "Foto de empleado eliminada"
+    EMPLEADO_CONSULTADO = "EMPLEADO_CONSULTADO", "Ficha sensible consultada"
+    DOCUMENTO_DESCARGADO = "DOCUMENTO_DESCARGADO", "Documento sensible descargado"
+    FOTO_CONSULTADA = "FOTO_CONSULTADA", "Foto de empleado consultada"
     # Relación laboral
     RELACION_CREADA = "RELACION_CREADA", "Relación laboral creada"
+    RELACION_ACTUALIZADA = "RELACION_ACTUALIZADA", "Asignación laboral actualizada"
     RELACION_FINALIZADA = "RELACION_FINALIZADA", "Relación laboral finalizada (baja)"
+    RELACION_SUPERVISOR_CAMBIADO = (
+        "RELACION_SUPERVISOR_CAMBIADO",
+        "Supervisor de relación cambiado",
+    )
     # Documentos del legajo
     DOCUMENTO_CREADO = "DOCUMENTO_CREADO", "Documento cargado"
     DOCUMENTO_ACTUALIZADO = "DOCUMENTO_ACTUALIZADO", "Documento actualizado"
@@ -46,20 +54,35 @@ class Accion(models.TextChoices):
     # Novedades
     NOVEDAD_CREADA = "NOVEDAD_CREADA", "Novedad creada"
     NOVEDAD_ACTUALIZADA = "NOVEDAD_ACTUALIZADA", "Novedad actualizada"
+    NOVEDAD_TOMADA = "NOVEDAD_TOMADA", "Novedad tomada en proceso"
     NOVEDAD_APROBADA = "NOVEDAD_APROBADA", "Novedad aprobada"
     NOVEDAD_RECHAZADA = "NOVEDAD_RECHAZADA", "Novedad rechazada"
+    NOVEDAD_CERRADA = "NOVEDAD_CERRADA", "Novedad cerrada"
     NOVEDAD_ANULADA = "NOVEDAD_ANULADA", "Novedad anulada"
     NOVEDAD_PRORROGADA = "NOVEDAD_PRORROGADA", "Novedad prorrogada"
     CADENA_ANULADA = "CADENA_ANULADA", "Cadena de prórrogas anulada"
     ADJUNTO_AGREGADO = "ADJUNTO_AGREGADO", "Adjunto agregado a novedad"
     ADJUNTO_ELIMINADO = "ADJUNTO_ELIMINADO", "Adjunto eliminado de novedad"
+    ADJUNTO_DESCARGADO = "ADJUNTO_DESCARGADO", "Adjunto de novedad descargado"
     # Checklists de ingreso/egreso
     CHECKLIST_ITEM_COMPLETADO = "CHECKLIST_ITEM_COMPLETADO", "Ítem de checklist completado"
     CHECKLIST_ITEM_REVERTIDO = "CHECKLIST_ITEM_REVERTIDO", "Ítem de checklist destildado"
+    PLANTILLA_CREADA = "PLANTILLA_CREADA", "Plantilla de checklist creada"
+    PLANTILLA_PUBLICADA = "PLANTILLA_PUBLICADA", "Plantilla de checklist publicada"
+    PLANTILLA_ARCHIVADA = "PLANTILLA_ARCHIVADA", "Plantilla de checklist archivada"
+    PLANTILLA_ITEM_CREADO = "PLANTILLA_ITEM_CREADO", "Ítem de plantilla creado"
+    PLANTILLA_ITEM_ACTUALIZADO = "PLANTILLA_ITEM_ACTUALIZADO", "Ítem de plantilla actualizado"
+    CHECKLIST_INICIADO = "CHECKLIST_INICIADO", "Proceso de checklist iniciado"
+    CATALOGO_CREADO = "CATALOGO_CREADO", "Elemento de catálogo creado"
+    CATALOGO_ACTUALIZADO = "CATALOGO_ACTUALIZADO", "Elemento de catálogo actualizado"
+    CONFIG_ACTUALIZADA = "CONFIG_ACTUALIZADA", "Configuración actualizada"
     # Usuarios
     USUARIO_CREADO = "USUARIO_CREADO", "Usuario creado"
     USUARIO_ACTUALIZADO = "USUARIO_ACTUALIZADO", "Usuario actualizado"
     USUARIO_DESACTIVADO = "USUARIO_DESACTIVADO", "Usuario desactivado"
+    USUARIO_PASSWORD_CAMBIADA = "USUARIO_PASSWORD_CAMBIADA", "Contraseña de usuario cambiada"
+    SESION_INICIADA = "SESION_INICIADA", "Sesión iniciada"
+    SESION_CERRADA = "SESION_CERRADA", "Sesión cerrada"
 
 
 class RegistroAuditoria(models.Model):
@@ -70,15 +93,16 @@ class RegistroAuditoria(models.Model):
         settings.AUTH_USER_MODEL,
         null=True,
         blank=True,
-        on_delete=models.SET_NULL,
+        on_delete=models.PROTECT,
         related_name="+",
-        help_text="Null si lo hizo un proceso automático, o si el usuario se borró después.",
+        help_text="Null si lo hizo un proceso automático. Los usuarios auditados no se "
+        "borran físicamente: se desactivan, para preservar la autoría.",
     )
     usuario_nombre = models.CharField(
         max_length=150,
         blank=True,
-        help_text="Copia congelada del username. La FK es SET_NULL: sin esto, borrar un "
-        "usuario dejaría media bitácora sin autor, que es lo único que no puede pasar.",
+        help_text="Copia congelada del username para conservar el dato legible aunque el "
+        "nombre de usuario cambie.",
     )
     accion = models.CharField(max_length=40, choices=Accion.choices, db_index=True)
     entidad = models.CharField(
@@ -87,17 +111,29 @@ class RegistroAuditoria(models.Model):
     objeto_id = models.PositiveBigIntegerField(
         null=True, blank=True, help_text="PK del objeto. Queda null si el objeto se borró."
     )
+    agregado_entidad = models.CharField(
+        max_length=50,
+        db_index=True,
+        help_text="Raíz funcional a la que pertenece el hecho. En una prórroga es la "
+        "novedad madre; en los demás casos coincide con la entidad.",
+    )
+    agregado_id = models.PositiveBigIntegerField(
+        null=True,
+        blank=True,
+        help_text="PK de la raíz funcional. Permite reconstruir una cadena completa.",
+    )
     empleado = models.ForeignKey(
         "empleados.Empleado",
         null=True,
         blank=True,
-        on_delete=models.SET_NULL,
+        on_delete=models.PROTECT,
         related_name="+",
         help_text="De qué PERSONA habla el evento, aunque `entidad` sea otra cosa. "
         "Denormalizado a propósito: sin esto, 'el historial de la ficha de Juan' obliga a "
         "juntar eventos de Empleado, RelacionLaboral, DocumentoEmpleado, Novedad e "
         "ItemProceso averiguando antes cuáles son de Juan. Null en eventos que no son de "
-        "nadie en particular (un usuario del sistema sin empleado asociado).",
+        "nadie en particular (un usuario del sistema sin empleado asociado). La persona "
+        "referenciada no puede borrarse físicamente.",
     )
     objeto_repr = models.CharField(
         max_length=200,
@@ -115,8 +151,7 @@ class RegistroAuditoria(models.Model):
     ip = models.GenericIPAddressField(
         null=True,
         blank=True,
-        help_text="Origen de la request. Sin llenar en MVP1: los services reciben el actor, "
-        "no la request. Se completa con un middleware cuando haga falta, sin migración.",
+        help_text="Origen validado de la request, capturado por el middleware de auditoría.",
     )
 
     class Meta:
@@ -126,6 +161,10 @@ class RegistroAuditoria(models.Model):
         indexes = [
             # La consulta central: la historia de un objeto ("¿quién tocó esta ficha?").
             models.Index(fields=["entidad", "objeto_id", "-momento"], name="idx_audit_objeto"),
+            models.Index(
+                fields=["agregado_entidad", "agregado_id", "-momento"],
+                name="idx_audit_agregado",
+            ),
             # La consulta transversal: "¿qué hizo Juan el martes?".
             models.Index(fields=["usuario", "-momento"], name="idx_audit_usuario"),
             # La pestaña "Historial" de la ficha: todo lo que le pasó a una persona.

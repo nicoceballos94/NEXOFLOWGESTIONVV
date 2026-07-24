@@ -28,6 +28,7 @@ import uuid
 from django.core.exceptions import ObjectDoesNotExist
 from django.db.models.fields.files import FieldFile
 
+from .contexto import ip_actual
 from .models import Accion, RegistroAuditoria
 
 # Ruido de auditoría: son metadatos de la fila, no datos que alguien haya decidido.
@@ -131,6 +132,7 @@ def registrar_evento(
     campos: tuple[str, ...] | None = None,
     solo_si_cambia: bool = False,
     ip: str | None = None,
+    agregado=None,
 ) -> RegistroAuditoria | None:
     """Asienta un hecho en la bitácora. Devuelve el registro, o None si no hubo nada que asentar.
 
@@ -153,18 +155,21 @@ def registrar_evento(
 
     # AnonymousUser tiene `username` pero no pk: se asienta como proceso sin autor.
     usuario = actor if getattr(actor, "is_authenticated", False) else None
+    agregado = agregado or objeto
 
     return RegistroAuditoria.objects.create(
         usuario=usuario,
         usuario_nombre=getattr(usuario, "username", "") or "",
         accion=accion,
         entidad=objeto._meta.object_name,
+        agregado_entidad=agregado._meta.object_name,
+        agregado_id=agregado.pk,
         empleado=_empleado_de(objeto),
         objeto_id=objeto.pk,
         objeto_repr=str(objeto)[:200],
         valores_antes=valores_antes,
         valores_despues=valores_despues,
-        ip=ip,
+        ip=ip if ip is not None else ip_actual(),
     )
 
 

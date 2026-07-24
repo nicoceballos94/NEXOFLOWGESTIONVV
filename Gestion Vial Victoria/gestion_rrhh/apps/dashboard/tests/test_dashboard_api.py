@@ -11,7 +11,7 @@ from rest_framework.test import APIClient
 from apps.dashboard import selectors
 from apps.empleados.models import Empleado, RelacionLaboral
 from apps.novedades.models import EstadoNovedad, Novedad, TipoNovedad
-from apps.organizacion.models import Empresa
+from apps.organizacion.models import Empresa, Puesto, Sector
 from common import roles
 
 pytestmark = pytest.mark.django_db
@@ -21,7 +21,12 @@ HOY = date(2026, 7, 13)
 
 @pytest.fixture
 def empresa():
-    return Empresa.objects.create(nombre="VIAL VICTORIA")
+    empresa = Empresa.objects.create(nombre="VIAL VICTORIA")
+    empresa._sector_prueba = Sector.objects.create(nombre="Operaciones")
+    empresa._puesto_prueba = Puesto.objects.create(
+        nombre="Chofer", sector=empresa._sector_prueba
+    )
+    return empresa
 
 
 @pytest.fixture
@@ -47,7 +52,13 @@ def escenario(empresa, tipos):
     def _emp(legajo, dni, nombre, apellido, ingreso, egreso=None):
         e = Empleado.objects.create(legajo=legajo, dni=dni, nombre=nombre, apellido=apellido)
         rel = RelacionLaboral.objects.create(
-            empleado=e, empresa=empresa, fecha_ingreso=ingreso, fecha_egreso=egreso,
+            empleado=e,
+            empresa=empresa,
+            sector=empresa._sector_prueba,
+            puesto=empresa._puesto_prueba,
+            fecha_ingreso=ingreso,
+            fecha_egreso=egreso,
+            motivo_egreso="RENUNCIA" if egreso else "",
             estado="FINALIZADA" if egreso else "ACTIVA",
         )
         return e, rel
@@ -60,7 +71,9 @@ def escenario(empresa, tipos):
     def _nov(emp, rel, tipo, desde, estado=EstadoNovedad.REGISTRADA):
         return Novedad.objects.create(
             empleado=emp, relacion_laboral=rel, tipo_novedad=tipo,
-            fecha_desde=desde, estado=estado,
+            fecha_desde=desde,
+            estado=estado,
+            motivo_anulacion="Dato de prueba" if estado == EstadoNovedad.ANULADA else "",
         )
 
     _nov(e1, r1, tipos["FALTA"], date(2026, 7, 2))
@@ -81,6 +94,47 @@ def test_kpis_del_mes(escenario):
     assert m["ausentismo_mes"] == {"valor": 4, "delta": 3}   # 4 en julio (sin vac/anulada); 1 junio
 
 
+def test_ausentismo_del_mes_incluye_extension_aprobada_sin_doble_conteo(
+    empresa,
+    tipos,
+):
+    empleado = Empleado.objects.create(
+        legajo="EXT-1",
+        dni="40111991",
+        nombre="Licencia",
+        apellido="Extendida",
+    )
+    relacion = RelacionLaboral.objects.create(
+        empleado=empleado,
+        empresa=empresa,
+        sector=empresa._sector_prueba,
+        puesto=empresa._puesto_prueba,
+        fecha_ingreso=date(2024, 1, 1),
+    )
+    madre = Novedad.objects.create(
+        empleado=empleado,
+        relacion_laboral=relacion,
+        tipo_novedad=tipos["LICENCIA_MEDICA"],
+        fecha_desde=date(2026, 6, 20),
+        fecha_hasta=date(2026, 6, 30),
+        estado=EstadoNovedad.APROBADA,
+    )
+    Novedad.objects.create(
+        empleado=empleado,
+        relacion_laboral=relacion,
+        tipo_novedad=tipos["LICENCIA_MEDICA"],
+        fecha_desde=date(2026, 7, 1),
+        fecha_hasta=date(2026, 7, 20),
+        estado=EstadoNovedad.APROBADA,
+        novedad_origen=madre,
+    )
+
+    assert selectors._ausentismo_en(
+        date(2026, 7, 1),
+        date(2026, 8, 1),
+    ) == 1
+
+
 def test_activos_ignora_finalizada_con_egreso_futuro(empresa):
     """Regresión: una relación FINALIZADA no cuenta como activa aunque su egreso sea
     futuro (baja con egreso diferido). El KPI usa `estado`, no las fechas."""
@@ -88,15 +142,35 @@ def test_activos_ignora_finalizada_con_egreso_futuro(empresa):
         legajo="9001", dni="40111001", nombre="Vale", apellido="Activa"
     )
     RelacionLaboral.objects.create(
-        empleado=activa, empresa=empresa, fecha_ingreso=date(2024, 1, 1), estado="ACTIVA",
+        empleado=activa,
+        empresa=empresa,
+        sector=empresa._sector_prueba,
+        puesto=empresa._puesto_prueba,
+        fecha_ingreso=date(2024, 1, 1),
+        estado="ACTIVA",
     )
     baja = Empleado.objects.create(legajo="9002", dni="40111002", nombre="Bruno", apellido="Baja")
     RelacionLaboral.objects.create(  # dada de baja, pero con egreso mañana
-        empleado=baja, empresa=empresa, fecha_ingreso=HOY, fecha_egreso=date(2026, 7, 14),
+        empleado=baja,
+        empresa=empresa,
+        sector=empresa._sector_prueba,
+        puesto=empresa._puesto_prueba,
+        fecha_ingreso=HOY,
+        fecha_egreso=date(2026, 7, 14),
+        motivo_egreso="RENUNCIA",
         estado="FINALIZADA",
     )
     m = selectors.metricas_dashboard(hoy=HOY)
     assert m["activos"]["valor"] == 1  # solo la ACTIVA; la FINALIZADA no cuenta
+
+
+def test_reconstruccion_historica_incluye_el_dia_de_egreso():
+    dotacion = selectors._Dotacion(
+        [(1, "FINALIZADA", date(2026, 7, 1), date(2026, 7, 10))]
+    )
+
+    assert dotacion.activos_a(date(2026, 7, 10)) == 1
+    assert dotacion.activos_a(date(2026, 7, 11)) == 0
 
 
 def test_ranking_faltas_solo_faltas_validas(escenario):
@@ -117,7 +191,12 @@ def test_ranking_faltas_resuelve_empresa_sin_relacion_en_la_falta(empresa, tipos
         legajo="7001", dni="41111001", nombre="Agus", apellido="Cardoso"
     )
     RelacionLaboral.objects.create(
-        empleado=e, empresa=empresa, fecha_ingreso=date(2024, 1, 1), estado="ACTIVA",
+        empleado=e,
+        empresa=empresa,
+        sector=empresa._sector_prueba,
+        puesto=empresa._puesto_prueba,
+        fecha_ingreso=date(2024, 1, 1),
+        estado="ACTIVA",
     )
     Novedad.objects.create(  # sin relación asociada a propósito
         empleado=e, relacion_laboral=None, tipo_novedad=tipos["FALTA"],
@@ -134,7 +213,12 @@ def test_ranking_faltas_cuenta_dias_no_faltas(empresa, tipos):
     no la cantidad de faltas. Una única falta de 3 días suma 3."""
     e = Empleado.objects.create(legajo="7100", dni="41200001", nombre="Multi", apellido="Dias")
     RelacionLaboral.objects.create(
-        empleado=e, empresa=empresa, fecha_ingreso=date(2024, 1, 1), estado="ACTIVA",
+        empleado=e,
+        empresa=empresa,
+        sector=empresa._sector_prueba,
+        puesto=empresa._puesto_prueba,
+        fecha_ingreso=date(2024, 1, 1),
+        estado="ACTIVA",
     )
     Novedad.objects.create(
         empleado=e, relacion_laboral=None, tipo_novedad=tipos["FALTA"],
@@ -173,3 +257,26 @@ def test_endpoint_rrhh_devuelve_forma(crear_usuario, escenario):
         "periodo", "activos", "ingresos_mes", "egresos_mes",
         "ausentismo_mes", "rotacion", "ranking_faltas",
     }
+
+
+def test_supervisor_recibe_solo_metricas_honestas_del_equipo_actual(
+    crear_usuario, escenario
+):
+    supervisor = crear_usuario(username="super-panel", rol=roles.SUPERVISOR)
+    escenario["r1"].supervisor = supervisor
+    escenario["r1"].save(update_fields=["supervisor"])
+    cliente = APIClient()
+    cliente.force_authenticate(supervisor)
+
+    respuesta = cliente.get("/api/v1/dashboard/metricas/")
+
+    assert respuesta.status_code == 200
+    assert respuesta.data["activos"] == {"valor": 1, "delta": None}
+    assert respuesta.data["ingresos_mes"] == {"disponible": False}
+    assert respuesta.data["egresos_mes"] == {"disponible": False}
+    assert respuesta.data["rotacion"]["disponible"] is False
+    assert respuesta.data["alcance"] == {
+        "tipo": "EQUIPO_ACTUAL",
+        "historico_disponible": False,
+    }
+    assert cliente.get("/api/v1/reportes/metricas/").status_code == 403

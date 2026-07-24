@@ -17,7 +17,7 @@ from apps.empleados.models import (
     TipoContrato,
     TipoDocumento,
 )
-from apps.organizacion.models import Empresa, Parametro
+from apps.organizacion.models import Empresa, Parametro, Puesto, Sector
 from apps.organizacion.selectors import CLAVE_DIAS_AVISO
 from common import roles
 
@@ -28,7 +28,12 @@ HOY = date(2026, 7, 13)
 
 @pytest.fixture
 def empresa():
-    return Empresa.objects.create(nombre="VIAL VICTORIA")
+    empresa = Empresa.objects.create(nombre="VIAL VICTORIA")
+    empresa._sector_prueba = Sector.objects.create(nombre="Operaciones")
+    empresa._puesto_prueba = Puesto.objects.create(
+        nombre="Chofer", sector=empresa._sector_prueba
+    )
+    return empresa
 
 
 @pytest.fixture
@@ -41,12 +46,24 @@ def _empleado(dni, apellido, empresa, *, activo=True, **rel):
     RelacionLaboral.objects.create(
         empleado=emp,
         empresa=empresa,
+        sector=empresa._sector_prueba,
+        puesto=empresa._puesto_prueba,
         fecha_ingreso=date(2024, 1, 10),
         estado=EstadoRelacion.ACTIVA if activo else EstadoRelacion.FINALIZADA,
         fecha_egreso=None if activo else date(2025, 1, 1),
+        motivo_egreso="" if activo else "RENUNCIA",
         **rel,
     )
     return emp
+
+
+def _documento(emp, tipo, **datos):
+    return DocumentoEmpleado.objects.create(
+        empleado=emp,
+        relacion_laboral=emp.relacion_activa or emp.relaciones.first(),
+        tipo_documento=tipo,
+        **datos,
+    )
 
 
 def _items(data, tipo):
@@ -71,9 +88,7 @@ def test_el_semaforo_marca_vencido_por_vencer_y_al_dia(empresa, apto):
     }
     for numero, (apellido, vence) in enumerate(casos.items()):
         emp = _empleado(f"3011122{numero}", apellido, empresa)
-        DocumentoEmpleado.objects.create(
-            empleado=emp, tipo_documento=apto, fecha_vencimiento=vence
-        )
+        _documento(emp, apto, fecha_vencimiento=vence)
 
     items = _apellidos(_items(vencimientos_de_la_dotacion(hoy=HOY), "Apto médico"))
     assert {k: v["estado"] for k, v in items.items()} == {
@@ -87,9 +102,7 @@ def test_no_alerta_por_quien_ya_no_trabaja(empresa, apto):
     activo = _empleado("30111222", "Activo", empresa)
     egresado = _empleado("30222333", "Egresado", empresa, activo=False)
     for emp in (activo, egresado):
-        DocumentoEmpleado.objects.create(
-            empleado=emp, tipo_documento=apto, fecha_vencimiento=HOY - timedelta(days=5)
-        )
+        _documento(emp, apto, fecha_vencimiento=HOY - timedelta(days=5))
 
     data = vencimientos_de_la_dotacion(hoy=HOY)
     assert [i["empleado"] for i in _items(data, "Apto médico")] == ["Test Activo"]
@@ -99,7 +112,7 @@ def test_no_alerta_por_quien_ya_no_trabaja(empresa, apto):
 def test_el_documento_sin_vencimiento_no_es_alerta(empresa, apto):
     """Sin fecha no hay nada que vigilar: el contrato firmado no vence."""
     emp = _empleado("30111222", "Sinfecha", empresa)
-    DocumentoEmpleado.objects.create(empleado=emp, tipo_documento=apto, fecha_vencimiento=None)
+    _documento(emp, apto, fecha_vencimiento=None)
     data = vencimientos_de_la_dotacion(hoy=HOY)
     assert data["grupos"] == []
     assert data["resumen"] == {"vencidos": 0, "por_vencer": 0, "al_dia": 0}
@@ -133,8 +146,8 @@ def test_cada_tipo_avisa_con_su_propia_anticipacion(empresa, apto):
     apto.save()
     emp = _empleado("30111222", "Alguien", empresa)
     vence = HOY + timedelta(days=45)  # dentro del aviso del apto, fuera del de carnet
-    DocumentoEmpleado.objects.create(empleado=emp, tipo_documento=apto, fecha_vencimiento=vence)
-    DocumentoEmpleado.objects.create(empleado=emp, tipo_documento=carnet, fecha_vencimiento=vence)
+    _documento(emp, apto, fecha_vencimiento=vence)
+    _documento(emp, carnet, fecha_vencimiento=vence)
 
     data = vencimientos_de_la_dotacion(hoy=HOY)
     assert _items(data, "Apto médico")[0]["estado"] == "warn"
@@ -172,16 +185,27 @@ def test_un_parametro_roto_no_tira_abajo_la_alerta(empresa):
         assert data["resumen"]["por_vencer"] == 1, basura
 
 
-def test_dos_empresas_no_duplican_el_documento(empresa, apto):
-    """El carnet es de la persona, no de la empresa: quien trabaja en las dos empresas del
-    grupo tiene UN carnet, no dos. El JOIN con relaciones lo duplicaría."""
+def test_el_historial_no_duplica_el_documento_de_la_relacion_actual(empresa, apto):
     otra = Empresa.objects.create(nombre="PREMOCOR")
     emp = _empleado("30111222", "Doble", empresa)
-    RelacionLaboral.objects.create(
-        empleado=emp, empresa=otra, fecha_ingreso=date(2025, 1, 1), estado=EstadoRelacion.ACTIVA
+    anterior = emp.relacion_activa
+    anterior.estado = EstadoRelacion.FINALIZADA
+    anterior.fecha_egreso = date(2024, 12, 31)
+    anterior.motivo_egreso = "RENUNCIA"
+    anterior.save()
+    actual = RelacionLaboral.objects.create(
+        empleado=emp,
+        empresa=otra,
+        sector=empresa._sector_prueba,
+        puesto=empresa._puesto_prueba,
+        fecha_ingreso=date(2025, 1, 1),
+        estado=EstadoRelacion.ACTIVA,
     )
     DocumentoEmpleado.objects.create(
-        empleado=emp, tipo_documento=apto, fecha_vencimiento=HOY + timedelta(days=5)
+        empleado=emp,
+        relacion_laboral=actual,
+        tipo_documento=apto,
+        fecha_vencimiento=HOY + timedelta(days=5),
     )
     items = _items(vencimientos_de_la_dotacion(hoy=HOY), "Apto médico")
     assert len(items) == 1, "el documento aparece repetido por cada relación activa"
@@ -190,9 +214,7 @@ def test_dos_empresas_no_duplican_el_documento(empresa, apto):
 # ---------- Endpoint ----------
 def test_el_endpoint_lo_ve_rrhh_y_no_el_empleado(crear_usuario, empresa, apto):
     emp = _empleado("30111222", "Alguien", empresa)
-    DocumentoEmpleado.objects.create(
-        empleado=emp, tipo_documento=apto, fecha_vencimiento=HOY + timedelta(days=5)
-    )
+    _documento(emp, apto, fecha_vencimiento=HOY + timedelta(days=5))
     rrhh = APIClient()
     rrhh.force_authenticate(crear_usuario(username="rrhh", rol=roles.RRHH))
     resp = rrhh.get("/api/v1/alertas/vencimientos/")

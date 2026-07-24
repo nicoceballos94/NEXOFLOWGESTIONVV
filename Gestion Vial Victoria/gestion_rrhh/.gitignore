@@ -3,6 +3,8 @@ __pycache__/
 .venv/
 venv/
 .env
+.env.prod
+secrets/
 db.sqlite3
 staticfiles/
 # Respaldos de documentos (apto médico, carnet): datos personales de salud. En dev con

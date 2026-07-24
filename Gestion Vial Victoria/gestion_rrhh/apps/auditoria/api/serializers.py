@@ -22,6 +22,8 @@ class RegistroAuditoriaSerializer(serializers.ModelSerializer):
             "accion_display",
             "entidad",
             "objeto_id",
+            "agregado_entidad",
+            "agregado_id",
             "objeto_repr",
             "empleado",
             "empleado_nombre",

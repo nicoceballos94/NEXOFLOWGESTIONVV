@@ -5,11 +5,19 @@ una empresa se da por `RelacionLaboral`. Baja lógica solo donde el dominio lo p
 (R10: se finaliza la relación, nunca DELETE físico); el resto se protege con PROTECT.
 """
 from django.conf import settings
+from django.contrib.postgres.constraints import ExclusionConstraint
+from django.contrib.postgres.fields import DateRangeField, RangeBoundary, RangeOperators
+from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator
 from django.db import models
+from django.db.models import Func, Q
+from django.db.models.functions import Upper
+from django.utils import timezone
 
 from common import archivos
 from common.models import ModeloBase
+
+from .identificadores import normalizar_cuil, normalizar_dni, normalizar_id_huella
 
 
 class Educacion(models.TextChoices):
@@ -64,8 +72,8 @@ class Empleado(ModeloBase):
         help_text="Foto de perfil (imagen raster). Se sirve por endpoint protegido, no por "
         "URL directa. FileField y no ImageField para no atar el repo a Pillow.",
     )
-    dni = models.CharField(max_length=15, unique=True, db_index=True)
-    cuil = models.CharField(max_length=15, unique=True, null=True, blank=True)
+    dni = models.CharField(max_length=9, unique=True, db_index=True)
+    cuil = models.CharField(max_length=11, unique=True, null=True, blank=True)
     nombre = models.CharField(max_length=100)
     apellido = models.CharField(max_length=100)
     fecha_nacimiento = models.DateField(null=True, blank=True)
@@ -106,6 +114,60 @@ class Empleado(ModeloBase):
         verbose_name = "empleado"
         verbose_name_plural = "empleados"
         ordering = ["apellido", "nombre"]
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(dni__regex=r"^[0-9]{6,9}$"),
+                name="empleado_dni_normalizado",
+            ),
+            models.CheckConstraint(
+                condition=Q(cuil__isnull=True) | Q(cuil__regex=r"^[0-9]{11}$"),
+                name="empleado_cuil_normalizado",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(id_huella__isnull=True)
+                    | (
+                        ~Q(id_huella="")
+                        & ~Q(id_huella__regex=r"(^\s)|(\s$)")
+                        & Q(id_huella=Upper("id_huella"))
+                    )
+                ),
+                name="empleado_huella_normalizada",
+            ),
+        ]
+
+    def _normalizar_identificadores(self) -> None:
+        errores = {}
+        for campo, normalizador in (
+            ("dni", normalizar_dni),
+            ("cuil", normalizar_cuil),
+            ("id_huella", normalizar_id_huella),
+        ):
+            try:
+                setattr(self, campo, normalizador(getattr(self, campo)))
+            except ValidationError as error:
+                errores[campo] = error.messages
+        if errores:
+            raise ValidationError(errores)
+
+    def _validar_fecha_nacimiento(self) -> None:
+        self.fecha_nacimiento = self._meta.get_field("fecha_nacimiento").to_python(
+            self.fecha_nacimiento
+        )
+        if self.fecha_nacimiento and self.fecha_nacimiento > timezone.localdate():
+            raise ValidationError(
+                {"fecha_nacimiento": "La fecha de nacimiento no puede estar en el futuro."}
+            )
+
+    def full_clean(self, *args, **kwargs):
+        self._normalizar_identificadores()
+        self._validar_fecha_nacimiento()
+        return super().full_clean(*args, **kwargs)
+
+    def save(self, *args, **kwargs):
+        self._normalizar_identificadores()
+        self._validar_fecha_nacimiento()
+        return super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.apellido}, {self.nombre} (leg. {self.legajo})"
@@ -150,7 +212,11 @@ class Empleado(ModeloBase):
 
 
 class RelacionLaboral(ModeloBase):
-    """Vínculo persona↔empresa con historial. R1: única ACTIVA por (empleado, empresa)."""
+    """Vínculo persona↔empresa con historial y supervisor actual.
+
+    La persona puede tener muchas relaciones históricas, pero solo una activa en todo el
+    grupo y ninguna vigencia puede solaparse con otra.
+    """
 
     empleado = models.ForeignKey(
         Empleado, on_delete=models.PROTECT, related_name="relaciones"
@@ -172,6 +238,14 @@ class RelacionLaboral(ModeloBase):
         on_delete=models.PROTECT,
         related_name="relaciones",
     )
+    supervisor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="relaciones_supervisadas",
+        help_text="Supervisor actual de esta relación. Null si todavía no fue asignado.",
+    )
     fecha_ingreso = models.DateField(help_text="Base de antigüedad (spec §1.7).")
     jornada_legal = models.CharField(max_length=15, choices=JornadaLegal.choices, blank=True)
     tipo_contrato = models.CharField(
@@ -189,12 +263,66 @@ class RelacionLaboral(ModeloBase):
         verbose_name_plural = "relaciones laborales"
         ordering = ["-fecha_ingreso"]
         constraints = [
-            # R1: una sola relación ACTIVA por (empleado, empresa) — índice único parcial.
+            # Una persona solo puede estar activa una vez en todo el grupo empresarial.
             models.UniqueConstraint(
-                fields=["empleado", "empresa"],
-                condition=models.Q(estado="ACTIVA"),
-                name="uniq_relacion_activa_por_empresa",
-            )
+                fields=["empleado"],
+                condition=Q(estado=EstadoRelacion.ACTIVA),
+                name="uniq_relacion_activa_por_empleado",
+            ),
+            # Respaldo en DB de la validación amigable del service. Los extremos son
+            # inclusivos: egreso e ingreso el mismo día sí se pisan.
+            ExclusionConstraint(
+                name="excl_relaciones_solapadas_por_empleado",
+                expressions=[
+                    ("empleado", RangeOperators.EQUAL),
+                    (
+                        Func(
+                            "fecha_ingreso",
+                            "fecha_egreso",
+                            RangeBoundary(inclusive_lower=True, inclusive_upper=True),
+                            function="DATERANGE",
+                            output_field=DateRangeField(),
+                        ),
+                        RangeOperators.OVERLAPS,
+                    ),
+                ],
+            ),
+            models.CheckConstraint(
+                condition=Q(fecha_egreso__isnull=True)
+                | Q(fecha_egreso__gte=models.F("fecha_ingreso")),
+                name="relacion_fechas_validas",
+            ),
+            # Se instala NOT VALID para tolerar activas legadas sin catálogo. A partir de
+            # la migración, toda fila activa nueva o modificada debe tener ambos valores.
+            models.CheckConstraint(
+                condition=Q(estado=EstadoRelacion.FINALIZADA)
+                | (Q(sector__isnull=False) & Q(puesto__isnull=False)),
+                name="relacion_activa_con_catalogos",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(
+                        estado=EstadoRelacion.ACTIVA,
+                        fecha_egreso__isnull=True,
+                        motivo_egreso="",
+                    )
+                    | (
+                        Q(
+                            estado=EstadoRelacion.FINALIZADA,
+                            fecha_egreso__isnull=False,
+                        )
+                        & ~Q(motivo_egreso="")
+                    )
+                ),
+                name="relacion_estado_baja_coherente",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["supervisor", "empleado"],
+                condition=Q(estado=EstadoRelacion.ACTIVA),
+                name="idx_rel_activa_supervisor",
+            ),
         ]
 
     def __str__(self):
@@ -208,11 +336,9 @@ class RelacionLaboral(ModeloBase):
     @property
     def antiguedad_en_dias(self) -> int | None:
         """Propiedad derivada pura (§11): no toca otras tablas."""
-        from datetime import date
-
         if not self.fecha_ingreso:
             return None
-        fin = self.fecha_egreso or date.today()
+        fin = self.fecha_egreso or timezone.localdate()
         return (fin - self.fecha_ingreso).days
 
 
@@ -245,15 +371,21 @@ def ruta_archivo_documento(instance: "DocumentoEmpleado", filename: str) -> str:
 
 
 class DocumentoEmpleado(ModeloBase):
-    """Documento del empleado con vencimiento. Un vigente por tipo (UNIQUE).
+    """Documento exigible en una relación laboral. Uno por tipo y relación (UNIQUE).
 
-    Son los documentos de la PERSONA (carnet, apto médico, CNRT, contrato): vencen y se
-    renuevan pisando al anterior. Los certificados de una licencia o accidente no van acá
-    — pertenecen a su novedad, que los conserva sola porque las novedades no se borran.
+    `empleado` se conserva por compatibilidad y acceso directo, pero la pertenencia de
+    dominio es la relación: un reingreso abre una nueva carpeta documental y vuelve a
+    exigir cada tipo. La migración se detiene si un legado no puede atribuirse sin inventar
+    datos; por eso la FK queda obligatoria también en el modelo y no hay filas ocultas.
     """
 
     empleado = models.ForeignKey(
         Empleado, on_delete=models.PROTECT, related_name="documentos"
+    )
+    relacion_laboral = models.ForeignKey(
+        RelacionLaboral,
+        on_delete=models.PROTECT,
+        related_name="documentos",
     )
     tipo_documento = models.ForeignKey(
         TipoDocumento, on_delete=models.PROTECT, related_name="documentos"
@@ -277,13 +409,32 @@ class DocumentoEmpleado(ModeloBase):
         ordering = ["empleado", "tipo_documento"]
         constraints = [
             models.UniqueConstraint(
-                fields=["empleado", "tipo_documento"],
-                name="uniq_documento_vigente_por_tipo",
-            )
+                fields=["relacion_laboral", "tipo_documento"],
+                name="uniq_documento_por_relacion_tipo",
+            ),
+            models.CheckConstraint(
+                condition=Q(relacion_laboral__isnull=False),
+                name="documento_relacion_requerida",
+            ),
         ]
 
     def __str__(self):
         return f"{self.tipo_documento} de {self.empleado}"
+
+    def clean(self):
+        super().clean()
+        if (
+            self.relacion_laboral_id
+            and self.empleado_id
+            and self.relacion_laboral.empleado_id != self.empleado_id
+        ):
+            raise ValidationError(
+                {
+                    "relacion_laboral": (
+                        "La relación laboral seleccionada no pertenece al empleado."
+                    )
+                }
+            )
 
     @property
     def empleado_auditado(self) -> Empleado:

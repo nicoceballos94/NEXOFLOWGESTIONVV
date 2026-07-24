@@ -1,5 +1,10 @@
 # Sistema de RRHH — Casos de uso del MVP 2
 
+> **Vigencia:** backlog futuro, actualizado 2026-07-24. El contrato del MVP1 está en
+> [`ARQUITECTURA_MVP1_PRODUCCION.md`](ARQUITECTURA_MVP1_PRODUCCION.md). Auditoría y
+> onboarding/offboarding ya no son arrastres: están implementados. La importación Excel
+> quedó diferida hasta confirmar que realmente se necesita.
+
 > **Para qué sirve este documento:** describir, en lenguaje sencillo, **qué va a
 > sumar el sistema en su segunda versión (MVP 2)**, partiendo de lo que ya quedó
 > funcionando en el MVP 1. No entra en detalle técnico: es la guía para acordar
@@ -18,25 +23,21 @@ El MVP 1 ya reemplaza las planillas de Excel por un sistema único con:
 
 - Legajo de empleados (alta, edición, baja lógica, reingreso, historial en las
   dos empresas) y búsqueda/filtros.
-- **Carga de documentación con archivo de respaldo** (carnet, apto médico, CNRT,
-  contrato) y control de vencimientos. *(Nota: en el backlog original figuraba
-  como MVP 2 sobre Google Drive; se hizo antes, con almacenamiento propio.)*
+- **Carga de documentación por relación laboral**, con archivo de respaldo, control de
+  vencimientos y reingreso que vuelve a pedir todo.
 - Novedades (faltas, licencias, vacaciones, accidentes, permisos, horas extra),
   con aprobación, prórrogas y adjuntos de certificados.
 - Avisos del día, reportes de dotación / ausentismo / rotación.
-- Acceso por rol y login por usuario.
+- Acceso por rol con sesión+CSRF; Supervisor por asignación explícita.
+- Plantillas versionadas de onboarding/offboarding por empresa+sector.
+- Auditoría consultable y append-only.
 
-### Arrastre del MVP 1 (conviene cerrarlo al arrancar el MVP 2)
+### Decisiones que no bloquean la salida del MVP1
 
-Dos casos de uso del MVP 1 quedaron pendientes y son la mejor puerta de entrada
-al MVP 2:
-
-- **CU-19 — Migrar la información actual desde Excel.** Sin la carga inicial de
-  datos reales, varias métricas y automatismos del MVP 2 no tienen con qué
-  trabajar. **Recomendado hacerlo primero.**
-- **CU-17 — Historial de cambios (auditoría) consultable.** Hoy se registra
-  quién creó cada dato; falta el registro consultable de quién aprobó, dio de
-  baja o prorrogó, y una pantalla para verlo. Puede ir en paralelo, no bloquea.
+- **Importación Excel:** construirla solo si se confirma una fuente real y volumen que
+  justifiquen mantener ese canal.
+- **Servicio/M2M:** diseñar credenciales revocables y scopes mínimos cuando exista la
+  primera integración n8n real. El rol reservado no inicia sesión humana.
 
 ---
 
@@ -133,22 +134,19 @@ constancia de quién lo hizo y cuándo.
   del legajo (declaración jurada, firma de contrato, foto). El ítem documental
   **no se tilda por separado**: queda "hecho" cuando ese documento está cargado
   **con el archivo escaneado adjunto**. Así hay una sola fuente de verdad (el
-  documento) y el checklist lo refleja, sin dato duplicado que pueda contradecirse.
+  documento de esa misma relación laboral) y el checklist lo refleja, sin dato duplicado
+  que pueda contradecirse.
 - *Cómo se usa:* se accede **desde la ficha del empleado** (no es una pantalla
   aparte). Es una tarjeta con barra de avance; los ítems documentales abren el
   mismo "Cargar documento" que ya existe. Al completarse, la tarjeta **colapsa a
   una línea** ("Onboarding completo ✓"), dejando la constancia sin ocupar espacio.
 - *Depende de:* el legajo y la documentación del empleado (**ya disponibles desde
   el MVP 1**).
-- *Bloqueado por decisión:* no (sí definir el checklist definitivo por empresa —
-  Vial Victoria y Premocor pueden diferir, y cuáles ítems son documentales).
-- *Estado:* ✅ **Hecho (2026-07-23).** App `onboarding` en el backend (4 modelos:
-  plantilla configurable por empresa, ítems acción/documental, proceso por empleado
-  fotografiado de la plantilla), endpoints `/onboarding/plantillas/` (ABM) y
-  `/empleados/{id}/checklist/` (tarjeta), 14 tests contra Postgres. Front: ABM en
-  Configuración y tarjeta con barra de avance en la ficha; el ítem documental se
-  completa solo al cargar su documento y la tarjeta colapsa al 100%. El checklist
-  por empresa se configura desde la UI (no está fijo en código).
+- *Bloqueado por decisión:* no.
+- *Estado:* ✅ **Hecho y endurecido (2026-07-24).** Plantillas por
+  empresa+sector+tipo, versiones borrador/publicada/archivada, fallback general por
+  empresa y procesos fotografiados por relación laboral. Un reingreso inicia otro
+  proceso y no reutiliza documentos anteriores.
 
 **CU-30 — Offboarding (proceso de egreso)**
 El espejo del anterior: cuando alguien se va, un **checklist** de baja asegura que
@@ -170,10 +168,9 @@ se recupere todo lo entregado y se cierren los trámites, con constancia.
   y colapsa al completarse, igual que CU-29.
 - *Depende de:* el legajo y la baja lógica (**ya disponible desde el MVP 1**). Se
   dispara al registrar la baja del empleado.
-- *Bloqueado por decisión:* no (sí definir el checklist definitivo por empresa).
-- *Estado:* ✅ **Hecho (2026-07-23).** Mismo motor que CU-29 (`tipo_proceso=EGRESO`).
-  La tarjeta de la ficha muestra offboarding cuando el empleado está dado de baja;
-  el ABM configura el checklist de egreso por empresa.
+- *Bloqueado por decisión:* no.
+- *Estado:* ✅ **Hecho y endurecido (2026-07-24).** Mismo motor versionado y sectorizado
+  que CU-29 (`tipo_proceso=EGRESO`), anclado a la relación laboral.
 
 ### F. Configuración y catálogos
 
@@ -195,6 +192,15 @@ de un tipo nuevo solo se hace por herramientas internas.
 - *Habilita:* los ítems documentales del onboarding/offboarding (CU-29 / CU-30),
   que se enlazan a estos tipos.
 
+### G. Integraciones técnicas
+
+**CU-32 — Credenciales M2M para n8n y otros consumidores**
+Cuando exista una integración concreta, el rol Servicio tendrá autenticación separada de
+la humana, secretos revocables, expiración, rotación y scopes mínimos por consumidor.
+Nunca se reutilizará una sesión o contraseña de una persona.
+- *Depende de:* definir el primer consumidor y los endpoints exactos.
+- *Bloqueado por decisión:* sí — contrato real de la integración.
+
 ---
 
 ## 3. Resumen de prioridad y bloqueos
@@ -213,6 +219,7 @@ de un tipo nuevo solo se hace por herramientas internas.
 | CU-23 | Avisos automáticos | Contacto cargado | **Sí** — canal (WhatsApp/Telegram/email) |
 | CU-26 | Firma digital de recibos | Proveedor de firma | **Sí** — proveedor |
 | CU-27 | Export a contable | Sistema contable destino | **Sí** — qué sistema/formato |
+| CU-32 | API M2M / Servicio | Consumidor y contrato reales | **Sí** — alcance de integración |
 
 ### Decisiones a cerrar antes de programar
 
@@ -220,17 +227,17 @@ de un tipo nuevo solo se hace por herramientas internas.
    del Excel sugiere un reloj biométrico) → es la decisión de mayor impacto.
 2. **Canal de avisos (CU-23):** WhatsApp, Telegram o email.
 3. **Proveedor de firma (CU-26)** y **sistema contable destino (CU-27)**.
+4. **Primer consumidor M2M (CU-32):** endpoints y scopes que necesita n8n.
 
 ### Orden sugerido
 
-1. Cerrar el arrastre del MVP 1: **CU-19 (importar Excel)** primero, **CU-17
-   (auditoría)** en paralelo.
-2. Lo que no tiene bloqueos: **CU-25 (disciplina)**, **CU-31 (tipos de documento
-   en Configuración, solo front)**, **CU-24 (autogestión)** y **CU-29 / CU-30
-   (onboarding / offboarding)**.
-3. En cuanto se defina el hardware: **CU-20 → CU-21 → CU-22** (asistencia).
-4. Definido el canal: **CU-23 (avisos)** y **CU-28 (bot)**.
-5. Con proveedores elegidos: **CU-26 (firma)** y **CU-27 (export contable)**.
+1. Lo que no tiene bloqueos: **CU-25 (disciplina)** y definir alcance de
+   **CU-24 (autogestión)**.
+2. En cuanto se defina el hardware: **CU-20 → CU-21 → CU-22** (asistencia).
+3. Definido el canal: **CU-23 (avisos)** y **CU-28 (bot)**.
+4. Con proveedores elegidos: **CU-26 (firma)** y **CU-27 (export contable)**.
+5. Con un consumidor real: **CU-32 (Servicio/M2M)**.
+6. Importación Excel solo si una fuente real demuestra que hace falta.
 
 ---
 

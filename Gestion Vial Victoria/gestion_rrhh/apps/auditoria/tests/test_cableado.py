@@ -8,13 +8,15 @@ esta tanda existe para evitar: la bitácora no se queja, simplemente queda incom
 from datetime import date
 
 import pytest
+from rest_framework.exceptions import ValidationError
 
 from apps.auditoria.models import Accion, RegistroAuditoria
+from apps.auditoria.tests.utils import vaciar_bitacora
 from apps.empleados import services as emp_services
 from apps.empleados.models import Empleado, EstadoRelacion, RelacionLaboral, TipoDocumento
 from apps.novedades import services as nov_services
 from apps.novedades.models import EstadoNovedad, TipoNovedad
-from apps.organizacion.models import Empresa
+from apps.organizacion.models import Empresa, Puesto, Sector
 
 pytestmark = pytest.mark.django_db
 
@@ -26,7 +28,23 @@ def actor(crear_usuario):
 
 @pytest.fixture
 def empresa():
-    return Empresa.objects.create(nombre="VIAL VICTORIA")
+    empresa = Empresa.objects.create(nombre="VIAL VICTORIA")
+    empresa._sector_prueba = Sector.objects.create(nombre="Operaciones")
+    empresa._puesto_prueba = Puesto.objects.create(
+        nombre="Chofer", sector=empresa._sector_prueba
+    )
+    return empresa
+
+
+def _relacion(empresa, fecha_ingreso=None):
+    datos = {
+        "empresa": empresa,
+        "sector": empresa._sector_prueba,
+        "puesto": empresa._puesto_prueba,
+    }
+    if fecha_ingreso is not None:
+        datos["fecha_ingreso"] = fecha_ingreso
+    return datos
 
 
 @pytest.fixture
@@ -34,7 +52,7 @@ def empleado(actor, empresa):
     return emp_services.crear_empleado(
         actor=actor,
         datos_empleado={"dni": "30111222", "nombre": "Juan", "apellido": "Pérez"},
-        datos_relacion={"empresa": empresa, "fecha_ingreso": date(2024, 1, 10)},
+        datos_relacion=_relacion(empresa, date(2024, 1, 10)),
     )
 
 
@@ -62,7 +80,7 @@ def test_el_alta_asienta_dos_hechos_la_persona_y_su_relacion(actor, empresa):
     emp_services.crear_empleado(
         actor=actor,
         datos_empleado={"dni": "30999888", "nombre": "Ana", "apellido": "Gómez"},
-        datos_relacion={"empresa": empresa, "fecha_ingreso": date(2024, 3, 1)},
+        datos_relacion=_relacion(empresa, date(2024, 3, 1)),
     )
 
     # Dos hechos distintos: la baja de mañana toca la relación, no la persona.
@@ -71,7 +89,7 @@ def test_el_alta_asienta_dos_hechos_la_persona_y_su_relacion(actor, empresa):
 
 
 def test_editar_asienta_solo_lo_que_cambio(actor, empleado):
-    RegistroAuditoria.objects.all().delete()
+    vaciar_bitacora()
 
     emp_services.actualizar_empleado(
         actor=actor, empleado=empleado, datos_empleado={"telefono": "2664112233"}
@@ -83,7 +101,7 @@ def test_editar_asienta_solo_lo_que_cambio(actor, empleado):
 
 
 def test_guardar_la_ficha_sin_tocarla_no_ensucia_la_bitacora(actor, empleado):
-    RegistroAuditoria.objects.all().delete()
+    vaciar_bitacora()
 
     emp_services.actualizar_empleado(
         actor=actor, empleado=empleado, datos_empleado={"nombre": "Juan"}
@@ -95,7 +113,7 @@ def test_guardar_la_ficha_sin_tocarla_no_ensucia_la_bitacora(actor, empleado):
 def test_la_baja_deja_quien_cuando_y_por_que(actor, empleado, crear_usuario):
     quien_da_la_baja = crear_usuario(username="jefa_rrhh")
     relacion = empleado.relacion_activa
-    RegistroAuditoria.objects.all().delete()
+    vaciar_bitacora()
 
     emp_services.finalizar_relacion(
         actor=quien_da_la_baja,
@@ -117,7 +135,7 @@ def test_el_documento_borrado_deja_su_unica_constancia(actor, empleado):
     documento = emp_services.crear_documento(
         actor=actor, empleado=empleado, tipo_documento=tipo, numero="A-1"
     )
-    RegistroAuditoria.objects.all().delete()
+    vaciar_bitacora()
 
     emp_services.eliminar_documento(actor=actor, documento=documento)
 
@@ -131,7 +149,7 @@ def test_el_documento_borrado_deja_su_unica_constancia(actor, empleado):
 
 
 def test_la_foto_asienta_solo_la_foto_no_la_ficha_entera(actor, empleado):
-    RegistroAuditoria.objects.all().delete()
+    vaciar_bitacora()
 
     emp_services.guardar_foto_empleado(
         actor=actor, empleado=empleado, foto="fotos/1/nueva.jpg"
@@ -169,7 +187,7 @@ def test_el_motivo_del_rechazo_queda_como_dato_no_pegado_en_observaciones(
 ):
     novedad = _crear_novedad(actor, empleado, tipo_licencia)
     quien_rechaza = crear_usuario(username="jefa_rrhh")
-    RegistroAuditoria.objects.all().delete()
+    vaciar_bitacora()
 
     nov_services.rechazar_novedad(
         actor=quien_rechaza, novedad=novedad, motivo="Sin certificado médico"
@@ -185,7 +203,7 @@ def test_el_motivo_del_rechazo_queda_como_dato_no_pegado_en_observaciones(
 
 def test_anular_asienta_su_motivo(actor, empleado, tipo_licencia):
     novedad = _crear_novedad(actor, empleado, tipo_licencia)
-    RegistroAuditoria.objects.all().delete()
+    vaciar_bitacora()
 
     nov_services.anular_novedad(actor=actor, novedad=novedad, motivo="Cargada por error")
 
@@ -199,7 +217,7 @@ def test_la_prorroga_se_asienta_en_la_madre_no_en_el_eslabon_nuevo(
 ):
     madre = _crear_novedad(actor, empleado, tipo_licencia)
     nov_services.aprobar_novedad(actor=actor, novedad=madre)
-    RegistroAuditoria.objects.all().delete()
+    vaciar_bitacora()
 
     prorroga = nov_services.prorrogar_novedad(
         actor=actor, novedad=madre, fecha_hasta_nueva=date(2026, 8, 20), motivo="Sigue de licencia"
@@ -217,7 +235,7 @@ def test_el_adjunto_se_asienta_en_la_novedad_y_solo_con_su_nombre(
     actor, empleado, tipo_licencia
 ):
     novedad = _crear_novedad(actor, empleado, tipo_licencia)
-    RegistroAuditoria.objects.all().delete()
+    vaciar_bitacora()
 
     adjunto = nov_services.adjuntar_a_novedad(
         actor=actor, novedad=novedad, archivo="adjuntos/1/certificado.pdf"
@@ -234,13 +252,11 @@ def test_el_adjunto_se_asienta_en_la_novedad_y_solo_con_su_nombre(
 
 def test_si_la_operacion_se_cae_no_queda_un_evento_huerfano(actor, empresa):
     """Media alta que igual dejó "empleado creado" en la bitácora sería peor que nada."""
-    from django.db.utils import IntegrityError
-
-    with pytest.raises(IntegrityError):
+    with pytest.raises(ValidationError):
         emp_services.crear_empleado(
             actor=actor,
             datos_empleado={"dni": "30777666", "nombre": "Rita", "apellido": "Suárez"},
-            datos_relacion={"empresa": empresa},  # sin fecha_ingreso: revienta en la DB
+            datos_relacion=_relacion(empresa),  # sin fecha_ingreso: falla en el dominio
         )
 
     assert not Empleado.objects.filter(dni="30777666").exists()
@@ -252,7 +268,7 @@ def test_un_proceso_sin_usuario_no_rompe_el_alta(empresa):
     emp_services.crear_empleado(
         actor=None,
         datos_empleado={"dni": "30555444", "nombre": "Seed", "apellido": "Automático"},
-        datos_relacion={"empresa": empresa, "fecha_ingreso": date(2024, 1, 10)},
+        datos_relacion=_relacion(empresa, date(2024, 1, 10)),
     )
 
     assert RelacionLaboral.objects.count() == 1
@@ -273,6 +289,7 @@ def item_checklist(actor, empleado, empresa):
     onb_services.agregar_item(
         actor=actor, plantilla=plantilla, etiqueta="Alta AFIP/ARCA", tipo_item=TipoItem.ACCION
     )
+    onb_services.publicar_plantilla(actor=actor, plantilla=plantilla)
     proceso = onb_services.obtener_o_crear_proceso(
         actor=actor, relacion=empleado.relacion_activa, tipo_proceso=TipoProceso.INGRESO
     )
@@ -283,7 +300,7 @@ def test_destildar_un_item_deja_el_rastro_que_el_propio_item_borra(actor, item_c
     from apps.onboarding import services as onb_services
 
     onb_services.tildar_item(actor=actor, item=item_checklist, hecho=True)
-    RegistroAuditoria.objects.all().delete()
+    vaciar_bitacora()
 
     onb_services.tildar_item(actor=actor, item=item_checklist, hecho=False)
 
@@ -300,7 +317,7 @@ def test_volver_a_tildar_lo_ya_tildado_no_es_un_hecho_nuevo(actor, item_checklis
     from apps.onboarding import services as onb_services
 
     onb_services.tildar_item(actor=actor, item=item_checklist, hecho=True)
-    RegistroAuditoria.objects.all().delete()
+    vaciar_bitacora()
 
     onb_services.tildar_item(actor=actor, item=item_checklist, hecho=True)
 
@@ -342,7 +359,7 @@ def test_el_cambio_de_rol_queda_asentado(admin_logueado, crear_usuario):
 
     usuario = crear_usuario(username="asciende")
     grupo_admin = Group.objects.create(name=roles.ADMIN)
-    RegistroAuditoria.objects.all().delete()
+    vaciar_bitacora()
 
     resp = admin_logueado.post(
         f"/admin/usuarios/usuario/{usuario.pk}/change/",
@@ -368,7 +385,7 @@ def test_el_cambio_de_rol_queda_asentado(admin_logueado, crear_usuario):
 
 def test_desactivar_un_usuario_tiene_nombre_propio(admin_logueado, crear_usuario):
     usuario = crear_usuario(username="se_va")
-    RegistroAuditoria.objects.all().delete()
+    vaciar_bitacora()
 
     resp = admin_logueado.post(
         f"/admin/usuarios/usuario/{usuario.pk}/change/",
@@ -387,3 +404,34 @@ def test_desactivar_un_usuario_tiene_nombre_propio(admin_logueado, crear_usuario
     registro = RegistroAuditoria.objects.get(entidad="Usuario")
     assert registro.accion == Accion.USUARIO_DESACTIVADO
     assert registro.valores_despues["is_active"] is False
+
+
+def test_cambio_de_password_y_auditoria_son_atomicos(
+    admin_logueado, crear_usuario, monkeypatch
+):
+    usuario = crear_usuario(
+        username="clave_atomica",
+        password="clave-anterior-123",
+    )
+
+    def fallar_auditoria(**_kwargs):
+        raise RuntimeError("auditoría no disponible")
+
+    monkeypatch.setattr(
+        "apps.usuarios.admin.registrar_evento",
+        fallar_auditoria,
+    )
+    admin_logueado.raise_request_exception = False
+
+    resp = admin_logueado.post(
+        f"/admin/usuarios/usuario/{usuario.pk}/password/",
+        {
+            "password1": "clave-nueva-segura-123",
+            "password2": "clave-nueva-segura-123",
+        },
+    )
+
+    assert resp.status_code == 500
+    usuario.refresh_from_db()
+    assert usuario.check_password("clave-anterior-123")
+    assert not usuario.check_password("clave-nueva-segura-123")

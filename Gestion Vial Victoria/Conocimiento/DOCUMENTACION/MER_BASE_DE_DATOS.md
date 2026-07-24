@@ -1,401 +1,236 @@
-# MER — Modelo Entidad-Relación de la base de datos
+# MER — Modelo Entidad-Relación vigente
 
 **Sistema:** Gestión RRHH · Grupo Vial Victoria
-**Fuente:** modelos Django en `gestion_rrhh/apps/` (estado al 2026-07-15, rama `fase-0-verificada`;
-actualizado 2026-07-23 con la app `onboarding` — checklists de ingreso/egreso, CU-29/30)
-**Motor:** PostgreSQL 16 (vía `docker compose up`) — **excluyente**: el modelo usa un índice
-único parcial y una constraint de exclusión, que sqlite no soporta. Las migraciones no
-corren fuera de Postgres.
 
-Este documento describe las entidades del dominio, sus atributos y las relaciones
-entre las tablas. Los diagramas están en Mermaid: GitHub y los artifacts de Claude
-los renderizan nativamente.
+**Motor obligatorio:** PostgreSQL 16
 
----
+**Actualizado:** 2026-07-24
 
-## 1. Vista general de entidades
+**Fuente:** modelos y migraciones de `gestion_rrhh/apps/`
 
-| Entidad (modelo) | Tabla en Postgres | Rol en el dominio |
+Este documento describe el modelo que debe salir a producción con el MVP1. Si contradice
+una migración aplicada o una constraint de PostgreSQL, prevalece la base. Las decisiones
+funcionales completas están en
+[`../ARQUITECTURA_MVP1_PRODUCCION.md`](../ARQUITECTURA_MVP1_PRODUCCION.md).
+
+## 1. Entidades
+
+| Entidad | Tabla | Responsabilidad |
 |---|---|---|
-| `Usuario` | `usuarios_usuario` | Usuario del sistema (extiende `AbstractUser`). Roles por Grupos de Django |
-| `Empresa` | `organizacion_empresa` | Empresa del grupo (Vial Victoria, etc.) |
-| `Sector` | `organizacion_sector` | Catálogo transversal al grupo (D11): RRHH, Obra, Logística… |
-| `Puesto` | `organizacion_puesto` | Catálogo de puestos, opcionalmente asociado a un sector |
-| `Parametro` | `organizacion_parametro` | Parametría del sistema (clave → JSON). Aislada, sin FKs de dominio |
-| `Empleado` | `empleados_empleado` | La **persona**, única a nivel grupo (P1) |
-| `RelacionLaboral` | `empleados_relacionlaboral` | Vínculo persona ↔ empresa con historial (ingreso/egreso) |
-| `TipoDocumento` | `empleados_tipodocumento` | Catálogo de documentos con vencimiento (apto médico, CNRT…) |
-| `DocumentoEmpleado` | `empleados_documentoempleado` | Documento vigente de un empleado, con vencimiento |
-| `TipoNovedad` | `novedades_tiponovedad` | Catálogo de tipos con flags de comportamiento |
-| `Novedad` | `novedades_novedad` | Evento de RRHH (falta, licencia, etc.). Las prórrogas son también `Novedad` |
-| `PlantillaChecklist` | `onboarding_plantillachecklist` | Checklist configurable por empresa y tipo de proceso (ingreso/egreso) |
-| `ItemPlantilla` | `onboarding_itemplantilla` | Renglón de la plantilla: acción (se tilda) o documental (ligado a un `TipoDocumento`) |
-| `ProcesoEmpleado` | `onboarding_procesoempleado` | Instancia del checklist para una relación laboral; foto de la plantilla al crearse |
-| `ItemProceso` | `onboarding_itemproceso` | Estado de cada ítem del proceso: tildado (acción) o derivado del documento (documental) |
+| `Usuario` | `usuarios_usuario` | Cuenta humana; roles mediante grupos Django |
+| `Empresa` | `organizacion_empresa` | Empresa del grupo |
+| `Sector` | `organizacion_sector` | Sector transversal |
+| `Puesto` | `organizacion_puesto` | Puesto parametrizado dentro de un sector |
+| `Parametro` | `organizacion_parametro` | Parametría clave→JSON |
+| `Empleado` | `empleados_empleado` | Persona única en todo el grupo |
+| `RelacionLaboral` | `empleados_relacionlaboral` | Etapa laboral de una persona en una empresa |
+| `TipoDocumento` | `empleados_tipodocumento` | Catálogo documental y días de aviso |
+| `DocumentoEmpleado` | `empleados_documentoempleado` | Documento de una relación laboral |
+| `TipoNovedad` | `novedades_tiponovedad` | Catálogo y reglas de las novedades |
+| `Novedad` | `novedades_novedad` | Evento de RRHH; una prórroga también es novedad |
+| `AdjuntoNovedad` | `novedades_adjuntonovedad` | Evidencia de una novedad concreta |
+| `PlantillaChecklist` | `onboarding_plantillachecklist` | Plantilla versionada por alcance |
+| `ItemPlantilla` | `onboarding_itemplantilla` | Definición de un paso |
+| `ProcesoEmpleado` | `onboarding_procesoempleado` | Checklist de una relación laboral |
+| `ItemProceso` | `onboarding_itemproceso` | Foto y estado de un paso |
+| `RegistroAuditoria` | `auditoria_registroauditoria` | Bitácora transversal append-only |
 
-Además participan tablas de infraestructura de Django: `auth_group` (roles: Admin,
-RRHH, Supervisor, Empleado, Servicio), `usuarios_usuario_groups` (M2M usuario↔rol) y
-las tablas de `token_blacklist` de SimpleJWT.
+También existen las tablas estándar de sesiones, permisos, grupos y migraciones de
+Django. La autenticación humana usa `django_session`; no se usan JWT ni
+`token_blacklist`.
 
-**Auditoría mínima (`ModeloBase`):** todos los modelos de dominio heredan
-`creado_en`, `actualizado_en` y `creado_por` (FK → `Usuario`, `SET_NULL`). Esas FKs
-de auditoría no se dibujan en el diagrama principal para no ensuciarlo.
-
----
-
-## 2. Diagrama Entidad-Relación (MER)
+## 2. Diagrama principal
 
 ```mermaid
 erDiagram
-    USUARIO ||--o| EMPLEADO : "usuario (1:1, opcional)"
-    USUARIO }o--o{ AUTH_GROUP : "roles (M2M)"
-    USUARIO |o--o{ EMPRESA : "referente_rrhh"
-    USUARIO |o--o{ NOVEDAD : "aprobada_por"
+    USUARIO ||--o| EMPLEADO : "cuenta opcional"
+    USUARIO }o--o{ AUTH_GROUP : "roles"
+    USUARIO |o--o{ RELACION_LABORAL : "supervisa"
 
-    SECTOR |o--o{ PUESTO : "sector (opcional)"
+    SECTOR ||--o{ PUESTO : "contiene"
+    EMPLEADO ||--o{ RELACION_LABORAL : "historial"
+    EMPRESA ||--o{ RELACION_LABORAL : "contrata"
+    SECTOR ||--o{ RELACION_LABORAL : "asigna"
+    PUESTO ||--o{ RELACION_LABORAL : "asigna"
 
-    EMPLEADO ||--o{ RELACION_LABORAL : "empleado"
-    EMPRESA ||--o{ RELACION_LABORAL : "empresa"
-    SECTOR |o--o{ RELACION_LABORAL : "sector (opcional)"
-    PUESTO |o--o{ RELACION_LABORAL : "puesto (opcional)"
+    EMPLEADO ||--o{ DOCUMENTO_EMPLEADO : "compatibilidad/consulta"
+    RELACION_LABORAL ||--o{ DOCUMENTO_EMPLEADO : "posee"
+    TIPO_DOCUMENTO ||--o{ DOCUMENTO_EMPLEADO : "clasifica"
 
-    EMPLEADO ||--o{ DOCUMENTO_EMPLEADO : "empleado"
-    TIPO_DOCUMENTO ||--o{ DOCUMENTO_EMPLEADO : "tipo_documento"
+    EMPLEADO ||--o{ NOVEDAD : "afecta"
+    RELACION_LABORAL ||--o{ NOVEDAD : "contextualiza"
+    TIPO_NOVEDAD ||--o{ NOVEDAD : "gobierna"
+    NOVEDAD |o--o{ NOVEDAD : "prórroga hacia madre"
+    NOVEDAD ||--o{ ADJUNTO_NOVEDAD : "evidencia"
 
-    EMPLEADO ||--o{ NOVEDAD : "empleado"
-    RELACION_LABORAL |o--o{ NOVEDAD : "relacion_laboral (opcional)"
-    TIPO_NOVEDAD ||--o{ NOVEDAD : "tipo_novedad"
-    NOVEDAD |o--o{ NOVEDAD : "novedad_origen (prórrogas → madre)"
+    EMPRESA ||--o{ PLANTILLA_CHECKLIST : "alcance"
+    SECTOR |o--o{ PLANTILLA_CHECKLIST : "alcance o general"
+    PLANTILLA_CHECKLIST ||--o{ ITEM_PLANTILLA : "define"
+    TIPO_DOCUMENTO |o--o{ ITEM_PLANTILLA : "completa documental"
+    RELACION_LABORAL ||--o{ PROCESO_EMPLEADO : "on/offboarding"
+    PLANTILLA_CHECKLIST |o--o{ PROCESO_EMPLEADO : "origen"
+    PROCESO_EMPLEADO ||--o{ ITEM_PROCESO : "fotografía"
+    ITEM_PLANTILLA |o--o{ ITEM_PROCESO : "origen opcional"
+    TIPO_DOCUMENTO |o--o{ ITEM_PROCESO : "foto documental"
 
-    EMPRESA ||--o{ PLANTILLA_CHECKLIST : "empresa"
-    PLANTILLA_CHECKLIST ||--o{ ITEM_PLANTILLA : "plantilla (CASCADE)"
-    TIPO_DOCUMENTO |o--o{ ITEM_PLANTILLA : "tipo_documento (solo documental)"
-    RELACION_LABORAL ||--o{ PROCESO_EMPLEADO : "relacion_laboral"
-    PLANTILLA_CHECKLIST |o--o{ PROCESO_EMPLEADO : "plantilla (SET_NULL)"
-    PROCESO_EMPLEADO ||--o{ ITEM_PROCESO : "proceso (CASCADE)"
-    ITEM_PLANTILLA |o--o{ ITEM_PROCESO : "item_plantilla (SET_NULL)"
-    TIPO_DOCUMENTO |o--o{ ITEM_PROCESO : "tipo_documento (foto)"
-
-    USUARIO {
-        bigint id PK
-        varchar username UK
-        varchar first_name
-        varchar last_name
-        varchar email
-        bool is_superuser
-    }
-
-    AUTH_GROUP {
-        int id PK
-        varchar name UK "Admin, RRHH, Supervisor, Empleado, Servicio"
-    }
-
-    EMPRESA {
-        bigint id PK
-        varchar nombre UK
-        varchar razon_social
-        varchar cuit
-        varchar zona_horaria
-        bigint referente_rrhh_id FK "→ usuario, SET_NULL"
-        bool activa
-    }
-
-    SECTOR {
-        bigint id PK
-        varchar nombre UK
-        bool activo
-    }
-
-    PUESTO {
-        bigint id PK
-        varchar nombre UK
-        bigint sector_id FK "→ sector, PROTECT, null"
-        bool activo
-    }
-
-    EMPLEADO {
-        bigint id PK
-        varchar legajo UK
-        varchar dni UK
-        varchar cuil UK "null"
-        varchar nombre
-        varchar apellido
-        date fecha_nacimiento "null"
-        varchar telefono
-        varchar email
-        varchar direccion
-        varchar id_huella UK "null"
-        bool exento_marcacion
-        varchar educacion "choices"
-        varchar contacto_emergencia
-        varchar obra_social
-        varchar art
-        text observaciones
-        bigint usuario_id FK "→ usuario, 1:1, SET_NULL, null"
-    }
-
-    RELACION_LABORAL {
-        bigint id PK
-        bigint empleado_id FK "→ empleado, PROTECT"
-        bigint empresa_id FK "→ empresa, PROTECT"
-        bigint sector_id FK "→ sector, PROTECT, null"
-        bigint puesto_id FK "→ puesto, PROTECT, null"
-        date fecha_ingreso "base de antigüedad"
-        varchar jornada_legal "choices"
-        varchar tipo_contrato "choices, default INDETERMINADO"
-        date fecha_vencimiento_contrato "null"
-        varchar estado "ACTIVA | FINALIZADA"
-        date fecha_egreso "null"
-        varchar motivo_egreso "choices"
-    }
-
-    TIPO_DOCUMENTO {
-        bigint id PK
-        varchar nombre UK
-        varchar descripcion
-        bool activo
-    }
-
-    DOCUMENTO_EMPLEADO {
-        bigint id PK
-        bigint empleado_id FK "→ empleado, PROTECT"
-        bigint tipo_documento_id FK "→ tipo_documento, PROTECT"
-        varchar numero
-        date fecha_vencimiento "null, indexado (query de alertas)"
-        text observaciones
-    }
-
-    TIPO_NOVEDAD {
-        bigint id PK
-        varchar codigo UK "slug: FALTA, LICENCIA_MEDICA…"
-        varchar nombre
-        bool justifica_ausencia
-        bool ocupa_periodo
-        bool requiere_certificado
-        bool admite_prorroga
-        bool requiere_cantidad_horas
-        bool activo
-    }
-
-    NOVEDAD {
-        bigint id PK
-        bigint empleado_id FK "→ empleado, PROTECT"
-        bigint relacion_laboral_id FK "→ relacion_laboral, PROTECT, null"
-        bigint tipo_novedad_id FK "→ tipo_novedad, PROTECT"
-        date fecha_desde "indexado"
-        date fecha_hasta "null = abierta"
-        decimal cantidad_horas "null, solo HORAS_EXTRA"
-        varchar estado "workflow, default REGISTRADA"
-        varchar clasificacion "JUSTIFICADA | INJUSTIFICADA"
-        varchar motivo
-        text observaciones
-        date fecha_aviso_empleado "null"
-        bigint novedad_origen_id FK "→ novedad (madre), PROTECT, null"
-        bool requiere_praxis
-        date fecha_turno_praxis "null"
-        date fecha_fin_estimada "null"
-        date fecha_reintegro "null"
-        date certificado_recibido_en "null"
-        bool generada_automaticamente
-        bigint aprobada_por_id FK "→ usuario, SET_NULL, null"
-        timestamptz aprobada_en "null"
-        bool ocupa_periodo "DENORMALIZADO: copia de tipo_novedad.ocupa_periodo"
-    }
-
-    PLANTILLA_CHECKLIST {
-        bigint id PK
-        bigint empresa_id FK "→ empresa, PROTECT"
-        varchar tipo_proceso "INGRESO | EGRESO"
-        bool activa "una sola activa por (empresa, tipo)"
-    }
-
-    ITEM_PLANTILLA {
-        bigint id PK
-        bigint plantilla_id FK "→ plantilla_checklist, CASCADE"
-        smallint orden
-        varchar etiqueta
-        varchar tipo_item "ACCION | DOCUMENTAL"
-        bigint tipo_documento_id FK "→ tipo_documento, PROTECT, null (solo DOCUMENTAL)"
-        bool activo "baja lógica del renglón"
-    }
-
-    PROCESO_EMPLEADO {
-        bigint id PK
-        bigint relacion_laboral_id FK "→ relacion_laboral, PROTECT"
-        varchar tipo_proceso "INGRESO | EGRESO"
-        bigint plantilla_id FK "→ plantilla_checklist, SET_NULL, null"
-    }
-
-    ITEM_PROCESO {
-        bigint id PK
-        bigint proceso_id FK "→ proceso_empleado, CASCADE"
-        bigint item_plantilla_id FK "→ item_plantilla, SET_NULL, null"
-        smallint orden
-        varchar etiqueta "foto de la plantilla"
-        varchar tipo_item "ACCION | DOCUMENTAL"
-        bigint tipo_documento_id FK "→ tipo_documento, PROTECT, null"
-        bool completado "solo ACCION; el DOCUMENTAL se deriva del documento"
-        bigint completado_por_id FK "→ usuario, SET_NULL, null (constancia)"
-        timestamptz completado_en "null"
-    }
+    USUARIO |o--o{ REGISTRO_AUDITORIA : "actor"
+    EMPLEADO |o--o{ REGISTRO_AUDITORIA : "persona afectada"
 ```
 
-> `PARAMETRO (id PK, clave UK, valor JSONB, descripcion)` no se dibuja: no tiene
-> relaciones con el resto del dominio.
+## 3. Núcleo organizacional y laboral
 
----
+### Puesto
 
-## 3. Diagrama de relaciones entre tablas (vista de dependencias)
+- `nombre`: único sin distinguir mayúsculas dentro de su sector.
+- `sector`: obligatorio para toda alta o modificación nueva.
+- `activo`: baja lógica.
 
-Flechas en el sentido de la FK (quién apunta a quién). Útil para entender el orden
-de carga y qué protege a qué (`PROTECT` = no se puede borrar el destino si tiene
-filas que lo referencian).
+El modelo conserva `null=True` únicamente para poder identificar filas históricas
+huérfanas. La constraint `puesto_sector_requerido`, instalada con una estrategia de
+migración segura, impide producir nuevos huérfanos.
 
-```mermaid
-graph TD
-    subgraph organizacion
-        EMPRESA[Empresa]
-        SECTOR[Sector]
-        PUESTO[Puesto]
-        PARAMETRO[Parametro<br/><i>aislada</i>]
-    end
+### Empleado
 
-    subgraph usuarios
-        USUARIO[Usuario]
-        GRUPO[auth_group<br/>roles]
-    end
+- `legajo`: único y asignado por backend.
+- `dni`: 6 a 9 dígitos normalizados, único.
+- `cuil`: 11 dígitos normalizados, único cuando existe.
+- `id_huella`: mayúsculas, sin espacios externos, único cuando existe.
+- datos personales y contacto;
+- `usuario`: uno-a-uno opcional con la cuenta humana.
 
-    subgraph empleados
-        EMPLEADO[Empleado]
-        RELACION[RelacionLaboral]
-        TIPODOC[TipoDocumento]
-        DOC[DocumentoEmpleado]
-    end
+DNI, CUIL e ID de huella se normalizan antes de guardar. La fecha de nacimiento no puede
+estar en el futuro. El listado operativo no expone los identificadores sensibles.
 
-    subgraph novedades
-        TIPONOV[TipoNovedad]
-        NOVEDAD[Novedad]
-    end
+### Relación laboral
 
-    subgraph onboarding
-        PLANTILLA[PlantillaChecklist]
-        ITEMPL[ItemPlantilla]
-        PROCESO[ProcesoEmpleado]
-        ITEMPR[ItemProceso]
-    end
+| Campo | Regla |
+|---|---|
+| `empleado` | Persona de la etapa |
+| `empresa` | Obligatoria e inmutable dentro de la etapa |
+| `sector` | Obligatorio para una relación activa |
+| `puesto` | Obligatorio, activo y perteneciente al sector |
+| `supervisor` | Usuario activo con rol Supervisor o null |
+| `fecha_ingreso` | Inicio inclusivo |
+| `fecha_egreso` | Fin inclusivo; no anterior al ingreso |
+| `estado` | `ACTIVA` o `FINALIZADA` |
+| `motivo_egreso` | Obligatorio al finalizar |
+| contrato/jornada | Datos de la asignación vigente |
 
-    USUARIO -. M2M .- GRUPO
-    EMPRESA -- "referente_rrhh (SET_NULL)" --> USUARIO
-    PUESTO -- "sector (PROTECT, null)" --> SECTOR
-    EMPLEADO -- "usuario (1:1, SET_NULL, null)" --> USUARIO
+Una persona tiene como máximo una relación activa en todo el grupo. Sus relaciones
+históricas tampoco pueden solaparse. La empresa y el ingreso no se reescriben al editar la
+asignación: una etapa nueva requiere baja y reingreso.
 
-    RELACION -- "empleado (PROTECT)" --> EMPLEADO
-    RELACION -- "empresa (PROTECT)" --> EMPRESA
-    RELACION -- "sector (PROTECT, null)" --> SECTOR
-    RELACION -- "puesto (PROTECT, null)" --> PUESTO
+## 4. Documentos y reingreso
 
-    DOC -- "empleado (PROTECT)" --> EMPLEADO
-    DOC -- "tipo_documento (PROTECT)" --> TIPODOC
+`DocumentoEmpleado` conserva `empleado` para consultas directas, pero su dueño funcional
+es `relacion_laboral`. La combinación única es:
 
-    NOVEDAD -- "empleado (PROTECT)" --> EMPLEADO
-    NOVEDAD -- "relacion_laboral (PROTECT, null)" --> RELACION
-    NOVEDAD -- "tipo_novedad (PROTECT)" --> TIPONOV
-    NOVEDAD -- "novedad_origen (PROTECT, null)" --> NOVEDAD
-    NOVEDAD -- "aprobada_por (SET_NULL, null)" --> USUARIO
-
-    PLANTILLA -- "empresa (PROTECT)" --> EMPRESA
-    ITEMPL -- "plantilla (CASCADE)" --> PLANTILLA
-    ITEMPL -- "tipo_documento (PROTECT, null)" --> TIPODOC
-    PROCESO -- "relacion_laboral (PROTECT)" --> RELACION
-    PROCESO -- "plantilla (SET_NULL, null)" --> PLANTILLA
-    ITEMPR -- "proceso (CASCADE)" --> PROCESO
-    ITEMPR -- "item_plantilla (SET_NULL, null)" --> ITEMPL
-    ITEMPR -- "tipo_documento (PROTECT, null)" --> TIPODOC
+```text
+(relacion_laboral, tipo_documento)
 ```
 
----
+Por lo tanto, un reingreso abre un conjunto documental nuevo. Los documentos de una
+relación finalizada quedan congelados; no completan el onboarding posterior. El archivo
+es privado y su ruta nunca se publica como media estático.
 
-## 4. Relaciones y cardinalidades (detalle)
+## 5. Novedades
 
-| # | Relación | Cardinalidad | FK / on_delete | Regla de negocio |
-|---|---|---|---|---|
-| 1 | Usuario — Empleado | 1 : 0..1 | `Empleado.usuario`, SET_NULL | Solo si el empleado accede al sistema |
-| 2 | Usuario — Grupo (rol) | N : M | M2M de Django | Roles §7: Admin, RRHH, Supervisor, Empleado, Servicio |
-| 3 | Usuario — Empresa | 1 : N (opcional) | `Empresa.referente_rrhh`, SET_NULL | Destinatario de avisos de la empresa (D9) — aún sin uso |
-| 4 | Sector — Puesto | 1 : N (opcional) | `Puesto.sector`, PROTECT | Un puesto puede o no colgar de un sector |
-| 5 | Empleado — RelacionLaboral | 1 : N | `RelacionLaboral.empleado`, PROTECT | Historial completo; **R1**: máx. una ACTIVA por (empleado, empresa) |
-| 6 | Empresa — RelacionLaboral | 1 : N | `RelacionLaboral.empresa`, PROTECT | La pertenencia a una empresa se da SOLO por acá (P1) |
-| 7 | Sector — RelacionLaboral | 1 : N (opcional) | PROTECT | Sector transversal al grupo (D11) |
-| 8 | Puesto — RelacionLaboral | 1 : N (opcional) | PROTECT | — |
-| 9 | Empleado — DocumentoEmpleado | 1 : N | PROTECT | Máx. **uno vigente por tipo** (UNIQUE empleado+tipo) |
-| 10 | TipoDocumento — DocumentoEmpleado | 1 : N | PROTECT | Catálogo (cierra gap #1: APTO_MEDICO, CNRT…) |
-| 11 | Empleado — Novedad | 1 : N | PROTECT | Regla `ocupa_periodo`: dos novedades que ocupan período no conviven en las mismas fechas. Garantizada en la base por `excl_novedades_solapadas_por_empleado` (§5), no solo en el service |
-| 12 | RelacionLaboral — Novedad | 1 : N (opcional) | PROTECT | Contexto empresa/contrato; default = relación activa al momento de la carga |
-| 13 | TipoNovedad — Novedad | 1 : N | PROTECT | Los flags del tipo gobiernan las validaciones |
-| 14 | Novedad — Novedad (autorreferencia) | 1 : N | `novedad_origen`, PROTECT | **Cadena de prórrogas (§6 bis)**: cada prórroga apunta SIEMPRE a la madre (no a la prórroga anterior). Vigencia efectiva = calculada, nunca guardada |
-| 15 | Usuario — Novedad | 1 : N (opcional) | `aprobada_por`, SET_NULL | Solo RRHH/Admin aprueban (R11) |
-| 16 | Empresa — PlantillaChecklist | 1 : N | `PlantillaChecklist.empresa`, PROTECT | El checklist puede diferir por empresa; **una sola activa** por (empresa, tipo) |
-| 17 | PlantillaChecklist — ItemPlantilla | 1 : N | `ItemPlantilla.plantilla`, CASCADE | Los renglones se borran con la plantilla |
-| 18 | TipoDocumento — ItemPlantilla | 1 : N (opcional) | `ItemPlantilla.tipo_documento`, PROTECT | Solo ítems DOCUMENTAL; enlaza al doc del legajo que lo completa |
-| 19 | RelacionLaboral — ProcesoEmpleado | 1 : N | `ProcesoEmpleado.relacion_laboral`, PROTECT | El proceso cuelga de la relación (no del empleado): el reingreso no pisa el anterior. **Único** por (relación, tipo) |
-| 20 | PlantillaChecklist — ProcesoEmpleado | 1 : N (opcional) | `ProcesoEmpleado.plantilla`, SET_NULL | Referencia a la plantilla fotografiada; puede quedar null |
-| 21 | ProcesoEmpleado — ItemProceso | 1 : N | `ItemProceso.proceso`, CASCADE | Los ítems (foto) se borran con el proceso |
-| 22 | ItemPlantilla — ItemProceso | 1 : N (opcional) | `ItemProceso.item_plantilla`, SET_NULL | Renglón de origen; se conserva la foto aunque la plantilla cambie |
-| 23 | TipoDocumento — ItemProceso | 1 : N (opcional) | `ItemProceso.tipo_documento`, PROTECT | Foto del tipo de doc; el "hecho" del ítem documental se **deriva** de `DocumentoEmpleado` (no se persiste) |
-| 24 | Usuario — ItemProceso | 1 : N (opcional) | `completado_por`, SET_NULL | Constancia de quién tildó el ítem de acción |
-| 25 | Usuario — (todas las de dominio) | 1 : N | `creado_por`, SET_NULL | Auditoría mínima de `ModeloBase` |
+Toda novedad pertenece simultáneamente a un empleado, una relación laboral y un tipo.
+Sus fechas deben quedar dentro de la vigencia de la relación.
 
----
+Campos de workflow:
 
-## 5. Constraints e índices relevantes
+- `estado`: `REGISTRADA`, `EN_PROCESO`, `APROBADA`, `RECHAZADA`, `CERRADA` o `ANULADA`;
+- actor y momento independientes para toma, aprobación, rechazo, cierre y anulación;
+- `motivo_rechazo` y `motivo_anulacion`, obligatorios para esos estados;
+- fechas de aviso, praxis, fin estimado, reintegro y certificado, cronológicamente
+  validadas.
 
-| Tabla | Constraint / índice | Definición | Para qué |
-|---|---|---|---|
-| `empleados_relacionlaboral` | `uniq_relacion_activa_por_empresa` | UNIQUE parcial `(empleado, empresa) WHERE estado='ACTIVA'` | R1: una sola relación activa por empresa. **Requiere Postgres** (índice parcial) |
-| `empleados_documentoempleado` | `uniq_documento_vigente_por_tipo` | UNIQUE `(empleado, tipo_documento)` | Un documento vigente por tipo |
-| `empleados_empleado` | UNIQUE | `legajo`, `dni`, `cuil` (null), `id_huella` (null) | Persona única a nivel grupo; matching biométrico futuro (P2). El `legajo` lo asigna el backend (`max(numérico)+1` con advisory lock), no el cliente |
-| `empleados_documentoempleado` | índice | `fecha_vencimiento` | Query de alertas de vencimiento |
-| `novedades_novedad` | `excl_novedades_solapadas_por_empleado` | `EXCLUDE USING GIST (empleado_id WITH =, daterange(fecha_desde, fecha_hasta, '[]') WITH &&) WHERE (estado IN ('REGISTRADA','EN_PROCESO','APROBADA','CERRADA') AND ocupa_periodo)` | Dos novedades que ocupan período no conviven. **Requiere Postgres + extensión `btree_gist`** |
-| `novedades_novedad` | índices | `empleado`, `fecha_desde`, `novedad_origen` | Listados, solapamiento y armado de cadenas |
-| `novedades_tiponovedad` | UNIQUE | `codigo` (slug) | Contrato estable con el front (FALTA, LICENCIA_MEDICA…) |
-| `organizacion_*` | UNIQUE | `nombre` (empresa/sector/puesto), `clave` (parámetro) | Catálogos sin duplicados |
-| `onboarding_plantillachecklist` | `uniq_plantilla_activa_por_empresa_tipo` | UNIQUE parcial `(empresa, tipo_proceso) WHERE activa` | Una sola plantilla activa por empresa y tipo. **Requiere Postgres** (índice parcial) |
-| `onboarding_itemplantilla` | `item_documental_exige_tipo_documento` | CHECK: `DOCUMENTAL` ⇒ `tipo_documento` NOT NULL; `ACCION` ⇒ NULL | Coherencia tipo↔documento en la base (además del service) |
-| `onboarding_procesoempleado` | `uniq_proceso_por_relacion_tipo` | UNIQUE `(relacion_laboral, tipo_proceso)` | Un solo proceso por (relación, tipo): ancla del `get_or_create` perezoso |
+`ocupa_periodo` es una copia inmutable del flag del tipo, necesaria para que PostgreSQL
+pueda aplicar la exclusión de rangos sin hacer un JOIN. Los tipos ya usados no permiten
+cambiar flags semánticos.
 
-**Extensiones de Postgres requeridas:** `btree_gist` (la crea la migración
-`novedades/0003`). Sin ella no se puede mezclar igualdad (`empleado_id WITH =`) con
-solapamiento de rangos (`WITH &&`) en un mismo índice GiST.
+Las prórrogas:
 
-**Sobre `Novedad.ocupa_periodo` (columna denormalizada):** una `ExclusionConstraint` solo
-ve columnas de su propia tabla — no puede hacer JOIN a `TipoNovedad` para leer el flag de
-ahí. Por eso el flag se copia a `Novedad` en `save()` y el constraint filtra por esa copia.
-Consecuencia a tener presente: si se cambia `ocupa_periodo` en un `TipoNovedad` ya usado,
-las novedades ya cargadas conservan el valor con el que nacieron y hay que backfillear a
-mano. El service (`_validar_sin_solapamiento`) filtra por la misma columna a propósito,
-para que la validación amigable y el constraint nunca discrepen.
+- apuntan siempre a la novedad madre;
+- conservan tipo, empleado y relación;
+- empiezan al día siguiente de la vigencia efectiva;
+- se aprueban de a una;
+- solo extienden reportes cuando están aprobadas o cerradas.
 
----
+`AdjuntoNovedad` conserva cada evidencia; no reemplaza adjuntos anteriores y no tiene
+vencimiento.
 
-## 6. Convenciones del modelo
+## 6. Onboarding y offboarding
 
-- **Baja lógica, nunca DELETE físico** (R10): las relaciones laborales se
-  *finalizan* (`estado=FINALIZADA` + fecha y motivo de egreso); los catálogos se
-  desactivan (`activo=False`).
-  **Única excepción:** `DELETE /empleados/{id}/documentos/{doc_id}/` borra físicamente.
-  Un documento cargado por error no es un hecho del dominio que valga la pena preservar, y
-  el UNIQUE `(empleado, tipo_documento)` impide recargarlo si el anterior sigue ahí.
-- **PROTECT por defecto** en FKs de dominio: no se puede borrar una empresa,
-  sector, puesto, tipo o empleado que tenga historia colgando.
-- **Datos derivados jamás se persisten**: la antigüedad (`antiguedad_en_dias`), la
-  vigencia efectiva de una cadena de prórrogas y todas las métricas del dashboard
-  se calculan on-the-fly.
-  **Única excepción:** `Novedad.ocupa_periodo`, copia del flag de su `TipoNovedad`. No es
-  una optimización sino un requisito estructural: una `ExclusionConstraint` no puede leer
-  una columna de otra tabla, y sin esa copia la regla de no-solapamiento no puede vivir en
-  la base. Ver la nota de la sección 5.
-- **Todo en UTC en la base** (`USE_TZ=True`); zona operativa
-  `America/Argentina/Buenos_Aires` (P5).
-- **Workflow de Novedad** (§21): `REGISTRADA → EN_PROCESO → APROBADA / RECHAZADA →
-  CERRADA`, más `ANULADA`. Las transiciones son acciones explícitas de la API
-  (`/aprobar/`, `/rechazar/`, `/anular/`, `/prorrogar/`), nunca un PATCH del campo.
+El alcance de una plantilla es:
+
+```text
+(empresa, sector nullable, tipo_proceso)
+```
+
+`sector=null` representa la plantilla general de respaldo de una empresa. Cada alcance
+puede tener una versión `BORRADOR` y una `PUBLICADA`; publicar archiva la anterior. Una
+publicada no se edita.
+
+El proceso se inicia mediante `POST` explícito e idempotente y queda anclado a una
+relación. Sus ítems fotografían etiqueta, orden, tipo y documento de la versión usada.
+Los pasos `ACCION` se tildan con actor/momento; los `DOCUMENTAL` se calculan desde el
+documento de esa misma relación.
+
+## 7. Auditoría
+
+`RegistroAuditoria` no hereda de `ModeloBase` porque nunca se actualiza:
+
+- `momento`, `usuario` y `usuario_nombre` congelado;
+- `accion` semántica;
+- entidad/objeto y representación congelada;
+- agregado funcional para reconstruir cadenas;
+- empleado afectado;
+- valores antes/después;
+- IP validada.
+
+Las FKs de actor y empleado usan `PROTECT`. Los triggers
+`auditoria_append_only` y `auditoria_append_only_truncate` bloquean `UPDATE`, `DELETE` y
+`TRUNCATE`. El rol runtime de producción tampoco tiene privilegios para sortearlos.
+
+## 8. Constraints e índices críticos
+
+| Tabla | Constraint / índice | Garantía |
+|---|---|---|
+| `organizacion_puesto` | `puesto_nombre_sector_unico_ci` | Nombre único por sector, case-insensitive |
+| `organizacion_puesto` | `puesto_sector_requerido` | No hay puestos nuevos sin sector |
+| `empleados_empleado` | checks `empleado_*_normalizado` | DNI/CUIL/huella canónicos |
+| `empleados_relacionlaboral` | `uniq_relacion_activa_por_empleado` | Una activa global |
+| `empleados_relacionlaboral` | `excl_relaciones_solapadas_por_empleado` | Vigencias inclusivas sin solapamiento |
+| `empleados_relacionlaboral` | `relacion_fechas_validas` | Egreso ≥ ingreso |
+| `empleados_relacionlaboral` | `relacion_activa_con_catalogos` | Activa con sector y puesto |
+| `empleados_relacionlaboral` | `relacion_estado_baja_coherente` | Estado, fecha y motivo coherentes |
+| `empleados_documentoempleado` | `uniq_documento_por_relacion_tipo` | Un tipo por relación |
+| `empleados_documentoempleado` | `documento_relacion_requerida` | Documento siempre atribuible |
+| `novedades_novedad` | `excl_novedades_solapadas_por_empleado` | Novedades ocupantes sin solapamiento |
+| `novedades_novedad` | checks de fechas/horas/motivos | Rango, horas y decisiones válidas |
+| `onboarding_plantillachecklist` | `uniq_version_plantilla_por_alcance` | Versión única |
+| `onboarding_plantillachecklist` | `uniq_plantilla_publicada_por_alcance` | Una publicada |
+| `onboarding_plantillachecklist` | `uniq_plantilla_borrador_por_alcance` | Un borrador |
+| `onboarding_procesoempleado` | `uniq_proceso_por_relacion_tipo` | Un proceso por relación/tipo |
+
+Las exclusiones de rangos requieren la extensión PostgreSQL `btree_gist`. SQLite no es un
+entorno de prueba válido para este sistema.
+
+## 9. Reglas que requieren service además de la base
+
+PostgreSQL cierra carreras estructurales, pero las reglas entre tablas se validan dentro
+de transacciones con locks:
+
+- puesto activo y perteneciente al sector;
+- supervisor activo, humano y con rol Supervisor;
+- empleado de documento/novedad igual al de la relación;
+- fechas de novedad dentro de la relación;
+- sector de plantilla compatible con el snapshot de la relación;
+- bloqueo del cambio de sector después de iniciar un checklist;
+- transiciones de workflow y cronología de sus actores;
+- deactivación de catálogos o usuarios que todavía están en uso.
+
+Nunca se deben reemplazar estos services por `ModelViewSet` genéricos que guarden
+directamente.

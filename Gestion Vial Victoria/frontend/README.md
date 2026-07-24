@@ -27,21 +27,30 @@ frontend/
 ├── integration/
 │   └── ceibo-api.js            # capa de integración con la API (lo único a mano)
 ├── tests/
-│   └── test_invariantes_diseno.py  # el guard de build.py corta ante rediseños peligrosos
+│   ├── test_invariantes_diseno.py  # corta ante rediseños peligrosos
+│   └── test_guardas_frontend.py    # sesión+CSRF, API same-origin, DOM, IDs y transiciones
 ├── build.py                    # inyecta el cableado → dist/
+├── dev_server.py               # estáticos + proxy /api/ para desarrollo same-origin
 └── dist/                       # generado (gitignored)
 ```
 
 ## Cómo correrlo
 
-Requiere el backend andando (`cd ../gestion_rrhh && docker compose up`), con
-CORS abierto en dev (ya configurado) y Postgres con datos.
+Requiere el backend andando (`cd ../gestion_rrhh && docker compose up`) y
+Postgres con datos. El frontend usa `/api/v1` relativo también en desarrollo:
+`dev_server.py` sirve `dist/` y deriva `/api/` a Django, bajo un único origen.
 
 ```bash
 cd frontend
 python build.py
-cd dist && python -m http.server 8080
+python dev_server.py
 # abrir http://127.0.0.1:8080
+```
+
+Para otro puerto/backend local:
+
+```bash
+CEIBO_PORT=8081 CEIBO_BACKEND=http://127.0.0.1:8000 python dev_server.py
 ```
 
 El layout móvil (media queries y clases `ceibo-*-row`) vive en el canvas, no acá, así
@@ -51,6 +60,7 @@ algo — conviene correrlo después de promover un export:
 
 ```bash
 python frontend/tests/test_invariantes_diseno.py
+python frontend/tests/test_guardas_frontend.py
 ```
 
 ## Qué está cableado (contra la API real de Postgres)
@@ -58,16 +68,21 @@ python frontend/tests/test_invariantes_diseno.py
 **Empleados**
 - **Lista + filtros** (empresa / sector / estado / búsqueda) y **ficha** (datos,
   historial de relación laboral, documentos) → datos reales de Postgres.
-- **Alta** de empleado (crea empleado + relación ACTIVA).
-- **Editar** (datos personales: nombre, apellido, email, teléfono).
+- **Alta** de empleado (crea empleado + relación ACTIVA con empresa, sector y puesto).
+- **Editar** datos personales y la asignación vigente (sector, puesto, jornada y
+  contrato), respetando los flujos históricos de empresa/ingreso/baja.
+- **Asignar supervisor** explícito a la relación activa.
 - **Dar de baja** (baja lógica: finaliza la relación con fecha + motivo).
-- **Reingreso** (nueva relación ACTIVA).
+- **Reingreso** (nueva relación ACTIVA y vuelve a pedir empresa, sector, puesto, fecha y
+  onboarding/documentación).
 
 **Documentos** — alta, edición, borrado, subida y descarga de archivo, con
 estado de vencimiento, desde la ficha del empleado.
 
-**Novedades** — cargar, editar, aprobar / rechazar / anular, **prórroga** de
-licencias y certificados / adjuntos.
+**Novedades** — cargar, editar y recorrer el flujo explícito **Tomar / Aprobar /
+Rechazar / Cerrar / Anular**, además de **prórrogas** y certificados / adjuntos.
+Una novedad nueva no puede simular `Cerrada` desde el alta: el cierre usa
+`POST /novedades/{id}/cerrar/` y queda registrado por el backend.
 
 **Dashboard, reportes y alertas** — el panel (KPIs y ranking de faltas), los
 reportes de **dotación / ausentismo / rotación** y las **alertas del día**
@@ -76,17 +91,26 @@ backend real (`apps/dashboard`). De los mocks del canvas solo se reutilizan los
 íconos SVG, nunca los datos.
 
 **Configuración** — alta / edición y baja lógica de empresas, sectores y
-**tipos de documento** (CU-31).
+puestos por sector, tipos de documento y plantillas versionadas de
+onboarding/offboarding por empresa+sector.
 
-**Pendiente de backend (fuera de lo cableado hoy):** auditoría consultable
-(historial de "quién hizo qué y cuándo") e importación inicial desde Excel.
+**Auditoría** — bitácora consultable por Admin, filtros y resumen dentro de cada ficha.
+Registra cambios y lecturas sensibles; el backend la protege como append-only.
+
+**Diferido fuera del MVP1:** importación inicial desde Excel, salvo que se confirme una
+fuente real que justifique construirla.
 
 ## Notas
 
-- **Login real por usuario:** cada persona abre sesión con sus credenciales
-  contra `/auth/token/` (JWT), y el rol del backend define qué acciones de
-  escritura ve (capacidades servidas en `/mi/perfil/`). El front usa las
-  capacidades solo para esconder botones; la seguridad real es el 403 del backend.
-- El `legajo` se autogenera en el alta (el diseño no tiene ese campo).
+- **Sesión Django same-origin:** el front obtiene CSRF en `/auth/csrf/`, abre la
+  sesión con `POST /auth/login/` y la cierra con `POST /auth/logout/`. La cookie
+  de sesión es HttpOnly; no se guardan credenciales de API en storage del navegador.
+  Para cada `POST` / `PUT` / `PATCH` / `DELETE`, el cliente relee `csrftoken`
+  de la cookie —incluido después del login, cuando Django lo rota— y envía
+  `X-CSRFToken`. Un `401` limpia los datos visibles y devuelve al login.
+- El rol del backend define qué acciones de escritura se muestran (capacidades
+  servidas en `/mi/perfil/`). El front solo esconde botones; la seguridad real
+  sigue siendo el `403` del backend.
+- El `legajo` se autogenera en el alta y se muestra tal como lo devuelve el backend.
 - Si `build.py` corta con "ancla no encontrada", el diseño cambió de forma que
   rompió un anclaje: revisar la edición señalada en `build.py`.

@@ -1,6 +1,9 @@
 services:
   db:
-    image: postgres:16-alpine
+    image: gestion-rrhh-postgres:dev
+    build:
+      context: .
+      dockerfile: Dockerfile.postgres
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-rrhh}
       POSTGRES_USER: ${POSTGRES_USER:-rrhh}
@@ -8,7 +11,7 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     ports:
-      - "5432:5432"  # expuesto solo para dev
+      - "127.0.0.1:5432:5432"  # dev local; nunca expuesto a la LAN
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-rrhh}"]
       interval: 5s
@@ -30,7 +33,7 @@ services:
       # El día del deploy esto se reemplaza por S3/R2 vía STORAGES, sin tocar el modelo.
       - media:/app/media
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     depends_on:
       db:
         condition: service_healthy

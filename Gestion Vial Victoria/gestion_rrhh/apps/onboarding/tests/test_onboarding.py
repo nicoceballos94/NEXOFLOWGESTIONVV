@@ -6,10 +6,9 @@ Cubren lo que sostiene el diseño:
 - La creación perezosa del proceso es idempotente.
 - La matriz de permisos: el ABM y el tildado son de RRHH/Admin.
 """
-from datetime import date
-
 import pytest
 from django.db import IntegrityError, transaction
+from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
 from apps.empleados.models import (
@@ -26,14 +25,19 @@ from apps.onboarding.models import (
     TipoItem,
     TipoProceso,
 )
-from apps.organizacion.models import Empresa
+from apps.organizacion.models import Empresa, Puesto, Sector
 
 pytestmark = pytest.mark.django_db
 
 
 @pytest.fixture
 def empresa():
-    return Empresa.objects.create(nombre="VIAL VICTORIA")
+    empresa = Empresa.objects.create(nombre="VIAL VICTORIA")
+    empresa._sector_prueba = Sector.objects.create(nombre="Operaciones")
+    empresa._puesto_prueba = Puesto.objects.create(
+        nombre="Chofer", sector=empresa._sector_prueba
+    )
+    return empresa
 
 
 @pytest.fixture
@@ -45,7 +49,12 @@ def tipo_doc():
 def empleado_activo(empresa):
     e = Empleado.objects.create(legajo="0001", dni="30111222", nombre="Juan", apellido="Pérez")
     RelacionLaboral.objects.create(
-        empleado=e, empresa=empresa, fecha_ingreso=date.today(), estado=EstadoRelacion.ACTIVA
+        empleado=e,
+        empresa=empresa,
+        sector=empresa._sector_prueba,
+        puesto=empresa._puesto_prueba,
+        fecha_ingreso=timezone.localdate(),
+        estado=EstadoRelacion.ACTIVA,
     )
     return e
 
@@ -62,6 +71,7 @@ def plantilla_con_items(empresa, tipo_doc):
         tipo_item=TipoItem.DOCUMENTAL,
         tipo_documento=tipo_doc,
     )
+    services.publicar_plantilla(actor=None, plantilla=pl)
     return pl
 
 
@@ -85,11 +95,131 @@ def test_item_accion_con_tipo_lo_rechaza_la_db(empresa, tipo_doc):
             )
 
 
-def test_una_sola_plantilla_activa_por_empresa_y_tipo(empresa):
-    services.crear_plantilla(actor=None, empresa=empresa, tipo_proceso=TipoProceso.INGRESO)
-    # Segunda activa para la misma empresa+tipo: error amigable del service (antes del índice).
-    with pytest.raises(ValidationError):
-        services.crear_plantilla(actor=None, empresa=empresa, tipo_proceso=TipoProceso.INGRESO)
+def test_publicar_version_nueva_archiva_la_anterior(empresa):
+    primera = services.crear_plantilla(
+        actor=None, empresa=empresa, tipo_proceso=TipoProceso.INGRESO
+    )
+    services.publicar_plantilla(actor=None, plantilla=primera)
+    segunda = services.crear_plantilla(
+        actor=None, empresa=empresa, tipo_proceso=TipoProceso.INGRESO
+    )
+    services.publicar_plantilla(actor=None, plantilla=segunda)
+    primera.refresh_from_db()
+    segunda.refresh_from_db()
+    assert primera.estado == "ARCHIVADA"
+    assert segunda.estado == "PUBLICADA"
+    assert segunda.version == 2
+
+
+def test_filtro_fk_invalido_de_plantillas_devuelve_400(cliente_rrhh):
+    respuesta = cliente_rrhh.get("/api/v1/onboarding/plantillas/?sector=abc")
+    assert respuesta.status_code == 400
+    assert "sector" in respuesta.data["campos"]
+
+
+def test_no_agrega_tipo_documental_inactivo_a_un_borrador(empresa, tipo_doc):
+    plantilla = services.crear_plantilla(
+        actor=None,
+        empresa=empresa,
+        tipo_proceso=TipoProceso.INGRESO,
+    )
+    tipo_doc.activo = False
+    tipo_doc.save(update_fields=["activo"])
+
+    with pytest.raises(ValidationError, match="inactivo"):
+        services.agregar_item(
+            actor=None,
+            plantilla=plantilla,
+            etiqueta="Contrato",
+            tipo_item=TipoItem.DOCUMENTAL,
+            tipo_documento=tipo_doc,
+        )
+
+
+def test_no_publica_plantilla_si_un_tipo_documental_quedo_inactivo(
+    empresa, tipo_doc
+):
+    plantilla = services.crear_plantilla(
+        actor=None,
+        empresa=empresa,
+        tipo_proceso=TipoProceso.INGRESO,
+    )
+    services.agregar_item(
+        actor=None,
+        plantilla=plantilla,
+        etiqueta="Contrato",
+        tipo_item=TipoItem.DOCUMENTAL,
+        tipo_documento=tipo_doc,
+    )
+    tipo_doc.activo = False
+    tipo_doc.save(update_fields=["activo"])
+
+    with pytest.raises(ValidationError, match="inactivo"):
+        services.publicar_plantilla(actor=None, plantilla=plantilla)
+
+    plantilla.refresh_from_db()
+    assert plantilla.estado == "BORRADOR"
+
+
+def test_tipo_documento_no_se_desactiva_si_una_plantilla_publicada_lo_exige(
+    plantilla_con_items, tipo_doc
+):
+    from apps.empleados.api.serializers import TipoDocumentoSerializer
+
+    entrada = TipoDocumentoSerializer(
+        tipo_doc,
+        data={"activo": False},
+        partial=True,
+    )
+    assert entrada.is_valid() is False
+    assert "publicada" in str(entrada.errors).lower()
+
+
+def test_tipo_documento_no_se_desactiva_si_un_proceso_iniciado_aun_lo_necesita(
+    plantilla_con_items, tipo_doc, empleado_activo
+):
+    from apps.empleados.api.serializers import TipoDocumentoSerializer
+
+    proceso = services.iniciar_proceso(
+        actor=None,
+        relacion=empleado_activo.relacion_activa,
+        tipo_proceso=TipoProceso.INGRESO,
+    )
+    services.archivar_plantilla(actor=None, plantilla=plantilla_con_items)
+
+    entrada = TipoDocumentoSerializer(
+        tipo_doc,
+        data={"activo": False},
+        partial=True,
+    )
+    assert proceso.items.filter(tipo_documento=tipo_doc).exists()
+    assert entrada.is_valid() is False
+    assert "iniciado" in str(entrada.errors).lower()
+
+
+def test_version_nueva_copia_los_items_activos_de_la_publicada(empresa):
+    primera = services.crear_plantilla(
+        actor=None,
+        empresa=empresa,
+        tipo_proceso=TipoProceso.INGRESO,
+    )
+    services.agregar_item(
+        actor=None,
+        plantilla=primera,
+        etiqueta="Entregar uniforme",
+        tipo_item=TipoItem.ACCION,
+    )
+    services.publicar_plantilla(actor=None, plantilla=primera)
+
+    segunda = services.crear_plantilla(
+        actor=None,
+        empresa=empresa,
+        tipo_proceso=TipoProceso.INGRESO,
+    )
+
+    assert list(segunda.items.values_list("etiqueta", flat=True)) == [
+        "Entregar uniforme"
+    ]
 
 
 # --- Reglas de dominio (services / selectors) ------------------------------------------
@@ -126,7 +256,10 @@ def test_documental_se_completa_al_cargar_el_documento(
 
     # Cargo el documento con archivo: el documental se completa SOLO, sin tilde.
     DocumentoEmpleado.objects.create(
-        empleado=empleado_activo, tipo_documento=tipo_doc, archivo="documentos/fake.pdf"
+        empleado=empleado_activo,
+        relacion_laboral=empleado_activo.relacion_activa,
+        tipo_documento=tipo_doc,
+        archivo="documentos/fake.pdf",
     )
     t = selectors.armar_tarjeta(proceso=proceso)
     assert t["progreso"]["porcentaje"] == 100
@@ -141,7 +274,11 @@ def test_documento_sin_archivo_no_completa_el_documental(
         actor=None, relacion=empleado_activo.relacion_activa, tipo_proceso=TipoProceso.INGRESO
     )
     # Documento cargado pero SIN archivo adjunto: no cuenta como hecho (spec CU-29).
-    DocumentoEmpleado.objects.create(empleado=empleado_activo, tipo_documento=tipo_doc)
+    DocumentoEmpleado.objects.create(
+        empleado=empleado_activo,
+        relacion_laboral=empleado_activo.relacion_activa,
+        tipo_documento=tipo_doc,
+    )
     t = selectors.armar_tarjeta(proceso=proceso)
     documental = next(i for i in t["items"] if i["tipo_item"] == TipoItem.DOCUMENTAL)
     assert documental["hecho"] is False
@@ -157,6 +294,74 @@ def test_proceso_perezoso_es_idempotente(empleado_activo, plantilla_con_items):
     )
     assert p1.pk == p2.pk
     assert rel.procesos_checklist.filter(tipo_proceso=TipoProceso.INGRESO).count() == 1
+
+
+def test_onboarding_prioriza_plantilla_del_sector_y_conserva_fallback_general(
+    empresa, empleado_activo
+):
+    general = services.crear_plantilla(
+        actor=None,
+        empresa=empresa,
+        tipo_proceso=TipoProceso.INGRESO,
+    )
+    services.agregar_item(
+        actor=None,
+        plantilla=general,
+        etiqueta="Entregar credencial general",
+        tipo_item=TipoItem.ACCION,
+    )
+    services.publicar_plantilla(actor=None, plantilla=general)
+    especifica = services.crear_plantilla(
+        actor=None,
+        empresa=empresa,
+        sector=empresa._sector_prueba,
+        tipo_proceso=TipoProceso.INGRESO,
+    )
+    services.agregar_item(
+        actor=None,
+        plantilla=especifica,
+        etiqueta="Entregar elementos de chofer",
+        tipo_item=TipoItem.ACCION,
+    )
+    services.publicar_plantilla(actor=None, plantilla=especifica)
+
+    proceso_chofer = services.iniciar_proceso(
+        actor=None,
+        relacion=empleado_activo.relacion_activa,
+        tipo_proceso=TipoProceso.INGRESO,
+    )
+
+    assert proceso_chofer.plantilla_id == especifica.id
+    assert list(proceso_chofer.items.values_list("etiqueta", flat=True)) == [
+        "Entregar elementos de chofer"
+    ]
+
+    otro_sector = Sector.objects.create(nombre="Administración")
+    otro_puesto = Puesto.objects.create(nombre="Administrativo", sector=otro_sector)
+    administrativo = Empleado.objects.create(
+        legajo="0002",
+        dni="30222333",
+        nombre="Ana",
+        apellido="Gómez",
+    )
+    otra_relacion = RelacionLaboral.objects.create(
+        empleado=administrativo,
+        empresa=empresa,
+        sector=otro_sector,
+        puesto=otro_puesto,
+        fecha_ingreso=timezone.localdate(),
+        estado=EstadoRelacion.ACTIVA,
+    )
+    proceso_general = services.iniciar_proceso(
+        actor=None,
+        relacion=otra_relacion,
+        tipo_proceso=TipoProceso.INGRESO,
+    )
+
+    assert proceso_general.plantilla_id == general.id
+    assert list(proceso_general.items.values_list("etiqueta", flat=True)) == [
+        "Entregar credencial general"
+    ]
 
 
 def test_sin_plantilla_la_tarjeta_avisa(empleado_activo):
@@ -190,6 +395,20 @@ def test_empleado_no_puede_crear_plantilla(cliente_empleado, empresa):
     assert resp.status_code == 403
 
 
+def test_empleado_no_puede_leer_la_configuracion_interna_de_plantillas(
+    cliente_empleado, empresa
+):
+    services.crear_plantilla(
+        actor=None,
+        empresa=empresa,
+        tipo_proceso=TipoProceso.INGRESO,
+    )
+
+    resp = cliente_empleado.get("/api/v1/onboarding/plantillas/")
+
+    assert resp.status_code == 403
+
+
 def test_no_hay_delete_de_plantillas(cliente_rrhh, empresa):
     pl = services.crear_plantilla(actor=None, empresa=empresa, tipo_proceso=TipoProceso.INGRESO)
     resp = cliente_rrhh.delete(f"/api/v1/onboarding/plantillas/{pl.id}/")
@@ -197,10 +416,18 @@ def test_no_hay_delete_de_plantillas(cliente_rrhh, empresa):
 
 
 def test_tarjeta_en_ficha_y_tildado_por_rrhh(cliente_rrhh, empleado_activo, plantilla_con_items):
-    # GET crea el proceso perezosamente y devuelve la tarjeta.
     url = f"/api/v1/empleados/{empleado_activo.id}/checklist/"
-    resp = cliente_rrhh.get(url)
-    assert resp.status_code == 200, resp.data
+    previo = cliente_rrhh.get(url)
+    assert previo.data["tarjeta"] is None  # GET es lectura pura
+    resp = cliente_rrhh.post(
+        url,
+        {
+            "relacion_laboral": empleado_activo.relacion_activa.id,
+            "tipo_proceso": TipoProceso.INGRESO,
+        },
+        format="json",
+    )
+    assert resp.status_code == 201, resp.data
     tarjeta = resp.data["tarjeta"]
     assert tarjeta["progreso"] == {"hechos": 0, "total": 2, "porcentaje": 0}
 

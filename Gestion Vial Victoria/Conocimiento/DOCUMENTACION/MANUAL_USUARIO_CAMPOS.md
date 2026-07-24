@@ -1,13 +1,18 @@
 # Manual de usuario — Empleados y Novedades
 
+> **Nota de vigencia (2026-07-24):** los nombres de campos siguen siendo referencia
+> funcional, pero relaciones, documentos, equipos de Supervisor, onboarding y seguridad
+> se rigen por
+> [`../ARQUITECTURA_MVP1_PRODUCCION.md`](../ARQUITECTURA_MVP1_PRODUCCION.md). Un reingreso
+> crea una nueva relación y vuelve a exigir documentación y checklist.
+
 **Sistema de Gestión RRHH · Grupo Vial Victoria / Premocor**
-**Versión:** MVP 1 · **Fecha:** 15 de julio de 2026 · rama `fase-0-verificada`
-**Última actualización:** 15/07/2026 — se cerraron cuatro de los huecos que este mismo
-manual había señalado: la **alerta de vencimientos de toda la dotación** (CU-07, §7.1), las
-**alertas del día** del panel —contratos, certificados pendientes y cumpleaños— y la
-**parametría de avisos** por tipo de documento (§3.6), que estaba fija en el código. Antes
-se habían sumado el archivo de respaldo del documento (§3.6) y los respaldos de la novedad
-(§5.3).
+
+**Versión:** MVP 1 · **Última actualización:** 24/07/2026
+
+Esta revisión incorpora relación activa global, puestos por sector, supervisor explícito,
+documentos por relación, reingreso completo, onboarding por empresa+sector, sesión+CSRF y
+auditoría append-only.
 
 ---
 
@@ -70,8 +75,8 @@ Victoria en 2019, se fue en 2022, volvió en 2024 a Premocor. Son tres etapas, t
 registros, un solo legajo. Esto es lo que permite reconstruir historia real en vez de
 pisarla.
 
-> **Regla dura:** una persona puede tener **una sola relación ACTIVA por empresa** a la
-> vez. La base de datos lo impide, no solo la pantalla.
+> **Regla dura:** una persona puede tener **una sola relación ACTIVA en todo el grupo** y
+> sus etapas no se pueden solapar. La base de datos lo impide, no solo la pantalla.
 
 ### 2.2 Nadie se borra
 
@@ -111,7 +116,7 @@ cadena; el beneficio es que el dato nunca está mal.
 
 | Campo | Qué es | Estado | Reglas y detalles |
 |---|---|---|---|
-| **Fecha de nacimiento** | — | Opcional | ⭐ Alimenta los **cumpleaños del día** en el panel (§7.1). Sin fecha, a esa persona no la saluda nadie. Queda pendiente la pirámide etaria (§8.1). |
+| **Fecha de nacimiento** | — | Opcional | ⭐ Alimenta los **cumpleaños del día** en el panel (§7.1). No puede estar en el futuro. Sin fecha no se genera el aviso. |
 | **Teléfono** | Contacto directo. | Opcional | Operativo. |
 | **Email** | Correo. | Opcional | 💤 Operativo hoy. Es el canal natural de los avisos automáticos cuando se activen. |
 | **Dirección** | Domicilio. | Opcional | 💤 Texto libre: sirve para buscar a la persona, no para analizar (ver §8.3). |
@@ -143,21 +148,22 @@ etapas tiene tres juegos de estos datos.
 |---|---|---|---|
 | **Empresa** | Vial Victoria o Premocor. | **Obligatorio** | 📊 **No se edita nunca.** Cambiar de empresa es dar de baja en una y reingresar en la otra: son dos etapas distintas de la historia laboral, no una corrección. |
 | **Fecha de ingreso** | Inicio del vínculo. | **Obligatorio** | 📊 **El campo más cargado de consecuencias del sistema.** Es la base de la antigüedad, de los ingresos del mes y de la rotación. Un error acá desplaza tres métricas. |
-| **Sector** | RRHH, Administración, Obra, Logística… | Opcional | 💤 Transversal al grupo (los sectores no se duplican por empresa). Se puede filtrar por sector, pero **ninguna métrica se abre por sector** (ver §8.1 — es el hueco analítico más grande). |
-| **Puesto** | Cargo. | Opcional | 💤 Mismo caso que Sector. |
+| **Sector** | RRHH, Administración, Obra, Logística… | **Obligatorio** | Transversal al grupo. Define qué puestos se pueden elegir y qué plantilla sectorial de onboarding aplica. |
+| **Puesto** | Cargo dentro del sector. | **Obligatorio** | Debe estar activo y pertenecer al sector. El nombre es único dentro de ese sector: “Chofer junior” puede parametrizarse donde corresponda sin convertirse en texto libre. |
+| **Supervisor** | Responsable operativo de la persona. | Opcional | Usuario activo con rol Supervisor. Una persona puede supervisar N relaciones activas; no se infiere el equipo por empresa ni por sector. |
 | **Jornada legal** | Completa (8h), Reducida (6h), Media (4h) o Rotativa. | Opcional | 💤 Lista cerrada, agregable, sin usar. Es lo que permitiría medir dotación equivalente en vez de contar cabezas. |
 | **Tipo de contrato** | Indeterminado, Plazo fijo, Eventual, Temporada, Pasantía. | Opcional (Indeterminado por defecto) | ⭐ Decide si el contrato **se vigila**: el Indeterminado no vence y nunca alerta; todos los demás sí. Falta agregarlo como métrica de temporalidad (§8.2). |
-| **Vencimiento de contrato** | Fin previsto del contrato. | Opcional | ⭐ Alimenta la alerta de vencimientos (CU-07). **Ojo: dejarlo vacío en un contrato a plazo NO lo deja tranquilo** — aparece en rojo, primero de la lista. No es un descuido del sistema: un plazo fijo sin fecha de fin es justo lo que hay que revisar. |
+| **Vencimiento de contrato** | Fin previsto del contrato. | Opcional | ⭐ Alimenta la alerta de vencimientos (CU-07) y nunca puede ser anterior al ingreso. **Ojo: dejarlo vacío en un contrato a plazo NO lo deja tranquilo** — aparece en rojo para revisión. |
 | **Estado** | Activa o Finalizada. | Automático | 📊 Lo mueve la baja, no se edita a mano. Es la fuente de verdad del KPI de empleados activos. |
 | **Fecha de egreso** | Cuándo terminó. | Automático (en la baja) | 📊 Alimenta egresos del mes y rotación. No puede ser anterior al ingreso. |
-| **Motivo de egreso** | Renuncia, Fin de contrato, Despido, Jubilación, Mudanza, Otro. | Automático (en la baja) | 💤 **Se pide en cada baja y no se usa para nada.** Lista cerrada, perfectamente agregable. Ver §8.1: separa rotación voluntaria de involuntaria, que son dos problemas distintos con dos soluciones distintas. |
+| **Motivo de egreso** | Renuncia, Fin de contrato, Despido, Jubilación, Mudanza, Otro. | Automático (en la baja) | 📊 Alimenta el reporte de motivos de egreso de los últimos 12 meses. |
 | **Antigüedad** | Días desde el ingreso. | Automático | 💤 Se calcula al vuelo (hasta hoy, o hasta el egreso si terminó). Se muestra en la ficha; **ninguna métrica la agrega**. |
 
-### 3.6 Documentos del empleado
+### 3.6 Documentos de la relación laboral
 
 | Campo | Qué es | Estado | Reglas y detalles |
 |---|---|---|---|
-| **Tipo de documento** | Carnet, apto médico, CNRT, contrato… | **Obligatorio** | Catálogo administrable. **Un solo documento vigente por tipo y por persona**: renovar el apto médico es mover su fecha de vencimiento, no cargar otro. En la edición el tipo no se cambia: sería otro documento, no este. |
+| **Tipo de documento** | Carnet, apto médico, CNRT, contrato… | **Obligatorio** | Catálogo administrable. **Uno por tipo y relación laboral**. Renovar dentro de la misma etapa reemplaza vencimiento/archivo; un reingreso vuelve a pedir el tipo en la relación nueva. |
 | **Número** | Número o identificación. | Opcional | 💤 |
 | **Fecha de vencimiento** | Cuándo caduca. | Opcional | ⭐ **Alimenta la alerta de toda la dotación** (CU-07) y la tarjeta del panel, además del semáforo de la ficha. Sin fecha no hay alerta: el documento no se vigila. La anticipación del aviso la define el **tipo** (ver abajo). |
 | **Archivo de respaldo** | El scan (PDF o imagen). | Opcional | Hasta 10 MB. **Opcional a propósito**: el control de vencimientos funciona con la fecha sola y el scan puede llegar después. Se descarga solo desde la ficha: nunca por una URL que cualquiera con el link pueda abrir. |
@@ -171,9 +177,9 @@ etapas tiene tres juegos de estos datos.
 > catálogo real. El valor va de 0 a 180 días —0 significa "avisame recién cuando venció",
 > que es una decisión legítima—. Los contratos a plazo tienen su propia fila.
 
-> **Dónde vive el archivo.** Nunca en la base: ahí va solo la ruta (~80 caracteres). El
-> archivo va a una carpeta del servidor (hoy, un volumen de Docker; cuando haya deploy, un
-> object storage tipo S3/R2 — cambia la configuración, no el sistema). Un apto médico es un
+> **Dónde vive el archivo.** Nunca en la base: ahí va solo la ruta. El archivo va a un
+> volumen Docker privado de la VPS, incluido en el plan de backup. Más adelante puede
+> migrarse a object storage tipo S3/R2 sin cambiar el dominio. Un apto médico es un
 > dato de salud, así que la carpeta **no se publica**: el único camino al archivo es la
 > ficha, con login y permisos.
 
@@ -202,7 +208,8 @@ etapas tiene tres juegos de estos datos.
 **Cuándo:** entra una persona que nunca trabajó en el grupo.
 
 RRHH carga en un solo paso los datos de la persona **y** su primera relación laboral
-(empresa, fecha de ingreso, y opcionalmente sector, puesto, jornada y contrato). El
+(empresa, fecha de ingreso, sector, puesto y, opcionalmente, supervisor, jornada y
+contrato). El
 sistema asigna el legajo y la persona queda activa.
 
 **Lo que el sistema garantiza:** o se crean la persona y la relación, o no se crea nada.
@@ -217,9 +224,11 @@ Nunca queda una persona sin vínculo, huérfana en el listado.
 
 **Quién:** RRHH o Administrador.
 
-Se corrigen datos de la persona (teléfono, obra social, educación…). **La empresa no se
-edita**: si la persona pasó de Vial Victoria a Premocor, eso es baja + reingreso (CU-04),
-porque son dos etapas distintas de su historia.
+Se corrigen datos de la persona (teléfono, obra social, educación…) y de su asignación
+vigente (sector, puesto, jornada y contrato). **Empresa, fecha de ingreso, estado y
+supervisor tienen flujos propios.** Si ya se inició onboarding/offboarding, el sector no
+se cambia porque el checklist fotografió el alcance; una promoción de puesto dentro del
+mismo sector sí se permite.
 
 ### CU-03 · Dar de baja
 
@@ -240,9 +249,10 @@ históricas quedan).
 
 **Quién:** RRHH o Administrador.
 
-La persona ya existe (mismo DNI, mismo legajo). Se le agrega una **relación laboral
-nueva** con la empresa y fecha de ingreso correspondientes. El sistema exige que no
-tenga otra relación activa en esa misma empresa.
+La persona ya existe (mismo DNI, mismo legajo) y su relación anterior debe estar
+finalizada. Se agrega una **relación laboral nueva** volviendo a elegir empresa, sector,
+puesto, fecha y, si corresponde, supervisor. El sistema exige que no tenga ninguna otra
+relación activa en el grupo ni etapas superpuestas.
 
 **Por qué así:** el recorrido completo queda visible —2019-2022 Vial Victoria,
 2024-hoy Premocor— y cada etapa mantiene su antigüedad y su motivo de salida. Editar la
@@ -252,8 +262,9 @@ relación vieja habría borrado la historia.
 
 **Quién:** cualquier usuario autorizado.
 
-Búsqueda por nombre, apellido, legajo o DNI; filtros por empresa, sector y estado
-(activo / dado de baja).
+Búsqueda de listado por nombre, apellido o legajo; filtros por empresa, sector y estado
+(activo / dado de baja). El listado no muestra ni busca parcialmente DNI/CUIL. Para
+decidir alta o reingreso, Admin/RRHH usa una consulta exacta por DNI, separada y auditada.
 
 **Detalle importante:** los filtros de empresa, sector y estado se aplican **sobre la
 misma relación laboral**. Filtrar "Premocor + Activo" trae quien está activo *en
@@ -263,12 +274,14 @@ Premocor* — no quien está activo en Vial Victoria y alguna vez pasó por Prem
 
 **Quién:** RRHH.
 
-Se registra cada documento con su vencimiento. Un vigente por tipo. Renovar = mover la
-fecha de vencimiento del documento existente.
+Se registra cada documento con su vencimiento en la relación activa. Hay uno por tipo y
+relación. Renovar dentro de esa etapa mueve la fecha/reemplaza el archivo; un reingreso
+empieza otra carpeta documental y no reutiliza lo anterior.
 
 ### CU-07 · Ver documentación por vencer ✅
 
-**Quién:** RRHH, Admin o Supervisor. **Dónde:** *Alertas y vencimientos*.
+**Quién:** RRHH o Admin para toda la dotación; cada actor de alcance limitado recibe solo
+lo que el backend le permite. **Dónde:** *Alertas y vencimientos*.
 
 La pantalla cruza **toda la dotación** y agrupa por tipo de documento, con los contratos a
 plazo al final. Arriba, el resumen: cuántos vencidos, cuántos por vencer, cuántos al día.
@@ -481,8 +494,9 @@ silencio.
 | **Variación de activos** | Diferencia contra el cierre del mes anterior, reconstruido **por fechas** de ingreso/egreso. | Relación: `fecha_ingreso`, `fecha_egreso` |
 | **Ingresos del mes** | Relaciones que **empiezan** dentro del mes calendario. Un reingreso cuenta como ingreso — correcto: es una incorporación real. | Relación: `fecha_ingreso` |
 | **Egresos del mes** | Relaciones que **terminan** dentro del mes calendario. | Relación: `fecha_egreso` |
-| **Ausentismo del mes** | **Cantidad de novedades** (no de días) de tipo **Falta, Licencia médica o Accidente** que empiezan en el mes. Excluye anuladas y rechazadas. Cuenta solo las madres: una licencia con 3 prórrogas es **un** evento. | Novedad: `tipo`, `fecha_desde`, `estado`, `novedad_origen` |
+| **Ausentismo del mes** | **Cantidad de cadenas** (no de días) de tipo **Falta, Licencia médica o Accidente** cuya vigencia efectiva intersecta el mes. Excluye anuladas/rechazadas y solo una prórroga aprobada/cerrada extiende el período. | Novedad: `tipo`, `fecha_desde`, `fecha_hasta`, `estado`, `novedad_origen` |
 | **Índice de rotación** | `((ingresos + egresos) / 2) ÷ dotación promedio × 100`. Fórmula estándar. Disponible mensual y anual (12 meses), con serie para el gráfico. | Relación: `fecha_ingreso`, `fecha_egreso` |
+| **Motivos de egreso** | Distribución de las bajas de los últimos 12 meses según el motivo registrado. | Relación: `fecha_egreso`, `motivo_egreso` |
 | **Ranking de faltas** | Top 5 empleados por **días de falta** del mes (ambos extremos inclusive). Acá sí se cuentan **días**, no eventos. | Novedad: `tipo`, `fecha_desde`, `fecha_hasta`, `empleado` · Relación: `empresa` |
 | **Vencimientos de la dotación** | Documentos y contratos de la **gente activa**, agrupados por tipo, con semáforo por item (vencido / por vencer / al día) y resumen. Cada tipo usa **su propia** anticipación. | Documento: `fecha_vencimiento`, `tipo_documento` · TipoDocumento: `dias_aviso` · Relación: `estado`, `tipo_contrato`, `fecha_vencimiento_contrato`, `empresa` |
 | **Alertas del día** | Resumen accionable del panel, ordenado por urgencia (vencido → por vencer → cumpleaños) y recortado a 6. Informa el total real aunque muestre menos. | Todo lo de arriba · Novedad: `certificado_recibido_en`, `estado` · TipoNovedad: `requiere_certificado` · Empleado: `fecha_nacimiento` |
@@ -503,12 +517,13 @@ silencio.
 
 ### 7.2 Mapa rápido: campo → métrica
 
-**Campos que trabajan (15 de los ~45 que se cargan):**
+**Campos que trabajan (16 de los ~45 que se cargan):**
 
 | Campo | Alimenta |
 |---|---|
 | Relación · `fecha_ingreso` | Activos · Variación · Ingresos · **Rotación** · Antigüedad |
 | Relación · `fecha_egreso` | Variación · Egresos · **Rotación** |
+| Relación · `motivo_egreso` | **Reporte de motivos de egreso** |
 | Relación · `estado` | Activos · **Vencimientos** (solo dotación activa) |
 | Relación · `empresa` | Ranking de faltas · **Vencimientos** (etiqueta) |
 | Relación · `tipo_contrato` | **Vencimientos** (el indeterminado no vence) |
@@ -525,8 +540,8 @@ silencio.
 | Novedad · `novedad_origen` | Ausentismo (evita doble conteo) |
 
 **La conclusión, revisada:** el sistema captura del orden de **45 campos**. Cuando se
-escribió la primera versión de este manual, las métricas usaban **9**; hoy usan **15**. Los
-6 que se sumaron no son campos nuevos: son los mismos que ya se cargaban desde siempre y a
+escribió la primera versión de este manual, las métricas usaban **9**; hoy usan **16**. Los
+7 que se sumaron no son campos nuevos: son los mismos que ya se cargaban desde siempre y a
 los que por fin alguien les hizo una pregunta. Eso es exactamente lo que decía el veredicto
 —*el dato está, falta preguntarle*— y sigue valiendo para los que quedan. La sección
 siguiente es sobre eso.
@@ -550,7 +565,6 @@ los lea. Ordenados por relación valor/esfuerzo:
 | # | Campo | Métrica que habilita | Por qué importa |
 |:--:|---|---|---|
 | **1** | Novedad · `clasificacion` | **Ausentismo justificado vs. injustificado** | 🔴 Se pide en cada carga y no se lee nunca. Son dos fenómenos distintos: el justificado se gestiona, el injustificado se sanciona. Sumarlos juntos, como hace el panel hoy, **oculta el único ausentismo sobre el que se puede accionar**. |
-| **2** | Relación · `motivo_egreso` | **Rotación voluntaria vs. involuntaria** | 🔴 Es la métrica estándar de RRHH y el sistema tiene el dato en cada baja. Un 15% de rotación por renuncias (la gente se va) y un 15% por despidos (la empresa saca) exigen decisiones opuestas — el índice actual los suma y no distingue. |
 | **3** | Relación · `sector` y `puesto` | **Abrir todas las métricas por sector** | 🔴 Se puede *filtrar* por sector pero ninguna métrica se *abre* por sector. "12% de ausentismo" no dice nada accionable; "30% en Obra y 3% en Administración" señala dónde está el problema. El dato está: falta agrupar. |
 | **4** | Novedad · `cantidad_horas` | **Horas extra por mes / sector / empleado** | 🟠 El sistema **obliga** a cargar las horas y después no las suma nunca. Se está pidiendo un dato que no se mira: es el caso más flagrante que queda. |
 | **5** | Novedad · `fecha_aviso_empleado` | **Avisos tardíos** | 🟡 Comparar el aviso con el inicio de la ausencia mide cultura de trabajo. Dato cargado, cero uso. |
@@ -559,7 +573,7 @@ los lea. Ordenados por relación valor/esfuerzo:
 
 #### Cerrados desde la versión anterior de este manual ✅
 
-Cuatro de los huecos que esta sección señalaba ya no existen. Se dejan listados a propósito:
+Varios de los huecos que esta sección señalaba ya no existen. Se dejan listados a propósito:
 el valor de la sección no es la lista, es el patrón —**el dato estaba cargado y solo faltaba
 la consulta**— y estos son la prueba de que el patrón se sostiene.
 
@@ -570,6 +584,7 @@ la consulta**— y estos son la prueba de que el patrón se sostiene.
 | Relación · `fecha_vencimiento_contrato` | **Contratos en la alerta** (CU-07) | *"La fecha se guarda, nadie avisa. Un plazo fijo que vence sin aviso es un problema legal."* Además, el que **no tiene** fecha cargada ahora también alerta. |
 | Novedad · `certificado_recibido_en` | **Certificados pendientes** (§7.1) | *"La alerta 'sin certificado tras X días' está descrita en la especificación y no existe en el código."* Ahora existe, en la tarjeta del panel. |
 | Empleado · `fecha_nacimiento` | **Cumpleaños del día** (§7.1) | *"El clásico victoria fácil: alto valor percibido, esfuerzo mínimo."* Lo fue. Queda pendiente la pirámide etaria (fila 7). |
+| Relación · `motivo_egreso` | **Reporte de motivos de egreso** | La distribución de bajas de los últimos 12 meses ya usa el dato; el índice general de rotación se conserva separado. |
 
 ### 8.2 Potencial medio — valen la pena cuando haya volumen
 
@@ -614,8 +629,8 @@ se puede agregar**. Hay que decidir entre rediseñarlo o aceptar que es solo ope
 
 | Veredicto | Campos | Acción sugerida |
 |---|---|---|
-| ✅ **Ya alimenta una métrica** | `fecha_vencimiento` (documentos), `fecha_vencimiento_contrato`, `certificado_recibido_en`, `fecha_nacimiento`, `tipo_contrato`, `dias_aviso` | Ninguna. Eran 🔴/🟠 en la versión anterior. |
-| 🔴 **Métrica urgente, dato listo** | `clasificacion`, `motivo_egreso`, `sector`/`puesto` | Construir la consulta. El dato ya está. |
+| ✅ **Ya alimenta una métrica** | `fecha_vencimiento` (documentos), `fecha_vencimiento_contrato`, `certificado_recibido_en`, `fecha_nacimiento`, `tipo_contrato`, `dias_aviso`, `motivo_egreso` | Ninguna. Eran 🔴/🟠 en la versión anterior. |
+| 🔴 **Métrica urgente, dato listo** | `clasificacion`, `sector`/`puesto` | Construir la consulta. El dato ya está. |
 | 🟠 **Métrica de alto valor, dato listo** | `cantidad_horas` | Siguiente iteración. |
 | 🟡 **Mejora incremental** | `fecha_aviso_empleado`, días de ausentismo, `aprobada_en`, antigüedad, `jornada_legal`, pirámide etaria | Cuando haya volumen. |
 | 🔧 **Rediseñar para poder medir** | `art`, `obra_social` | Convertir a catálogo. Barato, desbloquea métricas. |
@@ -633,10 +648,10 @@ se puede agregar**. Hay que decidir entre rediseñarlo o aceptar que es solo ope
 > está. Falta preguntarle.
 >
 > **Y se le preguntó.** Entre la primera versión de este manual y esta, los campos que
-> alimentan métricas pasaron de 9 a 15 **sin agregar un solo campo al formulario**: los seis
+> alimentan métricas pasaron de 9 a 16 **sin agregar un solo campo al formulario**: los siete
 > nuevos ya se cargaban desde siempre. Ninguno requirió pedirle más datos a nadie; hicieron
-> falta la consulta que faltaba y un lugar donde configurarla. Los tres 🔴 que quedan
-> —`clasificacion`, `motivo_egreso`, `sector`/`puesto`— son el mismo caso, todavía abierto.
+> falta la consulta que faltaba y un lugar donde configurarla. Los dos frentes 🔴 que
+> quedan —`clasificacion` y aperturas por `sector`/`puesto`— siguen abiertos.
 
 ---
 

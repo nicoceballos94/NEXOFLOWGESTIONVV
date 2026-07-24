@@ -12,7 +12,7 @@ evento** quede sin persona.
 import pytest
 from django.apps import apps as django_apps
 
-from apps.auditoria.models import RegistroAuditoria
+from apps.auditoria.models import Accion, RegistroAuditoria
 from apps.auditoria.services import _empleado_de
 from apps.empleados import services as emp_services
 from apps.empleados.models import DocumentoEmpleado, Empleado, RelacionLaboral, TipoDocumento
@@ -20,7 +20,7 @@ from apps.novedades import services as nov_services
 from apps.novedades.models import Novedad, TipoNovedad
 from apps.onboarding import services as onb_services
 from apps.onboarding.models import ItemProceso, TipoItem, TipoProceso
-from apps.organizacion.models import Empresa
+from apps.organizacion.models import Empresa, Puesto, Sector
 from apps.usuarios.models import Usuario
 
 pytestmark = pytest.mark.django_db
@@ -75,11 +75,13 @@ def test_un_usuario_enlazado_a_un_empleado_tampoco(crear_usuario):
 
 
 def test_toda_la_vida_laboral_de_una_persona_cae_bajo_su_ficha(crear_usuario):
-    """Una vida laboral completa: ni un evento puede quedar sin persona."""
+    """La historia personal queda bajo la ficha; la parametría sigue siendo global."""
     from datetime import date
 
     actor = crear_usuario(username="rrhh")
     empresa = Empresa.objects.create(nombre="VIAL VICTORIA")
+    sector = Sector.objects.create(nombre="Operaciones")
+    puesto = Puesto.objects.create(nombre="Chofer", sector=sector)
     tipo_doc = TipoDocumento.objects.create(nombre="APTO MÉDICO")
     tipo_nov = TipoNovedad.objects.create(
         codigo="LICENCIA_MEDICA",
@@ -92,7 +94,12 @@ def test_toda_la_vida_laboral_de_una_persona_cae_bajo_su_ficha(crear_usuario):
     empleado = emp_services.crear_empleado(
         actor=actor,
         datos_empleado={"dni": "30111222", "nombre": "Juan", "apellido": "Pérez"},
-        datos_relacion={"empresa": empresa, "fecha_ingreso": date(2024, 1, 10)},
+        datos_relacion={
+            "empresa": empresa,
+            "sector": sector,
+            "puesto": puesto,
+            "fecha_ingreso": date(2024, 1, 10),
+        },
     )
     # 2. Edición de la ficha
     emp_services.actualizar_empleado(
@@ -110,6 +117,7 @@ def test_toda_la_vida_laboral_de_una_persona_cae_bajo_su_ficha(crear_usuario):
     onb_services.agregar_item(
         actor=actor, plantilla=plantilla, etiqueta="Alta AFIP/ARCA", tipo_item=TipoItem.ACCION
     )
+    onb_services.publicar_plantilla(actor=actor, plantilla=plantilla)
     proceso = onb_services.obtener_o_crear_proceso(
         actor=actor, relacion=empleado.relacion_activa, tipo_proceso=TipoProceso.INGRESO
     )
@@ -140,20 +148,25 @@ def test_toda_la_vida_laboral_de_una_persona_cae_bajo_su_ficha(crear_usuario):
         motivo_egreso="RENUNCIA",
     )
 
-    huerfanos = RegistroAuditoria.objects.filter(empleado__isnull=True)
-    assert not huerfanos.exists(), (
-        "Estos eventos no van a aparecer en la ficha de nadie: "
-        f"{list(huerfanos.values_list('entidad', 'accion'))}"
-    )
+    # Crear/publicar una plantilla y definir sus renglones son cambios globales de
+    # parametría, anteriores a cualquier proceso personal. No deben atribuirse
+    # artificialmente al empleado que luego use esa plantilla.
+    globales = RegistroAuditoria.objects.filter(empleado__isnull=True)
+    assert set(globales.values_list("entidad", "accion")) == {
+        ("PlantillaChecklist", Accion.PLANTILLA_CREADA),
+        ("PlantillaChecklist", Accion.PLANTILLA_PUBLICADA),
+        ("ItemPlantilla", Accion.PLANTILLA_ITEM_CREADO),
+    }
 
     # Y este es el punto de la columna: la historia completa, en una sola consulta.
     historial = RegistroAuditoria.objects.filter(empleado=empleado)
-    assert historial.count() == RegistroAuditoria.objects.count()
-    # Cinco entidades distintas, todas bajo la misma ficha.
+    assert historial.count() + globales.count() == RegistroAuditoria.objects.count()
+    # Seis entidades distintas, todas bajo la misma ficha.
     assert set(historial.values_list("entidad", flat=True)) == {
         "Empleado",
         "RelacionLaboral",
         "DocumentoEmpleado",
+        "ProcesoEmpleado",
         "ItemProceso",
         "Novedad",
     }

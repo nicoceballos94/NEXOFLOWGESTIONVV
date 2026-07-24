@@ -13,16 +13,17 @@ Todo pasa por los **services** (crear_empleado, crear_novedad, aprobar/rechazar/
 que respeta las reglas del dominio: legajo asignado por el backend, no-solapamiento,
 transiciones válidas. Nada de escritura directa que saltee una invariante.
 
-Idempotente por DNI: reejecutar no duplica (salta los empleados que ya existen). `--reset`
-borra SOLO los empleados de este seed (por DNI) y sus dependientes, para regenerar limpio.
+Idempotente por DNI: reejecutar no duplica (salta los empleados que ya existen). La
+bitácora append-only impide borrar físicamente lo ya auditado; para regenerar el escenario
+se usa una base de desarrollo descartable.
 
-SOLO DEV. No correr en producción: inventa personas y borra datos con `--reset`.
+SOLO DEV. No correr en producción: inventa personas.
 """
 from datetime import timedelta
 
+from django.contrib.auth import get_user_model
 from django.core.management import call_command
 from django.core.management.base import BaseCommand, CommandError
-from django.contrib.auth import get_user_model
 from django.utils import timezone
 
 from apps.empleados import services as emp_services
@@ -34,7 +35,7 @@ from apps.empleados.models import (
     TipoDocumento,
 )
 from apps.novedades import services as nov_services
-from apps.novedades.models import AdjuntoNovedad, Novedad, TipoNovedad
+from apps.novedades.models import TipoNovedad
 from apps.organizacion.models import Empresa, Puesto, Sector
 
 # Dotación de prueba. `desde` en novedades es un offset firmado en días respecto de hoy
@@ -178,7 +179,10 @@ class Command(BaseCommand):
         )
         parser.add_argument(
             "--reset", action="store_true",
-            help="Borra los empleados de este seed (por DNI) y sus dependientes antes de crear.",
+            help=(
+                "No disponible desde que la auditoría es append-only; use una base "
+                "descartable para regenerar el escenario."
+            ),
         )
         parser.add_argument(
             "--skip-catalogos", action="store_true",
@@ -186,6 +190,11 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        if options["reset"]:
+            raise CommandError(
+                "No se permite borrar físicamente datos auditados. "
+                "Regenerá el escenario en una base de desarrollo descartable."
+            )
         cuantos = max(1, min(options["empleados"], len(EMPLEADOS)))
         datos = EMPLEADOS[:cuantos]
 
@@ -196,13 +205,13 @@ class Command(BaseCommand):
         actor = self._actor()
         hoy = timezone.localdate()
 
-        if options["reset"]:
-            self._reset([d["dni"] for d in datos])
-
         creados = 0
         for d in datos:
             if Empleado.objects.filter(dni=d["dni"]).exists():
-                self.stdout.write(f"  {d['nombre']} {d['apellido']} (DNI {d['dni']}): ya existe, se salta")
+                self.stdout.write(
+                    f"  {d['nombre']} {d['apellido']} (DNI {d['dni']}): "
+                    "ya existe, se salta"
+                )
                 continue
             self._crear_empleado(actor, hoy, d)
             creados += 1
@@ -220,16 +229,30 @@ class Command(BaseCommand):
             or User.objects.filter(is_superuser=True).first()
         )
         if actor is None:
-            raise CommandError(
-                "No hay un actor para atribuir la carga. Corré `seed_usuarios_demo` "
-                "o creá un superusuario primero."
+            actor, creado = User.objects.get_or_create(
+                username="__seed_datos_prueba__",
+                defaults={
+                    "first_name": "Carga",
+                    "last_name": "de desarrollo",
+                    "is_active": False,
+                },
+            )
+            if creado:
+                actor.set_unusable_password()
+                actor.save(update_fields=["password"])
+            self.stdout.write(
+                self.style.WARNING(
+                    "Se usa un actor técnico deshabilitado para atribuir la carga demo."
+                )
             )
         return actor
 
     def _puesto(self, nombre, sector):
-        """El catálogo de puestos es case-insensitive (UniqueConstraint Lower). Reusa el
-        existente o lo crea, para no chocar con el `puesto_nombre_unico_ci`."""
-        existente = Puesto.objects.filter(nombre__iexact=nombre).first()
+        """Reusa o crea el puesto dentro de su sector, respetando unicidad CI."""
+        existente = Puesto.objects.filter(
+            nombre__iexact=nombre,
+            sector=sector,
+        ).first()
         if existente:
             return existente
         return Puesto.objects.create(nombre=nombre, sector=sector)
@@ -251,7 +274,9 @@ class Command(BaseCommand):
             "tipo_contrato": d.get("contrato", TipoContrato.INDETERMINADO),
         }
         if d.get("contrato_vence_en_dias") is not None:
-            datos_relacion["fecha_vencimiento_contrato"] = hoy + timedelta(days=d["contrato_vence_en_dias"])
+            datos_relacion["fecha_vencimiento_contrato"] = hoy + timedelta(
+                days=d["contrato_vence_en_dias"]
+            )
 
         empleado = emp_services.crear_empleado(
             actor=actor, datos_empleado=datos_empleado, datos_relacion=datos_relacion
@@ -265,7 +290,8 @@ class Command(BaseCommand):
                 numero=doc.get("numero", ""),
                 fecha_vencimiento=hoy + timedelta(days=doc["vence"]),
             )
-            self.stdout.write(f"    · doc {doc['tipo']} (vence {hoy + timedelta(days=doc['vence'])})")
+            vence = hoy + timedelta(days=doc["vence"])
+            self.stdout.write(f"    · doc {doc['tipo']} (vence {vence})")
 
         for sc in d.get("novedades", []):
             self._crear_novedad(actor, hoy, empleado, sc)
@@ -297,9 +323,17 @@ class Command(BaseCommand):
         if estado == "APROBADA":
             nov_services.aprobar_novedad(actor=actor, novedad=nov)
         elif estado == "RECHAZADA":
-            nov_services.rechazar_novedad(actor=actor, novedad=nov, motivo=sc.get("motivo_estado", ""))
+            nov_services.rechazar_novedad(
+                actor=actor,
+                novedad=nov,
+                motivo=sc.get("motivo_estado", ""),
+            )
         elif estado == "ANULADA":
-            nov_services.anular_novedad(actor=actor, novedad=nov, motivo=sc.get("motivo_estado", ""))
+            nov_services.anular_novedad(
+                actor=actor,
+                novedad=nov,
+                motivo=sc.get("motivo_estado", ""),
+            )
         self.stdout.write(f"    · novedad {tipo.nombre} [{estado}] {desde}")
 
         # La prórroga exige la madre APROBADA (la valida el service): nace REGISTRADA.
@@ -310,21 +344,3 @@ class Command(BaseCommand):
                 actor=actor, novedad=nov, fecha_hasta_nueva=nueva_fin, motivo=pr.get("motivo", ""),
             )
             self.stdout.write(f"      + prórroga hasta {nueva_fin} [REGISTRADA]")
-
-    def _reset(self, dnis):
-        """Borra SOLO los empleados de este seed y sus dependientes, en orden de FK.
-
-        Novedad protege empleado y su propia madre (novedad_origen PROTECT), así que las
-        prórrogas se borran antes que las madres; los adjuntos, antes que las novedades.
-        Es un DELETE físico deliberado: son datos de prueba, no hechos del dominio.
-        """
-        empleados = Empleado.objects.filter(dni__in=dnis)
-        n = empleados.count()
-        for e in empleados:
-            AdjuntoNovedad.objects.filter(novedad__empleado=e).delete()
-            Novedad.objects.filter(empleado=e, novedad_origen__isnull=False).delete()  # prórrogas
-            Novedad.objects.filter(empleado=e).delete()                                # madres
-            e.documentos.all().delete()
-            e.relaciones.all().delete()
-            e.delete()
-        self.stdout.write(self.style.WARNING(f"reset: {n} empleado(s) de prueba borrados."))

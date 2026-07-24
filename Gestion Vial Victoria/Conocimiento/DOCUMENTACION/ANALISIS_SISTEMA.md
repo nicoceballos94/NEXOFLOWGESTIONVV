@@ -1,5 +1,13 @@
 # Análisis del sistema — lo que falta arreglar
 
+> **Documento histórico de auditoría.** Describe el estado previo a la remediación de
+> producción iniciada el 2026-07-24; sus frases “sin hallazgos abiertos”, “sin auditoría”,
+> JWT y `sessionStorage` ya no representan el contrato vigente. Para implementar o revisar
+> el MVP1 usar primero
+> [`../ARQUITECTURA_MVP1_PRODUCCION.md`](../ARQUITECTURA_MVP1_PRODUCCION.md), el código,
+> las migraciones y los tests. Este archivo se conserva como trazabilidad de los hallazgos,
+> no como backlog ejecutable.
+
 **Alcance:** backend `gestion_rrhh/` (Django + DRF + Postgres) y frontend `frontend/`
 (canvas de Claude Design + capa de integración `ceibo-api.js` + `build.py`).
 **Origen:** relevamiento del 2026-07-14, rama `fase-0-verificada`.

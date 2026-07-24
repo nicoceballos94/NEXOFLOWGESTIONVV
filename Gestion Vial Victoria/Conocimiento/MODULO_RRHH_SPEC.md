@@ -1,5 +1,13 @@
 # Módulo RRHH — Especificación funcional
 
+> **Documento histórico.** Esta fue la propuesta inicial basada en n8n +
+> Sheets/Excel y no describe la aplicación actual. El MVP1 vigente es Django/DRF +
+> PostgreSQL, frontend same-origin, sesión+CSRF, Docker y Nginx Proxy Manager. No usar
+> este documento para decidir autenticación, datos, permisos, importación o despliegue.
+> La fuente canónica es
+> [`ARQUITECTURA_MVP1_PRODUCCION.md`](ARQUITECTURA_MVP1_PRODUCCION.md); este archivo se
+> conserva para entender el origen funcional y el backlog de asistencias.
+
 ## 0. Arquitectura propuesta (consistente con lo que ya usás)
 
 Mismo patrón que el resto de tus automatizaciones: **n8n como orquestador + Google Sheets/Excel como base de datos liviana + Telegram como canal**, con Claude Code vía MCP para implementar cada workflow.

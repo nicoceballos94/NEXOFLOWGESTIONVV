@@ -18,7 +18,7 @@ from apps.empleados.models import (
     TipoDocumento,
 )
 from apps.novedades.models import EstadoNovedad, Novedad, TipoNovedad
-from apps.organizacion.models import Empresa
+from apps.organizacion.models import Empresa, Puesto, Sector
 from common import roles
 
 pytestmark = pytest.mark.django_db
@@ -28,7 +28,12 @@ HOY = date(2026, 7, 15)  # miércoles
 
 @pytest.fixture
 def empresa():
-    return Empresa.objects.create(nombre="VIAL VICTORIA")
+    empresa = Empresa.objects.create(nombre="VIAL VICTORIA")
+    empresa._sector_prueba = Sector.objects.create(nombre="Operaciones")
+    empresa._puesto_prueba = Puesto.objects.create(
+        nombre="Chofer", sector=empresa._sector_prueba
+    )
+    return empresa
 
 
 @pytest.fixture
@@ -43,11 +48,23 @@ def _empleado(dni, apellido, empresa, *, activo=True, nace=None):
     RelacionLaboral.objects.create(
         empleado=emp,
         empresa=empresa,
+        sector=empresa._sector_prueba,
+        puesto=empresa._puesto_prueba,
         fecha_ingreso=date(2024, 1, 10),
         estado=EstadoRelacion.ACTIVA if activo else EstadoRelacion.FINALIZADA,
         fecha_egreso=None if activo else date(2025, 1, 1),
+        motivo_egreso="" if activo else "RENUNCIA",
     )
     return emp
+
+
+def _documento(emp, tipo, **datos):
+    return DocumentoEmpleado.objects.create(
+        empleado=emp,
+        relacion_laboral=emp.relacion_activa or emp.relaciones.first(),
+        tipo_documento=tipo,
+        **datos,
+    )
 
 
 def _titulos(data):
@@ -75,7 +92,7 @@ def test_dice_cuanto_falta_o_cuanto_hace_que_vencio(empresa, apto):
     }
     for numero, (apellido, (vence, _)) in enumerate(casos.items()):
         emp = _empleado(f"3011122{numero}", apellido, empresa)
-        DocumentoEmpleado.objects.create(empleado=emp, tipo_documento=apto, fecha_vencimiento=vence)
+        _documento(emp, apto, fecha_vencimiento=vence)
 
     textos = " | ".join(_textos(alertas_del_dia(hoy=HOY)))
     for apellido, (_, esperado) in casos.items():
@@ -90,6 +107,8 @@ def test_contrato_a_plazo_sin_fecha_se_rotula_sin_fecha_no_vencido(empresa):
     RelacionLaboral.objects.create(
         empleado=emp,
         empresa=empresa,
+        sector=empresa._sector_prueba,
+        puesto=empresa._puesto_prueba,
         fecha_ingreso=date(2024, 1, 10),
         estado=EstadoRelacion.ACTIVA,
         tipo_contrato=TipoContrato.PLAZO_FIJO,
@@ -107,12 +126,8 @@ def test_lo_urgente_va_primero(empresa, apto):
     cumple = _empleado("30111222", "Cumple", empresa, nace=date(1990, HOY.month, HOY.day))
     por_vencer = _empleado("30222333", "PorVencer", empresa)
     vencido = _empleado("30333444", "Vencido", empresa)
-    DocumentoEmpleado.objects.create(
-        empleado=por_vencer, tipo_documento=apto, fecha_vencimiento=HOY + timedelta(days=5)
-    )
-    DocumentoEmpleado.objects.create(
-        empleado=vencido, tipo_documento=apto, fecha_vencimiento=HOY - timedelta(days=5)
-    )
+    _documento(por_vencer, apto, fecha_vencimiento=HOY + timedelta(days=5))
+    _documento(vencido, apto, fecha_vencimiento=HOY - timedelta(days=5))
     assert cumple  # el cumpleañero existe, pero va último
 
     assert [i["estado"] for i in alertas_del_dia(hoy=HOY)["items"]] == ["bad", "warn", "info"]
@@ -123,9 +138,7 @@ def test_lo_urgente_va_primero(empresa, apto):
 
 def test_el_que_esta_al_dia_no_es_alerta(empresa, apto):
     emp = _empleado("30111222", "AlDia", empresa)
-    DocumentoEmpleado.objects.create(
-        empleado=emp, tipo_documento=apto, fecha_vencimiento=HOY + timedelta(days=90)
-    )
+    _documento(emp, apto, fecha_vencimiento=HOY + timedelta(days=90))
     data = alertas_del_dia(hoy=HOY)
     assert data["items"] == []
     assert data["total"] == 0
@@ -171,12 +184,18 @@ def vacaciones():
 
 
 def _novedad(emp, tipo, desde, **kw):
+    estado = kw.pop("estado", EstadoNovedad.APROBADA)
+    if estado == EstadoNovedad.RECHAZADA:
+        kw.setdefault("motivo_rechazo", "Test")
+    if estado == EstadoNovedad.ANULADA:
+        kw.setdefault("motivo_anulacion", "Test")
     return Novedad.objects.create(
         empleado=emp,
+        relacion_laboral=emp.relacion_activa or emp.relaciones.first(),
         tipo_novedad=tipo,
         fecha_desde=desde,
         fecha_hasta=kw.pop("hasta", desde),
-        estado=kw.pop("estado", EstadoNovedad.APROBADA),
+        estado=estado,
         **kw,
     )
 
@@ -223,9 +242,7 @@ def test_la_tarjeta_se_recorta_pero_el_total_no_miente(empresa, apto):
     """La tarjeta es un resumen: muestra 6 de 9 y dice que son 9."""
     for numero in range(9):
         emp = _empleado(f"301112{numero:02d}", f"Emp{numero}", empresa)
-        DocumentoEmpleado.objects.create(
-            empleado=emp, tipo_documento=apto, fecha_vencimiento=HOY - timedelta(days=numero + 1)
-        )
+        _documento(emp, apto, fecha_vencimiento=HOY - timedelta(days=numero + 1))
     data = alertas_del_dia(hoy=HOY)
     assert len(data["items"]) == MAX_ITEMS
     assert data["total"] == 9
@@ -234,9 +251,7 @@ def test_la_tarjeta_se_recorta_pero_el_total_no_miente(empresa, apto):
 # ---------- Endpoint ----------
 def test_el_endpoint_lo_ve_rrhh_y_no_el_empleado(crear_usuario, empresa, apto):
     emp = _empleado("30111222", "Alguien", empresa)
-    DocumentoEmpleado.objects.create(
-        empleado=emp, tipo_documento=apto, fecha_vencimiento=HOY - timedelta(days=1)
-    )
+    _documento(emp, apto, fecha_vencimiento=HOY - timedelta(days=1))
     rrhh = APIClient()
     rrhh.force_authenticate(crear_usuario(username="rrhh", rol=roles.RRHH))
     resp = rrhh.get("/api/v1/alertas/del-dia/")

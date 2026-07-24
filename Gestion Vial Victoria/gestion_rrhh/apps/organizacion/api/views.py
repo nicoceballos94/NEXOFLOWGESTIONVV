@@ -3,12 +3,14 @@
 Las apps con reglas (empleados, novedades) usan services/selectors (§11-12);
 acá no hay nada que orquestar.
 """
-from rest_framework import viewsets
+from drf_spectacular.utils import extend_schema
+from rest_framework import serializers, viewsets
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.auditoria.api.mixins import CatalogoAuditadoMixin
 from common import roles
 from common.permissions import LecturaAutenticadaEscrituraPorRol, RolRequerido
 
@@ -17,7 +19,23 @@ from ..models import Empresa, Puesto, Sector
 from .serializers import EmpresaSerializer, PuestoSerializer, SectorSerializer
 
 
-class EmpresaViewSet(viewsets.ModelViewSet):
+class FilaVencimientoSerializer(serializers.Serializer):
+    clave = serializers.CharField()
+    label = serializers.CharField()
+    hint = serializers.CharField(allow_blank=True)
+    dias = serializers.IntegerField(min_value=0, max_value=180)
+
+
+class FilasVencimientoSerializer(serializers.Serializer):
+    filas = FilaVencimientoSerializer(many=True)
+
+
+class ActualizarVencimientoSerializer(serializers.Serializer):
+    clave = serializers.CharField()
+    dias = serializers.IntegerField(min_value=0, max_value=180)
+
+
+class EmpresaViewSet(CatalogoAuditadoMixin, viewsets.ModelViewSet):
     queryset = Empresa.objects.all()
     serializer_class = EmpresaSerializer
     permission_classes = [LecturaAutenticadaEscrituraPorRol(roles.ADMIN, roles.RRHH)]
@@ -27,7 +45,7 @@ class EmpresaViewSet(viewsets.ModelViewSet):
     http_method_names = ["get", "post", "patch", "head", "options"]
 
 
-class SectorViewSet(viewsets.ModelViewSet):
+class SectorViewSet(CatalogoAuditadoMixin, viewsets.ModelViewSet):
     queryset = Sector.objects.all()
     serializer_class = SectorSerializer
     permission_classes = [LecturaAutenticadaEscrituraPorRol(roles.ADMIN, roles.RRHH)]
@@ -35,27 +53,12 @@ class SectorViewSet(viewsets.ModelViewSet):
     http_method_names = ["get", "post", "patch", "head", "options"]
 
 
-class PuestoViewSet(viewsets.ModelViewSet):
+class PuestoViewSet(CatalogoAuditadoMixin, viewsets.ModelViewSet):
     queryset = Puesto.objects.select_related("sector")
     serializer_class = PuestoSerializer
     permission_classes = [LecturaAutenticadaEscrituraPorRol(roles.ADMIN, roles.RRHH)]
     filterset_fields = ("sector", "activo")
     http_method_names = ["get", "post", "patch", "head", "options"]
-
-    def create(self, request, *args, **kwargs):
-        """POST idempotente por nombre (case-insensitive): si el puesto ya existe, lo devuelve.
-
-        El alta de empleados escribe el puesto a mano y postea sin saber si está en el
-        catálogo. Fallar con 409 obligaría a cada cliente a reintentar con un GET; devolver
-        el existente es lo que ese cliente quiere y evita el duplicado que motiva todo esto.
-        Se devuelve 200 (no 201) porque no se creó nada nuevo.
-        """
-        nombre = str(request.data.get("nombre", "")).strip()
-        if nombre:
-            existente = Puesto.objects.filter(nombre__iexact=nombre).first()
-            if existente is not None:
-                return Response(self.get_serializer(existente).data)
-        return super().create(request, *args, **kwargs)
 
 
 class ConfigVencimientosView(APIView):
@@ -68,16 +71,23 @@ class ConfigVencimientosView(APIView):
     # Cambiar el umbral cambia lo que ve toda la empresa: no es de un supervisor.
     permission_classes = [IsAuthenticated, RolRequerido(roles.ADMIN, roles.RRHH)]
 
+    @extend_schema(responses=FilasVencimientoSerializer)
     def get(self, request):
         return Response({"filas": config_vencimientos.filas_de_configuracion()})
 
+    @extend_schema(
+        request=ActualizarVencimientoSerializer,
+        responses=FilaVencimientoSerializer,
+    )
     def patch(self, request):
         # Se levantan excepciones de DRF (y no se devuelve un Response a mano) para que
         # pasen por el manejador de §8 y lleguen como {codigo, detalle, campos}: el front
         # lee `detalle`, y un dict armado acá lo saltearía.
         try:
             fila = config_vencimientos.guardar_dias_aviso(
-                clave=request.data.get("clave", ""), dias=request.data.get("dias")
+                clave=request.data.get("clave", ""),
+                dias=request.data.get("dias"),
+                actor=request.user,
             )
         except config_vencimientos.ClaveDesconocida:
             raise NotFound("Esa alerta ya no existe. Recargá la configuración.")

@@ -4,18 +4,28 @@ Fase 1 = el motor. Que cada service llame a `registrar_evento` en el momento cor
 prueba en los tests de cada app, cuando se cablee (fase 2).
 """
 import pytest
+from django.db import DatabaseError, connection, transaction
+from django.db.models.deletion import ProtectedError
+from django.http import HttpResponse
+from django.test import RequestFactory, override_settings
 
+from apps.auditoria.contexto import ContextoAuditoriaMiddleware, _ip_de_request
 from apps.auditoria.models import Accion, RegistroAuditoria
 from apps.auditoria.services import registrar_evento, tomar_foto
 from apps.empleados.models import Empleado, EstadoRelacion, RelacionLaboral
-from apps.organizacion.models import Empresa
+from apps.organizacion.models import Empresa, Puesto, Sector
 
 pytestmark = pytest.mark.django_db
 
 
 @pytest.fixture
 def empresa():
-    return Empresa.objects.create(nombre="VIAL VICTORIA")
+    empresa = Empresa.objects.create(nombre="VIAL VICTORIA")
+    empresa._sector_prueba = Sector.objects.create(nombre="Operaciones")
+    empresa._puesto_prueba = Puesto.objects.create(
+        nombre="Chofer", sector=empresa._sector_prueba
+    )
+    return empresa
 
 
 @pytest.fixture
@@ -76,7 +86,11 @@ def test_guardar_sin_cambiar_nada_no_deja_renglon(crear_usuario, empleado):
 
 def test_las_fk_se_congelan_como_texto_legible(crear_usuario, empleado, empresa):
     relacion = RelacionLaboral.objects.create(
-        empleado=empleado, empresa=empresa, fecha_ingreso="2024-01-10"
+        empleado=empleado,
+        empresa=empresa,
+        sector=empresa._sector_prueba,
+        puesto=empresa._puesto_prueba,
+        fecha_ingreso="2024-01-10",
     )
 
     registro = registrar_evento(
@@ -92,7 +106,11 @@ def test_las_fk_se_congelan_como_texto_legible(crear_usuario, empleado, empresa)
 
 def test_la_baja_deja_constancia_de_a_quien_se_referia(crear_usuario, empleado, empresa):
     relacion = RelacionLaboral.objects.create(
-        empleado=empleado, empresa=empresa, fecha_ingreso="2024-01-10"
+        empleado=empleado,
+        empresa=empresa,
+        sector=empresa._sector_prueba,
+        puesto=empresa._puesto_prueba,
+        fecha_ingreso="2024-01-10",
     )
     foto = tomar_foto(relacion)
     relacion.estado = EstadoRelacion.FINALIZADA
@@ -158,18 +176,85 @@ def test_un_proceso_automatico_se_asienta_sin_autor(empleado):
     assert registro.usuario_nombre == ""
 
 
-def test_el_autor_sobrevive_al_borrado_del_usuario(crear_usuario, empleado):
+def test_un_autor_auditado_no_se_borra_fisicamente(crear_usuario, empleado):
     actor = crear_usuario(username="se-va-de-la-empresa")
     registro = registrar_evento(
         actor=actor, accion=Accion.EMPLEADO_CREADO, objeto=empleado
     )
 
-    actor.delete()
+    with pytest.raises(ProtectedError):
+        actor.delete()
     registro.refresh_from_db()
 
-    # La FK es SET_NULL, pero el nombre congelado mantiene la bitácora con autor.
-    assert registro.usuario is None
+    # La salida operativa es desactivar, nunca borrar la identidad histórica.
+    assert registro.usuario == actor
     assert registro.usuario_nombre == "se-va-de-la-empresa"
+
+
+def test_la_base_impide_editar_y_borrar_la_bitacora(crear_usuario, empleado):
+    registro = registrar_evento(
+        actor=crear_usuario(username="rrhh-inmutable"),
+        accion=Accion.EMPLEADO_CREADO,
+        objeto=empleado,
+    )
+
+    with pytest.raises(DatabaseError), transaction.atomic():
+        RegistroAuditoria.objects.filter(pk=registro.pk).update(
+            usuario_nombre="autor-adulterado"
+        )
+
+    with pytest.raises(DatabaseError), transaction.atomic():
+        RegistroAuditoria.objects.filter(pk=registro.pk).delete()
+
+    registro.refresh_from_db()
+    assert registro.usuario_nombre == "rrhh-inmutable"
+
+
+def test_la_base_impide_vaciar_toda_la_bitacora(crear_usuario, empleado):
+    registrar_evento(
+        actor=crear_usuario(username="rrhh-truncate"),
+        accion=Accion.EMPLEADO_CREADO,
+        objeto=empleado,
+    )
+
+    with pytest.raises(DatabaseError), transaction.atomic():
+        with connection.cursor() as cursor:
+            cursor.execute("TRUNCATE TABLE auditoria_registroauditoria")
+
+    assert RegistroAuditoria.objects.exists()
+
+
+@override_settings(AUDIT_TRUST_X_FORWARDED_FOR=True)
+def test_la_ip_se_toma_del_contexto_con_proxy_confiable(crear_usuario, empleado):
+    actor = crear_usuario(username="rrhh-ip")
+    capturado = {}
+
+    def respuesta(_request):
+        capturado["registro"] = registrar_evento(
+            actor=actor, accion=Accion.EMPLEADO_CREADO, objeto=empleado
+        )
+        return HttpResponse()
+
+    request = RequestFactory().get(
+        "/api/v1/empleados/",
+        HTTP_X_REAL_IP="203.0.113.7",
+        HTTP_X_FORWARDED_FOR="198.51.100.99, 203.0.113.7",
+        REMOTE_ADDR="172.20.0.2",
+    )
+    ContextoAuditoriaMiddleware(respuesta)(request)
+
+    assert capturado["registro"].ip == "203.0.113.7"
+
+
+@override_settings(AUDIT_TRUST_X_FORWARDED_FOR=True)
+def test_una_ip_falsificada_a_la_izquierda_no_se_audita_como_cliente():
+    request = RequestFactory().get(
+        "/",
+        HTTP_X_FORWARDED_FOR="198.51.100.99, 203.0.113.7",
+        REMOTE_ADDR="172.20.0.2",
+    )
+
+    assert _ip_de_request(request) == "203.0.113.7"
 
 
 def test_de_un_archivo_se_guarda_el_nombre_nunca_el_contenido(crear_usuario, empleado):

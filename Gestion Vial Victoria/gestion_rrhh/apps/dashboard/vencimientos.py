@@ -22,6 +22,8 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
+from django.utils import timezone
+
 from apps.empleados.models import (
     DocumentoEmpleado,
     EstadoRelacion,
@@ -29,6 +31,8 @@ from apps.empleados.models import (
     TipoContrato,
 )
 from apps.organizacion.selectors import dias_aviso_contratos
+
+from . import scope
 
 # El contrato indeterminado no termina: no hay nada que avisar.
 CONTRATOS_QUE_VENCEN = [t for t in TipoContrato.values if t != TipoContrato.INDETERMINADO]
@@ -53,49 +57,27 @@ def _estado(vence: date | None, hoy: date, dias_aviso: int) -> str:
     return "ok"
 
 
-def _empresa_por_empleado(ids) -> dict[int, str]:
-    """Empresa de cada empleado: la de su relación ACTIVA.
-
-    Con dos relaciones activas (la persona trabaja en las dos empresas del grupo) se toma la
-    más reciente: la alerta necesita una etiqueta, no un informe. El documento es de la
-    persona, no de la empresa — el carnet no se duplica por trabajar en dos lados.
-    """
-    empresas: dict[int, str] = {}
-    for rel in (
-        RelacionLaboral.objects.filter(
-            empleado_id__in=ids, estado=EstadoRelacion.ACTIVA
-        )
-        .select_related("empresa")
-        .order_by("empleado_id", "-fecha_ingreso")
-    ):
-        empresas.setdefault(rel.empleado_id, rel.empresa.nombre)
-    return empresas
-
-
-def _items_de_documentos(hoy: date) -> dict[str, list[dict]]:
+def _items_de_documentos(hoy: date, *, usuario=None) -> dict[str, list[dict]]:
     """Documentos con vencimiento de la gente activa, agrupados por tipo.
 
     Cada tipo avisa con su propia anticipación (`TipoDocumento.dias_aviso`): un apto médico
     puede querer más margen que un carnet, y RRHH lo decide desde Configuración.
     """
     documentos = list(
-        DocumentoEmpleado.objects.filter(
-            empleado__relaciones__estado=EstadoRelacion.ACTIVA,
+        scope.documentos(DocumentoEmpleado.objects.all(), usuario)
+        .filter(
+            relacion_laboral__estado=EstadoRelacion.ACTIVA,
             fecha_vencimiento__isnull=False,  # sin fecha no hay nada que vigilar
         )
-        .select_related("empleado", "tipo_documento")
-        # Quien tiene relación activa en las dos empresas del grupo matchea dos veces el
-        # JOIN y traería el mismo documento repetido.
-        .distinct()
+        .select_related("empleado", "tipo_documento", "relacion_laboral__empresa")
     )
-    empresas = _empresa_por_empleado({d.empleado_id for d in documentos})
     grupos: dict[str, list[dict]] = {}
     for doc in documentos:
         grupos.setdefault(doc.tipo_documento.nombre, []).append(
             {
                 "empleado_id": doc.empleado_id,
                 "empleado": doc.empleado.nombre_natural,
-                "empresa": empresas.get(doc.empleado_id, "—"),
+                "empresa": doc.relacion_laboral.empresa.nombre,
                 "fecha": doc.fecha_vencimiento,
                 "estado": _estado(doc.fecha_vencimiento, hoy, doc.tipo_documento.dias_aviso),
                 "detalle": doc.tipo_documento.nombre,
@@ -104,10 +86,11 @@ def _items_de_documentos(hoy: date) -> dict[str, list[dict]]:
     return grupos
 
 
-def _items_de_contratos(hoy: date, dias_aviso: int) -> list[dict]:
+def _items_de_contratos(hoy: date, dias_aviso: int, *, usuario=None) -> list[dict]:
     """Contratos con fin previsto (los que no son indeterminados) de la gente activa."""
     relaciones = (
-        RelacionLaboral.objects.filter(
+        scope.relaciones(RelacionLaboral.objects.all(), usuario)
+        .filter(
             estado=EstadoRelacion.ACTIVA, tipo_contrato__in=CONTRATOS_QUE_VENCEN
         )
         .select_related("empleado", "empresa")
@@ -130,16 +113,20 @@ def _ordenar(items: list[dict]) -> list[dict]:
     return sorted(items, key=lambda i: (i["fecha"] is not None, i["fecha"] or date.min))
 
 
-def vencimientos_de_la_dotacion(*, hoy: date | None = None) -> dict:
+def vencimientos_de_la_dotacion(*, hoy: date | None = None, usuario=None) -> dict:
     """Todo lo que vence, agrupado por tipo, con el resumen del semáforo.
 
     No devuelve un `dias_aviso` global: cada tipo tiene el suyo y un único número acá sería
     mentira. La parametría se lee de /config/vencimientos/, que es su lugar.
     """
-    hoy = hoy or date.today()
+    hoy = hoy or timezone.localdate()
 
-    grupos = _items_de_documentos(hoy)
-    contratos = _items_de_contratos(hoy, dias_aviso_contratos())
+    grupos = _items_de_documentos(hoy, usuario=usuario)
+    contratos = _items_de_contratos(
+        hoy,
+        dias_aviso_contratos(),
+        usuario=usuario,
+    )
     if contratos:
         grupos[GRUPO_CONTRATOS] = contratos
 

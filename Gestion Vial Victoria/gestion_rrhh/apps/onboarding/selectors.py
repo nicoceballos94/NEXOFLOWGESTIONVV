@@ -11,42 +11,46 @@ cruzada por FK; la escritura de documentos sigue siendo de `empleados` (regla §
 from django.db.models import QuerySet
 
 from apps.empleados.models import DocumentoEmpleado
+from common.queryparams import entero_positivo
 
 from .models import PlantillaChecklist, ProcesoEmpleado, TipoItem
 
 
 def plantillas_visibles(*, filtros=None) -> QuerySet[PlantillaChecklist]:
     """Plantillas para el ABM de Configuración, con sus ítems ordenados."""
-    qs = PlantillaChecklist.objects.select_related("empresa").prefetch_related(
+    qs = PlantillaChecklist.objects.select_related("empresa", "sector").prefetch_related(
         "items__tipo_documento"
     )
     filtros = filtros or {}
     empresa = filtros.get("empresa")
     tipo_proceso = filtros.get("tipo_proceso")
-    activa = filtros.get("activa")
+    sector = filtros.get("sector")
+    estado = filtros.get("estado")
     if empresa:
-        qs = qs.filter(empresa_id=empresa)
+        qs = qs.filter(empresa_id=entero_positivo(empresa, "empresa"))
     if tipo_proceso:
         qs = qs.filter(tipo_proceso=tipo_proceso)
-    if activa is not None:
-        qs = qs.filter(activa=activa)
+    if sector:
+        qs = qs.filter(sector_id=entero_positivo(sector, "sector"))
+    if estado:
+        qs = qs.filter(estado=estado)
     return qs
 
 
-def _momentos_docs_completos(empleado) -> dict[int, object]:
-    """{tipo_documento_id: creado_en} de los documentos del empleado que tienen archivo.
+def _momentos_docs_completos(relacion) -> dict[int, object]:
+    """{tipo_documento_id: actualizado_en} de los documentos de la relación con archivo.
 
     Una sola query resuelve el estado de todos los ítems documentales de la tarjeta (evita el
-    N+1 de preguntar por cada ítem). El UNIQUE (empleado, tipo_documento) garantiza uno por
+    N+1 de preguntar por cada ítem). El UNIQUE (relación, tipo_documento) garantiza uno por
     tipo; si hubiera más, queda el último iterado.
     """
     momentos: dict[int, object] = {}
-    for tipo_id, creado_en in (
-        DocumentoEmpleado.objects.filter(empleado=empleado)
+    for tipo_id, actualizado_en in (
+        DocumentoEmpleado.objects.filter(relacion_laboral=relacion)
         .exclude(archivo="")
-        .values_list("tipo_documento_id", "creado_en")
+        .values_list("tipo_documento_id", "actualizado_en")
     ):
-        momentos[tipo_id] = creado_en
+        momentos[tipo_id] = actualizado_en
     return momentos
 
 
@@ -56,8 +60,7 @@ def armar_tarjeta(*, proceso: ProcesoEmpleado) -> dict:
     `sin_plantilla=True` (proceso sin ítems) es la señal para que la ficha muestre el aviso
     "no hay checklist configurado para esta empresa".
     """
-    empleado = proceso.relacion_laboral.empleado
-    momentos_docs = _momentos_docs_completos(empleado)
+    momentos_docs = _momentos_docs_completos(proceso.relacion_laboral)
 
     items = []
     momentos_hechos = []

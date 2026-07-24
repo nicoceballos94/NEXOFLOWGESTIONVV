@@ -54,22 +54,37 @@ class Sector(ModeloBase):
 
 
 class Puesto(ModeloBase):
-    # El catálogo se puebla desde el alta de empleados, donde el puesto se escribe a mano:
-    # sin unicidad case-insensitive, "Chofer"/"chofer"/"CHOFER " son tres puestos distintos
-    # que después ensucian los filtros. El unique simple de Postgres es case-sensitive y no
-    # alcanza; el nombre se normaliza (strip) en save() para que el índice compare lo mismo.
+    """Puesto del catálogo, siempre dentro de un sector.
+
+    `sector` conserva ``null=True`` únicamente para representar puestos huérfanos
+    anteriores a esta regla. La migración agrega un CHECK ``NOT VALID``: tolera esas filas
+    históricas, pero PostgreSQL rechaza cualquier alta o actualización nueva sin sector.
+    """
+
     nombre = models.CharField(max_length=100)
     sector = models.ForeignKey(
-        Sector, null=True, blank=True, on_delete=models.PROTECT, related_name="puestos"
+        Sector,
+        null=True,
+        on_delete=models.PROTECT,
+        related_name="puestos",
+        help_text="Sector al que pertenece el puesto. Obligatorio para toda carga nueva.",
     )
     activo = models.BooleanField(default=True)
 
     class Meta:
         verbose_name = "puesto"
         verbose_name_plural = "puestos"
-        ordering = ["nombre"]
+        ordering = ["sector__nombre", "nombre"]
         constraints = [
-            models.UniqueConstraint(Lower("nombre"), name="puesto_nombre_unico_ci"),
+            models.UniqueConstraint(
+                Lower("nombre"),
+                "sector",
+                name="puesto_nombre_sector_unico_ci",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(sector__isnull=False),
+                name="puesto_sector_requerido",
+            ),
         ]
 
     def save(self, *args, **kwargs):

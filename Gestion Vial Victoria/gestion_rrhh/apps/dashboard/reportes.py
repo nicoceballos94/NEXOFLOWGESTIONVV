@@ -10,11 +10,10 @@ auditable:
   media de la rotación). El número grande es la dotación ACTUAL por `estado` —la misma
   fuente de verdad que el KPI del panel y la lista de empleados—, y la variación es el
   cambio porcentual respecto de la dotación de hace 12 meses.
-- **Ausentismo por tipo** (año calendario en curso): novedades madre (no prórrogas) con
-  `fecha_desde` en el año, de tipos que OCUPAN el período del empleado (faltas, licencias,
-  accidentes, vacaciones, permisos: los eventos que lo sacan del calendario), excluyendo
-  anuladas y rechazadas, contadas como eventos y agrupadas por tipo. Es la distribución de
-  por qué la gente no estuvo.
+- **Ausentismo por tipo** (año calendario en curso): novedades madre (no prórrogas) cuya
+  vigencia efectiva intersecta el año, de tipos que OCUPAN el período del empleado. La
+  vigencia efectiva incluye prórrogas aprobadas/cerradas; anuladas, rechazadas o pendientes
+  no extienden el período. Cada cadena se cuenta una sola vez y se agrupa por tipo.
 - **Motivos de egreso** (últimos 12 meses): relaciones con `fecha_egreso` en los últimos
   365 días, agrupadas por `motivo_egreso`.
 
@@ -26,16 +25,19 @@ from __future__ import annotations
 from datetime import date, timedelta
 
 from django.db.models import Count
+from django.utils import timezone
 
 from apps.empleados.models import MotivoEgreso, RelacionLaboral
 from apps.novedades.models import Novedad
 
+from . import scope
 from .selectors import (
     _MESES_ABREV,
     ESTADOS_NOVEDAD_EXCLUIDOS,
     _Dotacion,
     _inicio_mes,
     _sumar_meses,
+    periodo_intersecta_desde,
 )
 
 
@@ -63,18 +65,19 @@ def _dotacion_en_el_tiempo(dotacion: _Dotacion, ini_mes: date) -> dict:
     return {"total": total, "delta_pct": delta_pct, "serie": serie}
 
 
-def _ausentismo_por_tipo(ini_anio: date, ini_anio_sig: date) -> dict:
+def _ausentismo_por_tipo(ini_anio: date, ini_anio_sig: date, *, usuario=None) -> dict:
     """Distribución de eventos de ausentismo del año, por tipo de novedad."""
     filas = (
-        Novedad.objects.filter(
+        scope.novedades(Novedad.objects.all(), usuario)
+        .filter(
             novedad_origen__isnull=True,             # solo madres; no doble-contar prórrogas
-            tipo_novedad__ocupa_periodo=True,        # las que sacan al empleado del calendario
-            fecha_desde__gte=ini_anio,
+            ocupa_periodo=True,                      # snapshot al ocurrir el hecho
             fecha_desde__lt=ini_anio_sig,
         )
+        .filter(periodo_intersecta_desde(ini_anio))
         .exclude(estado__in=ESTADOS_NOVEDAD_EXCLUIDOS)
         .values("tipo_novedad__nombre")
-        .annotate(cantidad=Count("id"))
+        .annotate(cantidad=Count("id", distinct=True))
         .order_by("-cantidad", "tipo_novedad__nombre")
     )
     total = sum(f["cantidad"] for f in filas)
@@ -86,11 +89,12 @@ def _ausentismo_por_tipo(ini_anio: date, ini_anio_sig: date) -> dict:
     return {"anio": ini_anio.year, "total": total, "items": items}
 
 
-def _motivos_de_egreso(hoy: date) -> dict:
+def _motivos_de_egreso(hoy: date, *, usuario=None) -> dict:
     """Distribución de bajas de los últimos 12 meses, por motivo de egreso."""
     desde = hoy - timedelta(days=365)
     filas = (
-        RelacionLaboral.objects.filter(fecha_egreso__gte=desde, fecha_egreso__lte=hoy)
+        scope.relaciones(RelacionLaboral.objects.all(), usuario)
+        .filter(fecha_egreso__gte=desde, fecha_egreso__lte=hoy)
         .values("motivo_egreso")
         .annotate(cantidad=Count("id"))
         .order_by("-cantidad", "motivo_egreso")
@@ -109,16 +113,22 @@ def _motivos_de_egreso(hoy: date) -> dict:
     return {"total": total, "items": items}
 
 
-def metricas_reportes(*, hoy: date | None = None) -> dict:
+def metricas_reportes(*, hoy: date | None = None, usuario=None) -> dict:
     """Las tres métricas de la pantalla Reportes."""
-    hoy = hoy or date.today()
+    hoy = hoy or timezone.localdate()
     ini_mes = _inicio_mes(hoy)
     ini_anio = date(hoy.year, 1, 1)
     ini_anio_sig = date(hoy.year + 1, 1, 1)
 
-    dotacion = _Dotacion.leer()  # única lectura de relaciones; el resto se cuenta en memoria
+    dotacion = _Dotacion.leer(
+        usuario=usuario
+    )  # única lectura de relaciones; el resto se cuenta en memoria
     return {
         "dotacion": _dotacion_en_el_tiempo(dotacion, ini_mes),
-        "ausentismo": _ausentismo_por_tipo(ini_anio, ini_anio_sig),
-        "egresos": _motivos_de_egreso(hoy),
+        "ausentismo": _ausentismo_por_tipo(
+            ini_anio,
+            ini_anio_sig,
+            usuario=usuario,
+        ),
+        "egresos": _motivos_de_egreso(hoy, usuario=usuario),
     }

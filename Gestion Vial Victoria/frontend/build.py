@@ -10,7 +10,7 @@ Si el diseño cambia (rediseño en Claude Design), se vuelve a bajar y se corre
 así un cambio de diseño que rompa un anclaje se detecta al instante.
 
 Uso:  python build.py   →   dist/index.html + support.js + ceibo-api.js
-Servir: cd dist && python -m http.server 8080
+Servir: python dev_server.py   (estáticos + proxy /api/ same-origin)
 """
 from pathlib import Path
 import hashlib
@@ -28,6 +28,16 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
   reloadEmpleados = async () => {
     const emps = await window.CeiboAPI.listEmpleados();
     this.setState({ empleados: emps });
+    if (this.state.view === 'ficha' && this.state.selEmp != null) {
+      await this._cargarDetalleEmpleado(this.state.selEmp);
+    }
+  };
+  _cargarDetalleEmpleado = async (id) => {
+    const detalle = await window.CeiboAPI.getEmpleado(id);
+    this.setState((s) => ({
+      empleados: (s.empleados || []).map((e) => e.id === detalle.id ? detalle : e),
+    }));
+    return detalle;
   };
   reloadNovedades = async () => {
     const novs = await window.CeiboAPI.listNovedades();
@@ -63,23 +73,52 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
     semLabel: (s) => this.semLabel(s),
     dotDe: this._dotDe,
   });
-  // Toda la carga inicial, ya con sesión abierta. Antes vivía en componentDidMount porque
-  // el token se pedía solo con credenciales fijas; ahora arranca cuando hay una persona
-  // autenticada — al entrar por el login o al restaurar la sesión tras un F5.
+  // Toda la carga inicial arranca cuando hay una persona autenticada: al entrar por el
+  // login o al restaurar la sesión Django tras un F5.
   async cargarTodo() {
     try {
       this.setState({ cargaInicial: 'cargando' });
       await window.CeiboAPI.init();
+      const veDotacion = window.CeiboAPI.puede('ve_dotacion');
       await this.reloadEmpleados();
       await this.reloadNovedades();
-      await this.reloadDashboard();
-      await this.reloadReportes();
-      await this.reloadVencimientos();
-      await this.reloadAlertasDia();
-      await this.reloadConfigVenc();
+      if (veDotacion) {
+        await this.reloadDashboard();
+        await this.reloadVencimientos();
+        await this.reloadAlertasDia();
+      } else {
+        // Empleado accede por autoconsulta, no al agregado de toda la dotación. Evitar
+        // pedidos que necesariamente devolverían 403 y dejar marcadores explícitos impide
+        // que el canvas caiga en sus mocks si alguien fuerza una URL/vista no habilitada.
+        this.setState({
+          dashboard: window.CeiboAPI.SIN_PERMISO,
+          vencimientos: window.CeiboAPI.SIN_PERMISO,
+          alertasDiaData: window.CeiboAPI.SIN_PERMISO,
+        });
+      }
+      if (window.CeiboAPI.puede('reportes_ver')) {
+        await this.reloadReportes();
+      } else {
+        this.setState({ reportes: window.CeiboAPI.SIN_PERMISO });
+      }
+      if (window.CeiboAPI.puede('config_escribir')) {
+        await this.reloadConfigVenc();
+      } else {
+        this.setState({ cfgVenc: window.CeiboAPI.SIN_PERMISO });
+      }
       this.setState({ tiposDoc: await window.CeiboAPI.listTiposDoc() });
       const e = this.state.empleados;
-      if (e && e.length) { this.setState({ selEmp: e[0].id }); this.recargarDocs(e[0].id); }
+      if (!veDotacion && e && e.length === 1) {
+        // El rol Empleado ve una única ficha: la propia. Abrirla de entrada evita dejarlo
+        // parado en un Dashboard prohibido y reduce un paso sin ampliar su alcance.
+        await this.selectEmp(e[0].id);
+      } else if (e && e.length) {
+        this.setState({ selEmp: e[0].id });
+        this.recargarDocs(e[0].id);
+      } else if (!veDotacion) {
+        // Vínculo de usuario incompleto: mostrar el estado vacío de Empleados, no un 403.
+        this.setState({ view: 'empleados' });
+      }
       this.setState({ cargaInicial: 'lista' });
     } catch (err) {
       console.error('[ceibo] init', err);
@@ -88,7 +127,7 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
       this.setState({ apiErr: String(err), cargaInicial: 'error' });
     }
   }
-  // Login real contra /auth/token/ (reemplaza la maqueta del canvas, que solo validaba
+  // Login real contra /auth/login/ (reemplaza la maqueta del canvas, que solo validaba
   // que los campos no estuvieran vacíos).
   doLogin = async (e) => {
     if (e && e.preventDefault) e.preventDefault();
@@ -109,8 +148,14 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
       this.setState({ loginOcupado: false, loginClave: '', loginError: String(err.message || err) });
     }
   };
-  doLogout = () => {
-    window.CeiboAPI.logout();
+  doLogout = async (remoto = true) => {
+    try {
+      await window.CeiboAPI.logout(remoto);
+    } catch (err) {
+      console.error('[ceibo] logout', err);
+      window.CeiboAPI.toast(err.message || String(err), 'error');
+      return;
+    }
     window.CeiboAPI.a11ySesion(false);   // vuelve el login: el fondo se apaga del árbol accesible
     // Los datos de la sesión anterior se van con ella: si no, el siguiente en entrar ve
     // por un instante la dotación del anterior antes de que termine su propia carga.
@@ -121,16 +166,18 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
       alertasDiaData: null, cfgVenc: null, tiposDoc: null,
       // Los blobs de foto los revocó CeiboAPI.logout(); hay que soltar también sus URLs acá,
       // o ensureFoto ve la entrada vieja y no rebaja la foto → <img> a un blob muerto (rota).
-      empresasCfgData: null, sectoresCfgData: null, fotoUrlByEmp: {},
+      empresasCfgData: null, sectoresCfgData: null, puestosCfgData: null,
+      tiposDocCfgData: null, fichaChkData: null, fotoUrlByEmp: {},
     });
   };
   async componentDidMount() {
-    // Si la sesión murió sola (refresh vencido o revocado), volver al login en vez de
+    // Si el servidor informa que la sesión venció, volver al login en vez de
     // dejar la app mostrando datos que ya no se pueden actualizar.
     window.CeiboAPI.onSesionVencida(() => {
       if (!this.state.sesion) return;
-      this.doLogout();
-      this.setState({ loginError: 'Tu sesión venció. Ingresá de nuevo.' });
+      this.doLogout(false).then(() => {
+        this.setState({ loginError: 'Tu sesión venció. Ingresá de nuevo.' });
+      });
     });
     // Arranca sin sesión (login a la vista): el fondo va inerte ya, antes de resolver la
     // restauración, para que no quede ni un frame con el shell navegable detrás del login.
@@ -195,10 +242,14 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
       // (CeiboAPI.puede, restrictivo por defecto). Esto ESCONDE botones; la seguridad real
       // sigue siendo el 403 del backend. Solo con sesión: es cuando perfilVals ya garantiza
       // que CeiboAPI está cargado (mismo patrón que userRol, arriba).
+      v.puedeDotacion = window.CeiboAPI.puede('ve_dotacion');
       v.puedeEscribirEmpleado = window.CeiboAPI.puede('empleados_escribir');
       v.puedeCargarNovedad = window.CeiboAPI.puede('novedades_cargar');
       v.puedeDecidirNovedad = window.CeiboAPI.puede('novedades_decidir');
       v.puedeConfig = window.CeiboAPI.puede('config_escribir');
+      v.puedeReportes = window.CeiboAPI.puede('reportes_ver');
+      v.puedeAuditar = window.CeiboAPI.puede('auditoria_ver');
+      v.puedeAnalisis = v.puedeConfig || v.puedeReportes || v.puedeAuditar;
       // El detalle de novedad ya trae sc-if por ESTADO (canAprobar = ¿está en un estado
       // aprobable?). Eso responde "¿se puede?" por la máquina de estados, no por el rol.
       // Acá se le suma el rol: un botón se muestra solo si el estado lo permite Y el rol
@@ -209,12 +260,16 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
         dn.puedeAdjuntar = v.puedeCargarNovedad;   // era fijo en true en el canvas
         dn.canEdit = dn.canEdit && v.puedeCargarNovedad;
         dn.puedeProrrogar = dn.puedeProrrogar && v.puedeCargarNovedad;
+        dn.canTomar = dn.canTomar && v.puedeCargarNovedad;
+        dn.canCerrar = dn.canCerrar && v.puedeCargarNovedad;
         dn.canAprobar = dn.canAprobar && v.puedeDecidirNovedad;
         dn.canRechazar = dn.canRechazar && v.puedeDecidirNovedad;
         dn.canAnular = dn.canAnular && v.puedeDecidirNovedad;
         // Cada eslabón de la cadena (madre + prórrogas) repite las mismas acciones por fila.
         if (Array.isArray(dn.timeline)) dn.timeline.forEach(function (t) {
           t.canEdit = t.canEdit && v.puedeCargarNovedad;
+          t.canTomar = t.canTomar && v.puedeCargarNovedad;
+          t.canCerrar = t.canCerrar && v.puedeCargarNovedad;
           t.canAprobar = t.canAprobar && v.puedeDecidirNovedad;
           t.canRechazar = t.canRechazar && v.puedeDecidirNovedad;
           t.canAnular = t.canAnular && v.puedeDecidirNovedad;
@@ -230,6 +285,15 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
     v.altaTitle = this.state.altaEditId ? 'Editar empleado' : 'Alta de empleado';
     if (v.ficha) {
       v.ficha.openEdit = () => this.openEdit(this.state.selEmp);
+      const _empFicha = (this.state.empleados || []).find((e) => e.id === this.state.selEmp) || {};
+      const _sup = (window.CeiboAPI.catalogosUI().supervisores || []).slice();
+      if (_empFicha._supervisorId != null && !_sup.some((s) => String(s.id) === String(_empFicha._supervisorId))) {
+        _sup.push({ id: _empFicha._supervisorId, nombre: 'Supervisor actual #' + _empFicha._supervisorId });
+      }
+      v.ficha.supervisorId = _empFicha._supervisorId == null ? '' : String(_empFicha._supervisorId);
+      v.ficha.supervisorOptions = _sup;
+      v.ficha.cambiarSupervisor = this.cambiarSupervisorFicha;
+      v.ficha.puedeAsignarSupervisor = !!v.puedeEscribirEmpleado && !!_empFicha._relacionActivaId;
       // Foto de perfil: el objectURL real (blob autenticado, no la URL de la API) vive en el
       // estado; el canvas deja la ficha con avatar de iniciales. Los controles reusan la
       // capacidad de escritura de empleados (el backend acota foto a RRHH/Admin igual que el ABM).
@@ -310,6 +374,11 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
         toggle: () => this.toggleCfgSec('tiposdoc'),
         chevron: 'width:18px;height:18px;flex:none;color:var(--text3);transition:transform .2s ease;transform:rotate(' + (_open.tiposdoc ? '0' : '-90') + 'deg)',
       };
+      v.cfgUI.puestos = {
+        abierta: !!_open.puestos,
+        toggle: () => this.toggleCfgSec('puestos'),
+        chevron: 'width:18px;height:18px;flex:none;color:var(--text3);transition:transform .2s ease;transform:rotate(' + (_open.puestos ? '0' : '-90') + 'deg)',
+      };
       // MEDIO-03: handler de teclado en cada acordeón, ahora incluida la sección nueva.
       Object.keys(v.cfgUI).forEach((k) => {
         const sec = v.cfgUI[k];
@@ -338,6 +407,31 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
     v.tipoDocModalTitle = this.state.orgEditId != null ? 'Editar tipo de documento' : 'Nuevo tipo de documento';
     v.openTipoDocNuevo = this.openTipoDocNuevo;
     v.submitTipoDoc = this.submitTipoDoc;
+    // Puestos: el nombre se resuelve dentro del sector; dos sectores pueden tener un
+    // "Encargado" distinto sin colisionar.
+    {
+      const _orgBtn = (bad) => 'display:inline-flex;align-items:center;justify-content:center;height:30px;padding:0 11px;font-size:11.5px;font-weight:600;border-radius:8px;cursor:pointer;border:1px solid ' + (bad ? 'var(--bad)' : 'var(--border2)') + ';background:' + (bad ? 'transparent' : 'var(--surface2)') + ';color:' + (bad ? 'var(--bad)' : 'var(--text)');
+      const sector = String(this.state.puestoSectorCfg || '');
+      v.puestosCfg = (this.state.puestosCfgData || []).filter((p) => !sector || String(p.sector) === sector).map((p) => ({
+        id: p.id, nombre: p.nombre, sectorNombre: p.sector_nombre, activo: p.activo,
+        estadoBadge: this.badge(p.activo ? 'ok' : 'neutral'), estadoLabel: p.activo ? 'Activo' : 'Inactivo',
+        nombreStyle: 'font-weight:600;color:' + (p.activo ? 'var(--text)' : 'var(--text3)'),
+        toggleLbl: p.activo ? 'Baja' : 'Reactivar', toggleStyle: _orgBtn(p.activo), editStyle: _orgBtn(false),
+        editar: () => this.openPuestoEdit(p.id), toggle: () => this.togglePuestoCfg(p.id),
+      }));
+    }
+    const _catalogos = window.CeiboAPI && window.CeiboAPI.catalogosUI
+      ? window.CeiboAPI.catalogosUI() : { empresas: [], sectores: [] };
+    v.catalogoEmpresas = _catalogos.empresas;
+    v.catalogoSectores = _catalogos.sectores;
+    v.puestoSectorCfg = String(this.state.puestoSectorCfg || '');
+    v.onPuestoSectorCfg = this.onPuestoSectorCfg;
+    v.openPuestoNuevo = this.openPuestoNuevo;
+    v.showPuestoModal = this.state.modal === 'puesto';
+    v.puestoModalTitle = this.state.puestoEditId != null ? 'Editar puesto' : 'Nuevo puesto';
+    v.puestoEditSector = String(this.state.puestoEditSector || '');
+    v.onPuestoEditSector = this.onPuestoEditSector;
+    v.submitPuesto = this.submitPuesto;
     // CU-29/30: filas reales del ABM de checklists (desde chkItemsData) pisando el mock del canvas,
     // con el mismo shape. En el ABM solo se define la plantilla; el "hecho" del ítem documental
     // vive en la tarjeta de la ficha, no acá.
@@ -358,11 +452,25 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
     }
     v.chkEmpresa = this.state.chkEmpresa;
     v.onChkEmpresa = this.onChkEmpresa;
+    v.chkSector = String(this.state.chkSector || '');
+    v.onChkSector = this.onChkSector;
     v.chkIngresoStyle = this.segStyle(this.state.chkTipo !== 'EGRESO');
     v.chkEgresoStyle = this.segStyle(this.state.chkTipo === 'EGRESO');
     v.setChkIngreso = this.setChkIngreso;
     v.setChkEgreso = this.setChkEgreso;
     v.openChkItemNuevo = this.openChkItemNuevo;
+    v.chkVersionLabel = this.state.chkVersion == null ? 'Sin versión' : 'v' + this.state.chkVersion;
+    v.chkEstadoLabel = this.state.chkEstado === 'BORRADOR' ? 'Borrador'
+      : this.state.chkEstado === 'PUBLICADA' ? 'Publicada'
+      : this.state.chkEstado === 'ARCHIVADA' ? 'Archivada' : 'Sin plantilla';
+    v.chkEstadoBadge = this.badge(this.state.chkEstado === 'PUBLICADA' ? 'ok'
+      : this.state.chkEstado === 'BORRADOR' ? 'warn' : 'neutral');
+    v.chkPuedeEditar = !!this.state.chkPuedeEditar;
+    v.chkPuedePublicar = this.state.chkEstado === 'BORRADOR';
+    v.chkPuedeArchivar = this.state.chkEstado === 'PUBLICADA' || this.state.chkEstado === 'BORRADOR';
+    v.crearBorradorChecklist = this.crearBorradorChecklist;
+    v.publicarChecklist = this.publicarChecklist;
+    v.archivarChecklist = this.archivarChecklist;
     v.submitChkItem = this.submitChkItem;
     v.showChkItemModal = this.state.modal === 'chkitem';
     v.chkItemModalTitle = this.state.chkItemEditId != null ? 'Editar ítem' : 'Nuevo ítem del checklist';
@@ -386,6 +494,12 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
           onColapso: this.toggleFichaChkColapso,
           onCargar: () => this.openDocNuevo(),
         });
+      } else if (d && d.puedeIniciar) {
+        v.fichaChk = {
+          hay: true, mostrarInicio: true,
+          tipoLabel: d.tipoProceso === 'EGRESO' ? 'Checklist de egreso' : 'Checklist de ingreso',
+          iniciar: this.iniciarChecklistFicha,
+        };
       } else {
         v.fichaChk = { hay: false };
       }
@@ -594,7 +708,7 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
       await this.reloadConfigVenc();   // el server manda: se descarta lo optimista
     }
   };
-  goCfg = () => { this.setView('config'); this.reloadConfigVenc(); this.reloadEmpresasCfg(); this.reloadSectoresCfg(); this.reloadTiposDocCfg(); this.reloadChecklist(); };
+  goCfg = () => { this.setView('config'); this.reloadConfigVenc(); this.reloadEmpresasCfg(); this.reloadSectoresCfg(); this.reloadPuestosCfg(); this.reloadTiposDocCfg(); this.reloadChecklist(); };
   openAltaNov = () => {
     // praxis: false a propósito (ALTO-02). El estado del canvas arranca con praxis:true, así que
     // un alta nueva abría con "Requiere praxis" activado y los campos médicos/ART visibles aunque
@@ -622,7 +736,8 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
         const p = n && n.prorrogas && n.prorrogas[this.state.editProrrogaIdx];
         if (p && p.id != null) editId = p.id;
       }
-      await window.CeiboAPI.submitNov(editId);
+      const guardada = await window.CeiboAPI.submitNov(editId);
+      if (guardada === false) return;   // canceló el motivo de rechazo/anulación: no cerrar
       this.setState({ modal: null, editNovId: null, editProrrogaIdx: null });
       await this.reloadNovedades();
     } catch (e) { console.error('[ceibo] novedad', e); window.CeiboAPI.toast(e.message || String(e), 'error'); }
@@ -639,13 +754,16 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
     try {
       const id = this._prorrogaId(novId, idx);
       if (id == null) throw new Error('prórroga no encontrada');
-      await window.CeiboAPI.transicionNov(id, accion);
+      const realizada = await window.CeiboAPI.transicionNov(id, accion);
+      if (realizada === false) return;  // cancelar el motivo no cambia estado ni refresca
       await this.reloadNovedades();
     } catch (e) { console.error('[ceibo] prórroga', e); window.CeiboAPI.toast(e.message || String(e), 'error'); }
   };
   aprobarProrroga = (novId, idx) => this._transProrroga(novId, idx, 'aprobar');
   rechazarProrroga = (novId, idx) => this._transProrroga(novId, idx, 'rechazar');
   anularProrroga = (novId, idx) => this._transProrroga(novId, idx, 'anular');
+  tomarProrroga = (novId, idx) => this._transProrroga(novId, idx, 'tomar');
+  cerrarProrroga = (novId, idx) => this._transProrroga(novId, idx, 'cerrar');
   openEditProrroga = (novId, idx) => {
     const id = this._prorrogaId(novId, idx);
     this.setState({ modal: 'altanov', editNovId: novId, editProrrogaIdx: idx,
@@ -654,13 +772,16 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
   };
   _transNov = async (accion) => {
     try {
-      await window.CeiboAPI.transicionNov(this.state.detNovId, accion);
+      const realizada = await window.CeiboAPI.transicionNov(this.state.detNovId, accion);
+      if (realizada === false) return;  // rechazo/anulación cancelados: ninguna mutación
       await this.reloadNovedades();   // el detalle se re-renderiza con el nuevo estado
     } catch (e) { console.error('[ceibo] transición', e); window.CeiboAPI.toast(e.message || String(e), 'error'); }
   };
   aprobarNov = () => this._transNov('aprobar');
   rechazarNov = () => this._transNov('rechazar');
   anularNov = () => this._transNov('anular');
+  tomarNov = () => this._transNov('tomar');
+  cerrarNov = () => this._transNov('cerrar');
   submitProrroga = async () => {
     try {
       await window.CeiboAPI.submitProrroga(this.state.detNovId);
@@ -676,13 +797,17 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
     setTimeout(() => window.CeiboAPI.prepareAlta(), 60);
     this._a11y('[data-modal="alta"]');
   };
-  openEdit = (id) => {
-    const emp = (this.state.empleados || []).find(e => e.id === id);
+  openEdit = async (id) => {
+    try {
+      // Nunca abrir el formulario de PII desde la fila-resumen: primero se obtiene el
+      // detalle auditado, para no mostrar vacíos ni sobrescribir datos que la lista oculta.
+      const emp = await this._cargarDetalleEmpleado(id);
     // Sembrar el toggle con el valor real: sin esto la ficha abría siempre en "no exento"
     // y guardar apagaba la exención de alguien que sí la tenía.
-    this.setState({ modal: 'alta', altaEditId: id, exento: !!(emp && emp.exento_marcacion) });
-    setTimeout(() => window.CeiboAPI.prefillAlta(emp), 60);
-    this._a11y('[data-modal="alta"]');
+      this.setState({ modal: 'alta', altaEditId: id, exento: !!(emp && emp.exento_marcacion) });
+      setTimeout(() => window.CeiboAPI.prefillAlta(emp), 60);
+      this._a11y('[data-modal="alta"]');
+    } catch (e) { console.error('[ceibo] detalle empleado', e); window.CeiboAPI.toast(e.message || String(e), 'error'); }
   };
   submitAlta = async () => {
     try {
@@ -699,6 +824,11 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
       await this.reloadEmpleados();
     } catch (e) { console.error('[ceibo] baja', e); window.CeiboAPI.toast(e.message || String(e), 'error'); }
   };
+  openReingreso = (id) => {
+    this.setState({ modal: 'reingreso', reingresoId: id });
+    setTimeout(() => window.CeiboAPI.prepareReingreso(), 60);
+    this._a11y('[data-modal="reingreso"]');
+  };
   confirmReingreso = async () => {
     try {
       const emp = (this.state.empleados || []).find(e => e.id === this.state.reingresoId);
@@ -707,17 +837,34 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
       await this.reloadEmpleados();
     } catch (e) { console.error('[ceibo] reingreso', e); window.CeiboAPI.toast(e.message || String(e), 'error'); }
   };
-  selectEmp = (id) => {
+  selectEmp = async (id) => {
     this.setState({ selEmp: id, view: 'ficha', fichaChkData: null, fichaChkExpandido: false,
       fichaAudData: null });
+    try { await this._cargarDetalleEmpleado(id); }
+    catch (e) { console.error('[ceibo] detalle empleado', e); window.CeiboAPI.toast(e.message || String(e), 'error'); }
+    if (this.state.selEmp !== id) return;  // otra ficha ganó mientras cargaba el detalle
     this.recargarDocs(id);
     this.recargarChecklistFicha(id);
     this.recargarFichaAud(id);
     this.ensureFoto(id);
   };
+  cambiarSupervisorFicha = async (e) => {
+    const supervisor = e && e.target ? e.target.value : '';
+    const emp = (this.state.empleados || []).find((x) => x.id === this.state.selEmp);
+    if (!emp || !emp._relacionActivaId) return;
+    try {
+      await window.CeiboAPI.asignarSupervisor(emp.id, emp._relacionActivaId, supervisor);
+      await this._cargarDetalleEmpleado(emp.id);
+      this.reloadDashboard();
+    } catch (err) {
+      console.error('[ceibo] supervisor', err);
+      window.CeiboAPI.toast(err.message || String(err), 'error');
+      await this._cargarDetalleEmpleado(emp.id);
+    }
+  };
   // ===== foto de perfil de la ficha (el canvas la deja en avatar de iniciales) =====
-  // La foto se descarga como blob con Authorization (media/ no es público), así que no puede
-  // ir directo en <img src> a la API: se cachea un objectURL en el estado por empleado.
+  // La foto se descarga como blob por el cliente autenticado y se cachea un objectURL
+  // en el estado por empleado para tratar 401/403 y controlar su ciclo de vida.
   // fotoUrlByEmp[id] === undefined => todavía no se intentó; '' => se intentó y no hay.
   ensureFoto = (id) => {
     if (id == null) return;
@@ -785,8 +932,7 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
     } catch (e) { console.error('[ceibo] documento', e); window.CeiboAPI.toast(e.message || String(e), 'error'); }
   };
   descargarDoc = async (id) => {
-    // No es un <a href>: el endpoint pide el header Authorization y un link plano no lo
-    // manda. Se baja con fetch autenticado y se entrega como blob.
+    // Pasa por el cliente común para tratar sesión vencida/permisos y entregar el blob.
     try { await window.CeiboAPI.descargarDoc(this.state.selEmp, id); }
     catch (e) { console.error('[ceibo] descarga', e); window.CeiboAPI.toast(e.message || String(e), 'error'); }
   };
@@ -903,6 +1049,55 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
       await this.reloadSectoresCfg();
     } catch (err) { console.error('[ceibo] baja sector', err); window.CeiboAPI.toast(err.message || String(err), 'error'); }
   };
+  // ===== Puestos parametrizados por sector =====
+  reloadPuestosCfg = async () => {
+    try {
+      const rows = await window.CeiboAPI.listPuestos();
+      const sectores = window.CeiboAPI.catalogosUI().sectores;
+      const elegido = this.state.puestoSectorCfg || (sectores[0] ? String(sectores[0].id) : '');
+      this.setState({ puestosCfgData: rows, puestoSectorCfg: elegido });
+    } catch (e) { console.warn('[ceibo] puestos cfg', e); }
+  };
+  onPuestoSectorCfg = (e) => this.setState({ puestoSectorCfg: e.target.value });
+  _readPuesto = (campo) => {
+    const el = document.querySelector('[data-modal="puesto"] [data-puesto="' + campo + '"]');
+    return el ? String(el.value || '').trim() : '';
+  };
+  _prefillPuesto = (nombre) => setTimeout(() => {
+    const el = document.querySelector('[data-modal="puesto"] [data-puesto="nombre"]');
+    if (el) el.value = nombre || '';
+  }, 60);
+  openPuestoNuevo = () => {
+    const sector = this.state.puestoSectorCfg ||
+      String((((this.state.sectoresCfgData || []).filter((s) => s.activo)[0] || {}).id) || '');
+    this.setState({ modal: 'puesto', puestoEditId: null, puestoEditSector: sector });
+    this._prefillPuesto('');
+    this._a11y('[data-modal="puesto"]');
+  };
+  openPuestoEdit = (id) => {
+    const p = (this.state.puestosCfgData || []).find((x) => x.id === id) || {};
+    this.setState({ modal: 'puesto', puestoEditId: id, puestoEditSector: String(p.sector || '') });
+    this._prefillPuesto(p.nombre || '');
+    this._a11y('[data-modal="puesto"]');
+  };
+  onPuestoEditSector = (e) => this.setState({ puestoEditSector: e.target.value });
+  submitPuesto = async () => {
+    try {
+      const datos = { nombre: this._readPuesto('nombre'), sector: Number(this.state.puestoEditSector) };
+      if (this.state.puestoEditId != null) await window.CeiboAPI.editarPuesto(this.state.puestoEditId, datos);
+      else await window.CeiboAPI.crearPuesto(datos);
+      this.setState({ modal: null, puestoEditId: null });
+      await this.reloadPuestosCfg();
+    } catch (e) { console.error('[ceibo] puesto', e); window.CeiboAPI.toast(e.message || String(e), 'error'); }
+  };
+  togglePuestoCfg = async (id) => {
+    try {
+      const p = (this.state.puestosCfgData || []).find((x) => x.id === id);
+      if (!p) return;
+      await window.CeiboAPI.togglePuestoActivo(id, !p.activo);
+      await this.reloadPuestosCfg();
+    } catch (e) { console.error('[ceibo] baja puesto', e); window.CeiboAPI.toast(e.message || String(e), 'error'); }
+  };
   // ===== Tipos de documento (ABM en Configuración — CU-31) =====
   // Mismo patrón que empresas/sectores: el TipoDocumentoViewSet ya soporta GET/POST/PATCH y baja
   // lógica (activo). El modal reusa data-org (nombre, descripcion) y el lector genérico
@@ -935,26 +1130,57 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
       await this.reloadTiposDocCfg();
     } catch (err) { console.error('[ceibo] baja tipo doc', err); window.CeiboAPI.toast(err.message || String(err), 'error'); }
   };
-  // ===== Checklists de ingreso/egreso (ABM en Configuración — CU-29/30) =====
-  // El ABM configura las plantillas por empresa+tipo_proceso. La plantilla se crea perezosamente
-  // al agregar el primer ítem. Los datos reales del selector actual viven en chkItemsData/chkPlantillaId;
-  // renderVals pisa el mock del canvas (checklistItems) con estos, igual que tiposDocCfg.
-  reloadChecklist = async (empresa, tipo) => {
+  // ===== Checklists versionados por empresa + sector + proceso =====
+  reloadChecklist = async (empresa, sector, tipo) => {
     const emp = empresa || this.state.chkEmpresa;
+    const sec = sector === undefined ? this.state.chkSector : sector;
     const tp = tipo || this.state.chkTipo;
     try {
-      const r = await window.CeiboAPI.listChecklist(emp, tp);
-      this.setState({ chkPlantillaId: r.plantillaId, chkItemsData: r.items });
-    } catch (e) { console.warn('[ceibo] checklist', e); this.setState({ chkPlantillaId: null, chkItemsData: [] }); }
+      const r = await window.CeiboAPI.listChecklist(emp, sec, tp);
+      this.setState({
+        chkEmpresa: r.empresaNombre || emp,
+        chkPlantillaId: r.plantillaId, chkItemsData: r.items,
+        chkVersion: r.version, chkEstado: r.estado, chkPuedeEditar: r.puedeEditar,
+      });
+    } catch (e) {
+      console.warn('[ceibo] checklist', e);
+      this.setState({ chkPlantillaId: null, chkItemsData: [], chkVersion: null, chkEstado: null, chkPuedeEditar: true });
+    }
   };
-  // La empresa/tipo se pasan explícitos a reloadChecklist para no leer un state todavía sin aplicar.
-  onChkEmpresa = (e) => { const v = e.target.value; this.setState({ chkEmpresa: v }); this.reloadChecklist(v, this.state.chkTipo); };
-  setChkIngreso = () => { this.setState({ chkTipo: 'INGRESO' }); this.reloadChecklist(this.state.chkEmpresa, 'INGRESO'); };
-  setChkEgreso = () => { this.setState({ chkTipo: 'EGRESO' }); this.reloadChecklist(this.state.chkEmpresa, 'EGRESO'); };
+  onChkEmpresa = (e) => { const v = e.target.value; this.setState({ chkEmpresa: v }); this.reloadChecklist(v, this.state.chkSector, this.state.chkTipo); };
+  onChkSector = (e) => { const v = e.target.value; this.setState({ chkSector: v }); this.reloadChecklist(this.state.chkEmpresa, v, this.state.chkTipo); };
+  setChkIngreso = () => { this.setState({ chkTipo: 'INGRESO' }); this.reloadChecklist(this.state.chkEmpresa, this.state.chkSector, 'INGRESO'); };
+  setChkEgreso = () => { this.setState({ chkTipo: 'EGRESO' }); this.reloadChecklist(this.state.chkEmpresa, this.state.chkSector, 'EGRESO'); };
+  crearBorradorChecklist = async () => {
+    try {
+      await window.CeiboAPI.crearPlantillaChecklist(this.state.chkEmpresa, this.state.chkSector, this.state.chkTipo);
+      await this.reloadChecklist(this.state.chkEmpresa, this.state.chkSector, this.state.chkTipo);
+    } catch (e) { console.error('[ceibo] crear borrador checklist', e); window.CeiboAPI.toast(e.message || String(e), 'error'); }
+  };
+  publicarChecklist = async () => {
+    try {
+      await window.CeiboAPI.publicarPlantillaChecklist(this.state.chkPlantillaId);
+      await this.reloadChecklist(this.state.chkEmpresa, this.state.chkSector, this.state.chkTipo);
+    } catch (e) { console.error('[ceibo] publicar checklist', e); window.CeiboAPI.toast(e.message || String(e), 'error'); }
+  };
+  archivarChecklist = async () => {
+    try {
+      await window.CeiboAPI.archivarPlantillaChecklist(this.state.chkPlantillaId);
+      await this.reloadChecklist(this.state.chkEmpresa, this.state.chkSector, this.state.chkTipo);
+    } catch (e) { console.error('[ceibo] archivar checklist', e); window.CeiboAPI.toast(e.message || String(e), 'error'); }
+  };
   _readChk = (campo) => { const el = document.querySelector('[data-modal="chkitem"] [data-chk="' + campo + '"]'); return el ? el.value : ''; };
   _prefillChk = (etiqueta) => setTimeout(() => { const el = document.querySelector('[data-modal="chkitem"] [data-chk="etiqueta"]'); if (el) el.value = etiqueta || ''; }, 60);
   _primerDocId = () => { const d = (this.state.tiposDocCfgData || []).filter((t) => t.activo)[0]; return d ? d.id : null; };
-  openChkItemNuevo = () => { this.setState({ modal: 'chkitem', chkItemEditId: null, chkItemTipo: 'ACCION', chkItemDoc: this._primerDocId() }); this._prefillChk(''); this._a11y('[data-modal="chkitem"]'); };
+  openChkItemNuevo = () => {
+    if (this.state.chkPlantillaId != null && !this.state.chkPuedeEditar) {
+      window.CeiboAPI.toast('La versión publicada no se edita. Creá un borrador nuevo.', 'error');
+      return;
+    }
+    this.setState({ modal: 'chkitem', chkItemEditId: null, chkItemTipo: 'ACCION', chkItemDoc: this._primerDocId() });
+    this._prefillChk('');
+    this._a11y('[data-modal="chkitem"]');
+  };
   openChkItemEdit = (id) => {
     const it = (this.state.chkItemsData || []).find((x) => x.id === id) || {};
     this.setState({ modal: 'chkitem', chkItemEditId: id, chkItemTipo: it.tipo || 'ACCION', chkItemDoc: it.tipo_documento != null ? it.tipo_documento : this._primerDocId() });
@@ -970,14 +1196,15 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
       const datos = { etiqueta: this._readChk('etiqueta'), tipo: tipo, tipo_documento: tipo_documento };
       let plantillaId = this.state.chkPlantillaId;
       if (plantillaId == null) {
-        // Primer ítem del checklist: se crea la plantilla en el acto (creación perezosa).
-        const pl = await window.CeiboAPI.crearPlantillaChecklist(this.state.chkEmpresa, this.state.chkTipo);
+        // Primer ítem del alcance: se crea su versión borrador.
+        const pl = await window.CeiboAPI.crearPlantillaChecklist(
+          this.state.chkEmpresa, this.state.chkSector, this.state.chkTipo);
         plantillaId = pl.id;
       }
       if (this.state.chkItemEditId != null) await window.CeiboAPI.editarChecklistItem(plantillaId, this.state.chkItemEditId, datos);
       else await window.CeiboAPI.agregarChecklistItem(plantillaId, datos);
       this.setState({ modal: null, chkItemEditId: null });
-      await this.reloadChecklist(this.state.chkEmpresa, this.state.chkTipo);
+      await this.reloadChecklist(this.state.chkEmpresa, this.state.chkSector, this.state.chkTipo);
     } catch (e) { console.error('[ceibo] checklist item', e); window.CeiboAPI.toast(e.message || String(e), 'error'); }
   };
   toggleChkItem = async (id) => {
@@ -985,12 +1212,11 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
       const it = (this.state.chkItemsData || []).find((x) => x.id === id);
       if (!it || this.state.chkPlantillaId == null) return;
       await window.CeiboAPI.toggleChecklistItem(this.state.chkPlantillaId, id, !it.activo);
-      await this.reloadChecklist(this.state.chkEmpresa, this.state.chkTipo);
+      await this.reloadChecklist(this.state.chkEmpresa, this.state.chkSector, this.state.chkTipo);
     } catch (e) { console.error('[ceibo] toggle checklist item', e); window.CeiboAPI.toast(e.message || String(e), 'error'); }
   };
   // ===== Tarjeta de checklist en la ficha (CU-29/30) =====
-  // El back crea el proceso perezosamente al pedir la tarjeta y decide onboarding/offboarding
-  // según el estado de la relación. fichaChkData guarda la tarjeta del empleado abierto.
+  // GET solo consulta. El usuario inicia el proceso de forma explícita desde la ficha.
   recargarChecklistFicha = async (id) => {
     try { this.setState({ fichaChkData: await window.CeiboAPI.getChecklistFicha(id) }); }
     catch (e) { console.warn('[ceibo] checklist ficha', e); this.setState({ fichaChkData: { hay: false } }); }
@@ -1007,11 +1233,18 @@ BLOQUE_INTEGRACION = r"""  // ===== integración con el backend (inyectado por b
       this.setState({ fichaChkData: tarjeta });
     } catch (e) { console.error('[ceibo] tildar checklist ficha', e); window.CeiboAPI.toast(e.message || String(e), 'error'); }
   };
+  iniciarChecklistFicha = async () => {
+    try {
+      const meta = this.state.fichaChkData;
+      const tarjeta = await window.CeiboAPI.iniciarChecklistFicha(this.state.selEmp, meta);
+      this.setState({ fichaChkData: tarjeta });
+    } catch (e) { console.error('[ceibo] iniciar checklist ficha', e); window.CeiboAPI.toast(e.message || String(e), 'error'); }
+  };
 
   // ===== Bitácora (RP8) ==================================================================
   // Módulo nuevo, sin mock en el canvas: arranca en null y se carga al entrar. Solo Admin
   // llega hasta acá (la entrada del menú se esconde con la capacidad `auditoria_ver`), pero
-  // igual se maneja el 403 por si alguien navega con un token de otro rol.
+  // igual se maneja el 403 por si cambia el rol durante una sesión.
   goAud = () => { this.setView('auditoria'); this.reloadAuditoria(1); };
 
   reloadAuditoria = async (page) => {
@@ -1093,10 +1326,26 @@ EDICIONES = [
         '<meta http-equiv="Cache-Control" content="no-cache, must-revalidate">',
         "head: no cachear index.html",
     ),
+    # --- sesión Django: retirar del artefacto el contrato JWT viejo del canvas ---
+    (
+        '          <div style="font-size:11px;color:var(--text3);margin-top:14px;line-height:1.5;text-align:center">La sesión se cierra al cerrar la pestaña.</div>',
+        '          <div style="font-size:11px;color:var(--text3);margin-top:14px;line-height:1.5;text-align:center">Al terminar, usá Cerrar sesión si el equipo es compartido.</div>',
+        "login: recomendación de cierre de sesión",
+    ),
+    (
+        "    // /auth/token/ responde, y la vuelve a false al vencer el refresh o al cerrar sesión.",
+        "    // /auth/login/ abre la sesión y un 401 la vuelve a false; logout la cierra.",
+        "canvas: comentario de sesión Django",
+    ),
+    (
+        "  // reales a /auth/token/, y `userNombre`/`userRol` por los datos de /mi/perfil/.",
+        "  // reales a /auth/login/, y `userNombre`/`userRol` por los datos de /mi/perfil/.",
+        "canvas: comentario de login Django",
+    ),
     # --- state: campos nuevos ---
     (
         "theme: 'dark', view: 'dashboard', selEmp: 1,",
-        "theme: 'dark', view: 'dashboard', selEmp: 1,\n    empleados: null, novedades: null, dashboard: null, reportes: null, apiErr: null, altaEditId: null, tiposDoc: null, vencimientos: null, alertasDiaData: null, cfgVenc: null,\n    empresasCfgData: null, sectoresCfgData: null, tiposDocCfgData: null, fotoUrlByEmp: {},\n    cargaInicial: 'cargando',",
+        "theme: 'dark', view: 'dashboard', selEmp: 1,\n    empleados: null, novedades: null, dashboard: null, reportes: null, apiErr: null, altaEditId: null, tiposDoc: null, vencimientos: null, alertasDiaData: null, cfgVenc: null,\n    empresasCfgData: null, sectoresCfgData: null, puestosCfgData: null, tiposDocCfgData: null, fotoUrlByEmp: {},\n    puestoSectorCfg: '', puestoEditId: null, puestoEditSector: '',\n    chkSector: '', chkVersion: null, chkEstado: null, chkPuedeEditar: true,\n    auditoria: null, audPage: 1, audCargando: false, audErr: null, fichaAudData: null,\n    audFiltros: { accion: '', desde: '', hasta: '', empleado: '' },\n    cargaInicial: 'cargando',",
         "state: campos de integración",
     ),
     # --- novBase(): usar datos reales si están cargados ---
@@ -1167,7 +1416,7 @@ EDICIONES = [
     ),
     (
         "style=\"background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:430px;max-width:100%",
-        "data-modal=\"reingreso\" style=\"background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:430px;max-width:100%",
+        "data-modal=\"reingreso\" style=\"background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:620px;max-width:100%",
         "modal reingreso: data-modal",
     ),
     (
@@ -1181,8 +1430,8 @@ EDICIONES = [
         "modal prórroga: data-modal",
     ),
     (
-        "style=\"background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:520px;max-width:100%",
-        "data-modal=\"doc\" style=\"background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:520px;max-width:100%",
+        '<div onClick="{{ stop }}" role="dialog" aria-modal="true" aria-label="Cargar documento" style="background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:520px;max-width:100%',
+        '<div onClick="{{ stop }}" data-modal="doc" role="dialog" aria-modal="true" aria-label="Cargar documento" style="background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:520px;max-width:100%',
         "modal documento: data-modal",
     ),
     (
@@ -1213,6 +1462,88 @@ EDICIONES = [
         '<button onClick="{{ submitProrroga }}" style="background:var(--accent);border:none;color:#04201C;font-weight:600;font-size:13px;border-radius:10px;padding:0 20px;height:40px;cursor:pointer">Registrar prórroga</button>',
         "botón Registrar prórroga → submitProrroga",
     ),
+    # --- flujo completo de novedades: REGISTRADA→EN_PROCESO y APROBADA→CERRADA ---
+    # El canvas todavía no expone estas dos acciones. Se agregan en el artefacto generado
+    # sin tocar design/: tanto la madre como cada prórroga usan los endpoints dedicados.
+    (
+        "      canEdit: p.estado==='Registrada',\n"
+        "      canAprobar: p.estado==='Registrada' || p.estado==='En proceso',\n"
+        "      canRechazar: p.estado==='Registrada' || p.estado==='En proceso',\n"
+        "      canAnular: !this.esTerminal(p.estado),",
+        "      canEdit: p.estado==='Registrada',\n"
+        "      canTomar: p.estado==='Registrada',\n"
+        "      canAprobar: p.estado==='Registrada' || p.estado==='En proceso',\n"
+        "      canRechazar: p.estado==='Registrada' || p.estado==='En proceso',\n"
+        "      canCerrar: p.estado==='Aprobada',\n"
+        "      canAnular: !this.esTerminal(p.estado),",
+        "novedades: estados Tomar/Cerrar en prórrogas",
+    ),
+    (
+        "      doEdit:()=>this.openEditProrroga(dn.id,i),\n"
+        "      doAprobar:()=>this.aprobarProrroga(dn.id,i),\n"
+        "      doRechazar:()=>this.rechazarProrroga(dn.id,i),\n"
+        "      doAnular:()=>this.anularProrroga(dn.id,i)",
+        "      doEdit:()=>this.openEditProrroga(dn.id,i),\n"
+        "      doTomar:()=>this.tomarProrroga(dn.id,i),\n"
+        "      doAprobar:()=>this.aprobarProrroga(dn.id,i),\n"
+        "      doRechazar:()=>this.rechazarProrroga(dn.id,i),\n"
+        "      doCerrar:()=>this.cerrarProrroga(dn.id,i),\n"
+        "      doAnular:()=>this.anularProrroga(dn.id,i)",
+        "novedades: handlers Tomar/Cerrar en prórrogas",
+    ),
+    (
+        "    const noActions={isProrroga:false, canEdit:false, canAprobar:false, canRechazar:false, canAnular:false};",
+        "    const noActions={isProrroga:false, canEdit:false, canTomar:false, canAprobar:false, canRechazar:false, canCerrar:false, canAnular:false};",
+        "novedades: defaults Tomar/Cerrar de la madre",
+    ),
+    (
+        "      canEdit: dn.estado==='Registrada',\n"
+        "      canAprobar: dn.estado==='Registrada' || dn.estado==='En proceso',\n"
+        "      canRechazar: dn.estado==='Registrada' || dn.estado==='En proceso',\n"
+        "      canAnular: !this.esTerminal(dn.estado),",
+        "      canEdit: dn.estado==='Registrada',\n"
+        "      canTomar: dn.estado==='Registrada',\n"
+        "      canAprobar: dn.estado==='Registrada' || dn.estado==='En proceso',\n"
+        "      canRechazar: dn.estado==='Registrada' || dn.estado==='En proceso',\n"
+        "      canCerrar: dn.estado==='Aprobada',\n"
+        "      canAnular: !this.esTerminal(dn.estado),",
+        "novedades: estados Tomar/Cerrar en detalle",
+    ),
+    (
+        '                      <sc-if value="{{ t.canAprobar }}" hint-placeholder-val="{{ false }}">\n'
+        '                        <button onClick="{{ t.doAprobar }}" style="{{ t.aprobarBtn }}">Aprobar</button>\n'
+        '                      </sc-if>',
+        '                      <sc-if value="{{ t.canTomar }}" hint-placeholder-val="{{ false }}">\n'
+        '                        <button onClick="{{ t.doTomar }}" style="{{ t.editBtn }}">Tomar</button>\n'
+        '                      </sc-if>\n'
+        '                      <sc-if value="{{ t.canAprobar }}" hint-placeholder-val="{{ false }}">\n'
+        '                        <button onClick="{{ t.doAprobar }}" style="{{ t.aprobarBtn }}">Aprobar</button>\n'
+        '                      </sc-if>\n'
+        '                      <sc-if value="{{ t.canCerrar }}" hint-placeholder-val="{{ false }}">\n'
+        '                        <button onClick="{{ t.doCerrar }}" style="{{ t.aprobarBtn }}">Cerrar novedad</button>\n'
+        '                      </sc-if>',
+        "novedades: botones Tomar/Cerrar en prórrogas",
+    ),
+    (
+        '          <sc-if value="{{ detNov.canRechazar }}" hint-placeholder-val="{{ false }}">\n'
+        '            <button onClick="{{ rechazarNov }}" style="background:var(--surface);border:1px solid var(--border2);color:var(--bad);font-weight:600;font-size:13px;border-radius:10px;padding:0 18px;height:40px;cursor:pointer">Rechazar</button>\n'
+        '          </sc-if>',
+        '          <sc-if value="{{ detNov.canTomar }}" hint-placeholder-val="{{ false }}">\n'
+        '            <button onClick="{{ tomarNov }}" style="background:var(--accent);border:none;color:#04201C;font-weight:600;font-size:13px;border-radius:10px;padding:0 18px;height:40px;cursor:pointer">Tomar</button>\n'
+        '          </sc-if>\n'
+        '          <sc-if value="{{ detNov.canRechazar }}" hint-placeholder-val="{{ false }}">\n'
+        '            <button onClick="{{ rechazarNov }}" style="background:var(--surface);border:1px solid var(--border2);color:var(--bad);font-weight:600;font-size:13px;border-radius:10px;padding:0 18px;height:40px;cursor:pointer">Rechazar</button>\n'
+        '          </sc-if>',
+        "novedades: botón Tomar en detalle",
+    ),
+    (
+        '          <button onClick="{{ closeModal }}" style="background:var(--surface);border:1px solid var(--border2);color:var(--text);font-weight:600;font-size:13px;border-radius:10px;padding:0 18px;height:40px;cursor:pointer">Cerrar</button>',
+        '          <sc-if value="{{ detNov.canCerrar }}" hint-placeholder-val="{{ false }}">\n'
+        '            <button onClick="{{ cerrarNov }}" style="background:var(--ok);border:none;color:#fff;font-weight:600;font-size:13px;border-radius:10px;padding:0 18px;height:40px;cursor:pointer">Cerrar novedad</button>\n'
+        '          </sc-if>\n'
+        '          <button onClick="{{ closeModal }}" style="background:var(--surface);border:1px solid var(--border2);color:var(--text);font-weight:600;font-size:13px;border-radius:10px;padding:0 18px;height:40px;cursor:pointer">Cerrar</button>',
+        "novedades: botón Cerrar en detalle",
+    ),
     # --- template: título del modal dinámico (Alta / Editar) ---
     (
         'font-size:17px;color:var(--text)">Alta de empleado</div>',
@@ -1230,10 +1561,30 @@ EDICIONES = [
     #  el cableado de esos botones al backend está en BLOQUE_INTEGRACION —overrides de
     #  aprobarProrroga/rechazarProrroga/anularProrroga/openEditProrroga—.)
 
-    # (El filtro por empleado del grid de novedades —input + datalist, state novEmp,
-    #  handler, condición en filteredNov y helper normEmp— ya no se inyecta: se subió al
-    #  canvas el 2026-07-15 y el export del 2026-07-15 lo trae de fábrica. Sus 6 ediciones
-    #  se borraron de acá al promoverlo, que era justo lo que su comentario indicaba hacer.)
+    # --- identidad de empleado en Novedades: ID como valor, legajo+nombre como etiqueta ---
+    # El canvas usa un datalist de nombres. Dos homónimos son indistinguibles y el alta terminaba
+    # resolviendo "el primer nombre que coincida". Esta inyección es provisoria de integración:
+    # el selector se promueve luego por DesignSync; design/ sigue siendo un export intacto.
+    (
+        '            <input value="{{ novEmp }}" onInput="{{ onNovEmp }}" list="nov-emp-list" autocomplete="off" placeholder="Filtrar por empleado…" style="border:none;background:transparent;outline:none;color:var(--text);font-size:13px;width:100%"/>\n'
+        '            <datalist id="nov-emp-list"><sc-for list="{{ novEmpOptions }}" as="o" hint-placeholder-count="3"><option value="{{ o.name }}"></option></sc-for></datalist>',
+        '            <select value="{{ novEmp }}" onChange="{{ onNovEmp }}" aria-label="Filtrar novedades por empleado" style="border:none;background:transparent;outline:none;color:var(--text);font-size:13px;width:100%">\n'
+        '              <option value="">Todos los empleados</option>\n'
+        '              <sc-for list="{{ novEmpOptions }}" as="o" hint-placeholder-count="3"><option value="{{ o.id }}">{{ o.label }}</option></sc-for>\n'
+        '            </select>',
+        "novedades: selector de empleado por ID",
+    ),
+    (
+        "      const q=this.normEmp(S.novEmp);\n"
+        "      if(q && !this.normEmp(n.emp).includes(q)) return false;",
+        "      if(S.novEmp && String(n._empId)!==String(S.novEmp)) return false;",
+        "novedades: filtro de empleado por ID",
+    ),
+    (
+        "      novEmp:S.novEmp, onNovEmp:this.onNovEmp, novEmpOptions:[...new Set(this.novList().map(n=>n.emp))].sort().map(name=>({name})),",
+        "      novEmp:S.novEmp, onNovEmp:this.onNovEmp, novEmpOptions:[...new Set(this.novList().map(n=>n._empId))].map(id=>{const e=emps.find(x=>String(x.id)===String(id));return {id:String(id),label:e?((e.legajo?e.legajo+' · ':'')+e.name):String(id)}}),",
+        "novedades: opciones con ID, legajo y nombre",
+    ),
 
     # --- template: botón Guardar documento → submitDoc (el canvas lo deja en closeModal) ---
     (
@@ -1263,8 +1614,23 @@ EDICIONES = [
     ),
     (
         "      if(q && !(e.name.toLowerCase().indexOf(q)>=0 || e.dni.indexOf(q)>=0)) return false;",
-        "      if(q && !(this.normBusq(e.name).indexOf(q)>=0 || String(e.dni||'').replace(/\\./g,'').indexOf(q)>=0)) return false;",
-        "empleados: comparar sin tildes ni puntos",
+        "      if(q && !(this.normBusq(e.name).indexOf(q)>=0 || this.normBusq(e.legajo).indexOf(q)>=0 || String(e.dni||'').replace(/\\./g,'').indexOf(q)>=0)) return false;",
+        "empleados: comparar nombre, legajo y DNI normalizados",
+    ),
+    (
+        '<div style="font-size:11px;color:var(--text3)">DNI {{ e.dni }}</div>',
+        '<div style="font-size:11px;color:var(--text3)">Legajo {{ e.legajo }}</div>',
+        "empleados: mostrar legajo real en la lista",
+    ),
+    (
+        "{k:'Legajo (sistema)', v:'LEG-'+String(raw.id).padStart(4,'0')},",
+        "{k:'Legajo', v:raw.legajo||'—'},",
+        "ficha: mostrar legajo real del backend",
+    ),
+    (
+        "    const fnov = this.novList().filter(n=>n.emp===raw.name).map(n=>{",
+        "    const fnov = this.novList().filter(n=>String(n._empId)===String(raw.id)).map(n=>{",
+        "ficha: asociar novedades por empleado ID",
     ),
     # --- empleados: el contador tiene que describir el filtro puesto (BUG-09) ---
     # Con "Inactivos" seleccionado decía "Mostrando 0 de 12 activos": ni la palabra ni el
@@ -1471,9 +1837,14 @@ EDICIONES = [
     (
         '<link rel="preconnect" href="https://fonts.googleapis.com">',
         '<meta name="theme-color" content="#EEF2F7">\n'
-        '<script>try{var _t=localStorage.getItem("ceibo-th")||"light";document.documentElement.setAttribute("data-th",_t);var _m=document.getElementsByName("theme-color")[0];if(_m)_m.setAttribute("content",_t==="dark"?"#0A1120":"#EEF2F7");}catch(e){}</script>\n'
-        '<link rel="preconnect" href="https://fonts.googleapis.com">',
+        '<script src="./ceibo-theme.js"></script>',
         "MEDIO: theme-color (sigue al tema, sin flash)",
+    ),
+    (
+        '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>\n'
+        '<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">',
+        "",
+        "producción: sin Google Fonts ni dependencias externas",
     ),
 
     # --- MEDIO: la foto de perfil declara tamaño por style pero no con atributos width/height,
@@ -1496,11 +1867,14 @@ EDICIONES = [
         "MENOR: tabular-nums + text-wrap",
     ),
 
-    # --- MENOR: el campo Nombre del alta no ofrece autocompletar (Email/Teléfono ya lo hacen). ---
+    # --- Identidad: nombre y apellido son campos distintos en el contrato Django. El canvas
+    #     todavía trae un único campo; se separa acá sin tocar el export y luego se promueve
+    #     visualmente por DesignSync. Así un nombre compuesto no se reinterpreta al editar. ---
     (
-        '<input placeholder="Ej. Juan Pérez" style="{{ inputStyle }}"/>',
-        '<input autocomplete="name" placeholder="Ej. Juan Pérez" style="{{ inputStyle }}"/>',
-        "MENOR: autocomplete nombre",
+        '<div style="grid-column:span 2"><div style="{{ lblStyle }}">Nombre y apellido ·</div><input placeholder="Ej. Juan Pérez" style="{{ inputStyle }}"/></div>',
+        '<div><div style="{{ lblStyle }}">Nombre ·</div><input autocomplete="given-name" placeholder="Ej. Juan Carlos" style="{{ inputStyle }}"/></div>\n'
+        '              <div><div style="{{ lblStyle }}">Apellido ·</div><input autocomplete="family-name" placeholder="Ej. Pérez Gómez" style="{{ inputStyle }}"/></div>',
+        "empleado: nombre y apellido separados",
     ),
 
     # ===== accesibilidad: cierre del hallazgo #1 (auditoría 2026-07-22) =====
@@ -1581,11 +1955,6 @@ EDICIONES = [
         '<input value="{{ empSearch }}" onInput="{{ onSearch }}" aria-label="Buscar empleado" placeholder="Buscar empleado…"',
         "A11Y-2307: aria-label del buscador del header",
     ),
-    (
-        '<input value="{{ novEmp }}" onInput="{{ onNovEmp }}" list="nov-emp-list" autocomplete="off" placeholder="Filtrar por empleado…"',
-        '<input value="{{ novEmp }}" onInput="{{ onNovEmp }}" list="nov-emp-list" autocomplete="off" aria-label="Filtrar novedades por empleado" placeholder="Filtrar por empleado…"',
-        "A11Y-2307: aria-label del filtro de empleado (novedades)",
-    ),
 
     # --- HALLAZGO C: los gráficos SVG de Reportes no tienen alternativa textual.
     #     · La dona de "Motivos de egreso" es puramente visual: la leyenda de al lado ya trae
@@ -1642,6 +2011,194 @@ EDICIONES = [
         '<div onClick="{{ stop }}" data-modal="chkitem" role="dialog" aria-modal="true" aria-label="Alta y edición de ítem de checklist" style="background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:520px;max-width:100%',
         "CU-29/30 data-modal: modal ítem de checklist",
     ),
+    # El puesto dejó de ser texto libre: depende del sector y se parametriza desde Configuración.
+    (
+        '<div><div style="{{ lblStyle }}">Puesto</div><input placeholder="Ej. Administrativo/a" style="{{ inputStyle }}"/></div>',
+        '<div><div style="{{ lblStyle }}">Puesto ·</div><select style="{{ inputStyle }}"><option value="">Primero seleccioná un sector</option></select></div>',
+        "puestos: selector sector-aware en alta",
+    ),
+    (
+        '<div><div style="{{ lblStyle }}">ID de huella</div><input placeholder="Ej. HUELLA-0042" style="{{ inputStyle }}"/></div>',
+        '<div><div style="{{ lblStyle }}">Supervisor</div><select style="{{ inputStyle }}"><option value="">Sin supervisor asignado</option></select></div>\n'
+        '              <div><div style="{{ lblStyle }}">ID de huella</div><input placeholder="Ej. HUELLA-0042" style="{{ inputStyle }}"/></div>',
+        "supervisor: selector en alta de relación",
+    ),
+    (
+        '<button onClick="{{ ficha.requestBaja }}" style="{{ ficha.bajaBtn }}" style-hover="filter:brightness(1.04)">{{ ficha.bajaLbl }}</button>',
+        '<sc-if value="{{ ficha.puedeAsignarSupervisor }}" hint-placeholder-val="{{ true }}">\n'
+        '            <select value="{{ ficha.supervisorId }}" onChange="{{ ficha.cambiarSupervisor }}" aria-label="Supervisor de la relación activa" style="height:38px;max-width:210px;border-radius:10px;border:1px solid var(--border2);background:var(--surface2);color:var(--text);font-size:12px;padding:0 10px">\n'
+        '              <option value="">Sin supervisor</option>\n'
+        '              <sc-for list="{{ ficha.supervisorOptions }}" as="s" hint-placeholder-count="3"><option value="{{ s.id }}">{{ s.nombre }}</option></sc-for>\n'
+        '            </select>\n'
+        '            </sc-if>\n'
+        '            <button onClick="{{ ficha.requestBaja }}" style="{{ ficha.bajaBtn }}" style-hover="filter:brightness(1.04)">{{ ficha.bajaLbl }}</button>',
+        "supervisor: reasignación en ficha activa",
+    ),
+    # Reingreso: una nueva relación debe volver a pedir todo su encuadre, sin heredar silenciosamente.
+    (
+        '<div style="font-size:13px;color:var(--text2);margin-top:8px;line-height:1.55">Esto registra una <b style="color:var(--text)">nueva relación laboral activa</b> en la misma empresa. El empleado vuelve a estado <b style="color:var(--text)">Activo</b> y conserva su historial anterior. Indicá la <b style="color:var(--text)">fecha de reincorporación</b>: es la base de la nueva antigüedad.</div>\n'
+        '        <div style="margin-top:16px"><div style="{{ lblStyle }}">Fecha de reincorporación</div><div style="position:relative"><input placeholder="dd/mm/aaaa (vacío = hoy)" maxlength="10" onInput="{{ maskDate }}" style="{{ inputStyle }};padding-right:36px"/><input type="date" onChange="{{ pickDate }}" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);width:22px;height:22px;opacity:0;cursor:pointer;border:none;background:transparent"/><svg style="position:absolute;right:9px;top:50%;transform:translateY(-50%);pointer-events:none" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></div></div>',
+        '<div style="font-size:13px;color:var(--text2);margin-top:8px;line-height:1.55">Esto registra una <b style="color:var(--text)">nueva relación laboral activa</b> sin modificar el historial anterior. Volvé a elegir empresa, sector, puesto y fecha para esta reincorporación.</div>\n'
+        '        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:16px">\n'
+        '          <div><div style="{{ lblStyle }}">Empresa ·</div><select data-reingreso="empresa" style="{{ inputStyle }}"><option value="">Seleccionar empresa…</option></select></div>\n'
+        '          <div><div style="{{ lblStyle }}">Sector ·</div><select data-reingreso="sector" style="{{ inputStyle }}"><option value="">Seleccionar sector…</option></select></div>\n'
+        '          <div><div style="{{ lblStyle }}">Puesto ·</div><select data-reingreso="puesto" style="{{ inputStyle }}"><option value="">Primero seleccioná un sector</option></select></div>\n'
+        '          <div><div style="{{ lblStyle }}">Fecha de reincorporación ·</div><div style="position:relative"><input data-reingreso="fecha" placeholder="dd/mm/aaaa" maxlength="10" onInput="{{ maskDate }}" style="{{ inputStyle }};padding-right:36px"/><input type="date" onChange="{{ pickDate }}" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);width:22px;height:22px;opacity:0;cursor:pointer;border:none;background:transparent"/><svg style="position:absolute;right:9px;top:50%;transform:translateY(-50%);pointer-events:none" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></div></div>\n'
+        '          <div style="grid-column:span 2"><div style="{{ lblStyle }}">Supervisor</div><select data-reingreso="supervisor" style="{{ inputStyle }}"><option value="">Sin supervisor asignado</option></select></div>\n'
+        '        </div>',
+        "reingreso: empresa, sector, puesto y fecha explícitos",
+    ),
+    # Sección nueva de Configuración. El snapshot no se edita: el build la inserta antes de
+    # Tipos de documento y falla si ese límite semántico desaparece.
+    (
+        '        <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;box-shadow:var(--shadow);margin-top:16px;overflow:hidden">\n'
+        '          <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;padding:20px 24px 16px">\n'
+        '            <div onClick="{{ cfgUI.tiposdoc.toggle }}"',
+        '''        <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;box-shadow:var(--shadow);margin-top:16px;overflow:hidden">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;padding:20px 24px 16px">
+            <div onClick="{{ cfgUI.puestos.toggle }}" role="button" tabindex="0" aria-expanded="{{ cfgUI.puestos.abierta }}" onKeyDown="{{ cfgUI.puestos.toggleKey }}" style="display:flex;align-items:center;gap:12px;cursor:pointer;user-select:none;flex:1;min-width:0">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="{{ cfgUI.puestos.chevron }}"><path d="m6 9 6 6 6-6"/></svg>
+              <div style="min-width:0">
+                <div style="font-weight:600;font-size:15px;color:var(--text)">Puestos por sector</div>
+                <div style="font-size:12.5px;color:var(--text3)">Cada sector define sus puestos (por ejemplo Chofer junior, intermedio y avanzado). Baja lógica.</div>
+              </div>
+            </div>
+            <sc-if value="{{ puedeConfig }}" hint-placeholder-val="{{ true }}">
+            <button onClick="{{ openPuestoNuevo }}" style="background:var(--accent);border:none;color:#04201C;font-weight:600;font-size:12.5px;border-radius:10px;padding:0 15px;height:36px;cursor:pointer;white-space:nowrap">+ Nuevo puesto</button>
+            </sc-if>
+          </div>
+          <sc-if value="{{ cfgUI.puestos.abierta }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:0 24px 14px">
+            <label style="font-size:12px;color:var(--text3)">Sector</label>
+            <select value="{{ puestoSectorCfg }}" onChange="{{ onPuestoSectorCfg }}" style="{{ selStyle }}">
+              <sc-for list="{{ catalogoSectores }}" as="s" hint-placeholder-count="4"><option value="{{ s.id }}">{{ s.nombre }}</option></sc-for>
+            </select>
+          </div>
+          <div style="overflow-x:auto">
+            <div style="min-width:520px">
+              <div style="display:grid;grid-template-columns:1.5fr 1.2fr .7fr 150px;gap:12px;padding:10px 24px;border-top:1px solid var(--border);border-bottom:1px solid var(--border);font-size:11px;font-weight:600;letter-spacing:.04em;color:var(--text3);background:var(--surface2)">
+                <div>PUESTO</div><div>SECTOR</div><div>ESTADO</div><div></div>
+              </div>
+              <sc-for list="{{ puestosCfg }}" as="p" hint-placeholder-count="4">
+                <div style="display:grid;grid-template-columns:1.5fr 1.2fr .7fr 150px;gap:12px;padding:13px 24px;border-bottom:1px solid var(--border);align-items:center;font-size:13px">
+                  <div style="{{ p.nombreStyle }}">{{ p.nombre }}</div>
+                  <div style="color:var(--text2)">{{ p.sectorNombre }}</div>
+                  <div><span style="{{ p.estadoBadge }}">{{ p.estadoLabel }}</span></div>
+                  <sc-if value="{{ puedeConfig }}" hint-placeholder-val="{{ true }}">
+                  <div style="display:flex;gap:7px;justify-content:flex-end">
+                    <button onClick="{{ p.editar }}" style="{{ p.editStyle }}">Editar</button>
+                    <button onClick="{{ p.toggle }}" style="{{ p.toggleStyle }}">{{ p.toggleLbl }}</button>
+                  </div>
+                  </sc-if>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+          </sc-if>
+        </div>
+
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;box-shadow:var(--shadow);margin-top:16px;overflow:hidden">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;padding:20px 24px 16px">
+            <div onClick="{{ cfgUI.tiposdoc.toggle }}"''',
+        "puestos: sección parametrizada por sector",
+    ),
+    # Modal de alta/edición de puesto.
+    (
+        '  <sc-if value="{{ showTipoDocModal }}" hint-placeholder-val="{{ false }}">',
+        '''  <sc-if value="{{ showPuestoModal }}" hint-placeholder-val="{{ false }}">
+    <div onClick="{{ closeModal }}" style="position:fixed;inset:0;background:rgba(4,8,16,.6);backdrop-filter:blur(3px);display:flex;align-items:flex-start;justify-content:center;padding:8vh 20px;z-index:50;animation:ov .2s ease both">
+      <div onClick="{{ stop }}" data-modal="puesto" role="dialog" aria-modal="true" aria-label="Alta y edición de puesto" style="background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:500px;max-width:100%;box-shadow:0 30px 80px rgba(0,0,0,.5);animation:pop .28s cubic-bezier(.2,.9,.3,1) both">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:20px 24px;border-bottom:1px solid var(--border)">
+          <div><div style="font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:17px;color:var(--text)">{{ puestoModalTitle }}</div><div style="font-size:12px;color:var(--text3)">El nombre es único dentro del sector</div></div>
+          <button onClick="{{ closeModal }}" aria-label="Cerrar" style="width:32px;height:32px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text2);cursor:pointer;font-size:16px">✕</button>
+        </div>
+        <div style="padding:20px 24px;display:flex;flex-direction:column;gap:14px">
+          <div><div style="{{ lblStyle }}">Sector ·</div>
+            <select value="{{ puestoEditSector }}" onChange="{{ onPuestoEditSector }}" style="{{ inputStyle }}">
+              <option value="">Seleccionar sector…</option>
+              <sc-for list="{{ catalogoSectores }}" as="s" hint-placeholder-count="4"><option value="{{ s.id }}">{{ s.nombre }}</option></sc-for>
+            </select>
+          </div>
+          <div><div style="{{ lblStyle }}">Nombre ·</div><input data-puesto="nombre" placeholder="Ej. Chofer avanzado" style="{{ inputStyle }}"/></div>
+        </div>
+        <div style="display:flex;justify-content:flex-end;gap:10px;padding:16px 24px;border-top:1px solid var(--border)">
+          <button onClick="{{ closeModal }}" style="background:var(--surface);border:1px solid var(--border2);color:var(--text);font-weight:600;font-size:13px;border-radius:10px;padding:0 18px;height:40px;cursor:pointer">Cancelar</button>
+          <button onClick="{{ submitPuesto }}" style="background:var(--accent);border:none;color:#04201C;font-weight:600;font-size:13px;border-radius:10px;padding:0 20px;height:40px;cursor:pointer">Guardar puesto</button>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ showTipoDocModal }}" hint-placeholder-val="{{ false }}">''',
+        "puestos: modal de alta y edición",
+    ),
+    (
+        '''          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:0 24px 14px">
+            <select value="{{ chkEmpresa }}" onChange="{{ onChkEmpresa }}" style="{{ selStyle }}">
+              <option value="PREMOCOR">PREMOCOR</option>
+              <option value="VIAL VICTORIA">VIAL VICTORIA</option>
+            </select>
+            <div style="display:inline-flex;background:var(--surface2);border:1px solid var(--border2);border-radius:9px;padding:3px">
+              <button onClick="{{ setChkIngreso }}" style="{{ chkIngresoStyle }}">Ingreso</button>
+              <button onClick="{{ setChkEgreso }}" style="{{ chkEgresoStyle }}">Egreso</button>
+            </div>
+          </div>''',
+        '''          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:0 24px 14px">
+            <select value="{{ chkEmpresa }}" onChange="{{ onChkEmpresa }}" aria-label="Empresa del checklist" style="{{ selStyle }}">
+              <sc-for list="{{ catalogoEmpresas }}" as="e" hint-placeholder-count="2"><option value="{{ e.nombre }}">{{ e.nombre }}</option></sc-for>
+            </select>
+            <select value="{{ chkSector }}" onChange="{{ onChkSector }}" aria-label="Sector del checklist" style="{{ selStyle }}">
+              <option value="">General · todos los sectores</option>
+              <sc-for list="{{ catalogoSectores }}" as="s" hint-placeholder-count="4"><option value="{{ s.id }}">{{ s.nombre }}</option></sc-for>
+            </select>
+            <div style="display:inline-flex;background:var(--surface2);border:1px solid var(--border2);border-radius:9px;padding:3px">
+              <button onClick="{{ setChkIngreso }}" style="{{ chkIngresoStyle }}">Ingreso</button>
+              <button onClick="{{ setChkEgreso }}" style="{{ chkEgresoStyle }}">Egreso</button>
+            </div>
+            <span style="{{ chkEstadoBadge }}">{{ chkEstadoLabel }} · {{ chkVersionLabel }}</span>
+            <sc-if value="{{ puedeConfig }}" hint-placeholder-val="{{ true }}">
+              <button onClick="{{ crearBorradorChecklist }}" style="height:34px;padding:0 12px;border-radius:9px;border:1px solid var(--border2);background:var(--surface2);color:var(--text);font-size:12px;font-weight:600;cursor:pointer">Crear borrador</button>
+              <sc-if value="{{ chkPuedePublicar }}" hint-placeholder-val="{{ false }}"><button onClick="{{ publicarChecklist }}" style="height:34px;padding:0 12px;border-radius:9px;border:none;background:var(--accent);color:#04201C;font-size:12px;font-weight:600;cursor:pointer">Publicar</button></sc-if>
+              <sc-if value="{{ chkPuedeArchivar }}" hint-placeholder-val="{{ false }}"><button onClick="{{ archivarChecklist }}" style="height:34px;padding:0 12px;border-radius:9px;border:1px solid var(--bad);background:transparent;color:var(--bad);font-size:12px;font-weight:600;cursor:pointer">Archivar</button></sc-if>
+            </sc-if>
+          </div>''',
+        "checklists: alcance empresa+sector, versión y acciones",
+    ),
+    (
+        "Pasos del onboarding y offboarding, configurables por empresa. Los ítems documentales se completan solos al cargar su documento en el legajo.",
+        "Pasos del onboarding y offboarding, versionados por empresa y sector. Los ítems documentales se completan al cargar su documento en el legajo.",
+        "checklists: copy de alcance por sector",
+    ),
+    (
+        '''                  <sc-if value="{{ puedeConfig }}" hint-placeholder-val="{{ true }}">
+                  <div style="display:flex;gap:7px;justify-content:flex-end">
+                    <button onClick="{{ it.editar }}" style="{{ it.editStyle }}">Editar</button>
+                    <button onClick="{{ it.toggle }}" style="{{ it.toggleStyle }}">{{ it.toggleLbl }}</button>
+                  </div>
+                  </sc-if>''',
+        '''                  <sc-if value="{{ puedeConfig }}" hint-placeholder-val="{{ true }}">
+                  <sc-if value="{{ chkPuedeEditar }}" hint-placeholder-val="{{ true }}">
+                  <div style="display:flex;gap:7px;justify-content:flex-end">
+                    <button onClick="{{ it.editar }}" style="{{ it.editStyle }}">Editar</button>
+                    <button onClick="{{ it.toggle }}" style="{{ it.toggleStyle }}">{{ it.toggleLbl }}</button>
+                  </div>
+                  </sc-if>
+                  </sc-if>''',
+        "checklists: versiones publicadas inmutables en UI",
+    ),
+    (
+        '''        <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;box-shadow:var(--shadow);margin-top:16px;overflow:hidden">
+          <sc-if value="{{ fichaChk.mostrarAviso }}" hint-placeholder-val="{{ false }}">''',
+        '''        <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;box-shadow:var(--shadow);margin-top:16px;overflow:hidden">
+          <sc-if value="{{ fichaChk.mostrarInicio }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 22px">
+            <div><div style="font-weight:600;font-size:14px;color:var(--text)">{{ fichaChk.tipoLabel }}</div><div style="font-size:12.5px;color:var(--text3);margin-top:3px">Todavía no fue iniciado para esta relación laboral.</div></div>
+            <button onClick="{{ fichaChk.iniciar }}" style="height:36px;padding:0 14px;border-radius:9px;border:none;background:var(--accent);color:#04201C;font-size:12.5px;font-weight:600;cursor:pointer">Iniciar checklist</button>
+          </div>
+          </sc-if>
+          <sc-if value="{{ fichaChk.mostrarAviso }}" hint-placeholder-val="{{ false }}">''',
+        "checklist de ficha: inicio explícito",
+    ),
 
     # ===== tema: cableado a11y del toggle (2026-07-23) =====
     # El ícono sol/luna (que antes era un sol fijo) ya vive en el canvas: muestra sol en día y
@@ -1666,17 +2223,121 @@ EDICIONES = [
         "Configuración: acordeones colapsados por defecto",
     ),
 
+    # Dashboard y Alertas agregan datos de la dotación. Empleado solo tiene autoconsulta:
+    # el backend ya devuelve 403, y el artefacto no debe ofrecer entradas que no puede abrir.
+    (
+        '''        <button type="button" onClick="{{ goDash }}" style="{{ navDash }}" style-hover="background:var(--surface2);color:var(--text)">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.6"/><rect x="14" y="3" width="7" height="7" rx="1.6"/><rect x="3" y="14" width="7" height="7" rx="1.6"/><rect x="14" y="14" width="7" height="7" rx="1.6"/></svg>
+          <span class="ceibo-navlbl">Dashboard</span>
+        </button>''',
+        '''        <sc-if value="{{ puedeDotacion }}" hint-placeholder-val="{{ true }}">
+        <button type="button" onClick="{{ goDash }}" style="{{ navDash }}" style-hover="background:var(--surface2);color:var(--text)">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.6"/><rect x="14" y="3" width="7" height="7" rx="1.6"/><rect x="3" y="14" width="7" height="7" rx="1.6"/><rect x="14" y="14" width="7" height="7" rx="1.6"/></svg>
+          <span class="ceibo-navlbl">Dashboard</span>
+        </button>
+        </sc-if>''',
+        "Dashboard: entrada del menú según alcance de dotación",
+    ),
+    (
+        '''        <button type="button" onClick="{{ goAle }}" style="{{ navAle }}" style-hover="background:var(--surface2);color:var(--text)">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.3l8.6 15A1 1 0 0 1 19.7 20H4.3a1 1 0 0 1-.9-1.7l8.6-15z"/><path d="M12 9.5v4M12 16.6v.2"/></svg>
+          <span class="ceibo-navlbl">Alertas y vencimientos</span>
+        </button>''',
+        '''        <sc-if value="{{ puedeDotacion }}" hint-placeholder-val="{{ true }}">
+        <button type="button" onClick="{{ goAle }}" style="{{ navAle }}" style-hover="background:var(--surface2);color:var(--text)">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.3l8.6 15A1 1 0 0 1 19.7 20H4.3a1 1 0 0 1-.9-1.7l8.6-15z"/><path d="M12 9.5v4M12 16.6v.2"/></svg>
+          <span class="ceibo-navlbl">Alertas y vencimientos</span>
+        </button>
+        </sc-if>''',
+        "Alertas: entrada del menú según alcance de dotación",
+    ),
+    (
+        '      <button type="button" onClick="{{ goAle }}" aria-label="Alertas y vencimientos" title="Alertas y vencimientos" style="width:38px;height:38px;border-radius:10px;border:1px solid var(--border);background:var(--surface);color:var(--text2);display:flex;align-items:center;justify-content:center;position:relative;cursor:pointer;flex:none" style-hover="color:var(--text)">\n'
+        '        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6z"/><path d="M10 19a2 2 0 0 0 4 0"/></svg>\n'
+        '        <span aria-hidden="true" style="position:absolute;top:7px;right:8px;width:7px;height:7px;border-radius:50%;background:var(--bad);border:2px solid var(--surface)"></span>\n'
+        '      </button>',
+        '      <sc-if value="{{ puedeDotacion }}" hint-placeholder-val="{{ true }}">\n'
+        '      <button type="button" onClick="{{ goAle }}" aria-label="Alertas y vencimientos" title="Alertas y vencimientos" style="width:38px;height:38px;border-radius:10px;border:1px solid var(--border);background:var(--surface);color:var(--text2);display:flex;align-items:center;justify-content:center;position:relative;cursor:pointer;flex:none" style-hover="color:var(--text)">\n'
+        '        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6z"/><path d="M10 19a2 2 0 0 0 4 0"/></svg>\n'
+        '        <span aria-hidden="true" style="position:absolute;top:7px;right:8px;width:7px;height:7px;border-radius:50%;background:var(--bad);border:2px solid var(--surface)"></span>\n'
+        '      </button>\n'
+        '      </sc-if>',
+        "Alertas: campana del encabezado según alcance de dotación",
+    ),
+    (
+        '      <div style="font-size:10px;font-weight:600;letter-spacing:.09em;color:var(--text3);padding:16px 10px 6px" class="ceibo-navlbl">ANÁLISIS</div>',
+        '      <sc-if value="{{ puedeAnalisis }}" hint-placeholder-val="{{ true }}">\n'
+        '      <div style="font-size:10px;font-weight:600;letter-spacing:.09em;color:var(--text3);padding:16px 10px 6px" class="ceibo-navlbl">ANÁLISIS</div>\n'
+        '      </sc-if>',
+        "Análisis: ocultar encabezado cuando no hay módulos habilitados",
+    ),
+
+    # Un Supervisor puede no tener empleados asignados todavía. El canvas calcula todas las
+    # vistas en cada render (incluida la ficha aunque esté parado en Dashboard), por lo que
+    # acceder a raw.id/raw.historial con una base vacía derribaba la aplicación completa.
+    # El objeto neutro mantiene seguro ese cálculo; la lista sigue mostrando su estado vacío.
+    (
+        "    const raw = this.base().find(e=>e.id===S.selEmp) || this.base()[0];",
+        """    const raw = this.base().find(e=>e.id===S.selEmp) || this.base()[0] || {
+      id:0, name:'Sin empleados asignados', dni:'—', cuil:'—', empresa:'—',
+      sector:'—', puesto:'—', estado:'inactivo', ingreso:'—', antig:'—',
+      email:'—', tel:'—', nac:'—', domicilio:'—', historial:[], docs:[]
+    };""",
+        "Ficha: render seguro cuando el alcance no contiene empleados",
+    ),
+
+    # El detalle de novedades también se calcula aunque el modal esté cerrado. Un rol con
+    # alcance vacío no tiene novedades y el canvas intentaba leer `dn.prorrogas`. El registro
+    # neutro es terminal y sin acciones para que ese render permanezca inocuo.
+    (
+        "    const dn = this.novList().find(n=>n.id===S.detNovId) || this.novList()[0];",
+        """    const dn = this.novList().find(n=>n.id===S.detNovId) || this.novList()[0] || {
+      id:0, tipo:'Sin novedades disponibles', emp:'—', empresa:'—',
+      estado:'Anulada', fecha:'', clasif:'', madreDesde:'', madreHasta:'',
+      madreMotivo:'', prorrogas:[]
+    };""",
+        "Novedades: render seguro cuando el alcance está vacío",
+    ),
+
+    # Configuración es parametría global y el backend la limita a Admin/RRHH. El canvas
+    # conserva la entrada plana para diseño; el artefacto publicado la condiciona con la
+    # capacidad entregada por el backend, igual que Reportes y Bitácora.
+    (
+        '''        <button type="button" onClick="{{ goCfg }}" style="{{ navCfg }}" style-hover="background:var(--surface2);color:var(--text)">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="2.4" fill="var(--sidebar)"/><circle cx="15" cy="17" r="2.4" fill="var(--sidebar)"/></svg>
+          <span class="ceibo-navlbl">Configuración</span>
+        </button>''',
+        '''        <sc-if value="{{ puedeConfig }}" hint-placeholder-val="{{ true }}">
+        <button type="button" onClick="{{ goCfg }}" style="{{ navCfg }}" style-hover="background:var(--surface2);color:var(--text)">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="2.4" fill="var(--sidebar)"/><circle cx="15" cy="17" r="2.4" fill="var(--sidebar)"/></svg>
+          <span class="ceibo-navlbl">Configuración</span>
+        </button>
+        </sc-if>''',
+        "Configuración: entrada del menú según capacidad",
+    ),
+
+    # Los reportes reconstruyen historia global y el backend los limita a Admin/RRHH.
+    # El canvas conserva el botón plano; esta guarda de cableado evita ofrecer a Supervisor
+    # una sección que solo respondería 403. No modifica la fuente de diseño.
+    (
+        '''        <button type="button" onClick="{{ goRep }}" style="{{ navRep }}" style-hover="background:var(--surface2);color:var(--text)">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16"/><rect x="5" y="11" width="3.4" height="7" rx="1"/><rect x="10.3" y="5" width="3.4" height="13" rx="1"/><rect x="15.6" y="9" width="3.4" height="9" rx="1"/></svg>
+          <span class="ceibo-navlbl">Reportes y métricas</span>
+        </button>''',
+        '''        <sc-if value="{{ puedeReportes }}" hint-placeholder-val="{{ true }}">
+        <button type="button" onClick="{{ goRep }}" style="{{ navRep }}" style-hover="background:var(--surface2);color:var(--text)">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16"/><rect x="5" y="11" width="3.4" height="7" rx="1"/><rect x="10.3" y="5" width="3.4" height="13" rx="1"/><rect x="15.6" y="9" width="3.4" height="9" rx="1"/></svg>
+          <span class="ceibo-navlbl">Reportes y métricas</span>
+        </button>
+        </sc-if>''',
+        "Reportes: entrada del menú según capacidad histórica",
+    ),
+
     # ===== Bitácora / auditoría (RP8, 2026-07-24) =====================================
     # MARKUP provisorio: este módulo todavía no existe en el canvas. Se inyecta acá para
     # poder verlo funcionando contra la API real; una vez subido a Claude Design y promovido
     # a design/, estas dos inyecciones de markup se BORRAN y quedan solo las de cableado
     # (mismo camino que recorrieron CU-31 y CU-29/30).
-    (
-        "cargaInicial: 'cargando',",
-        "cargaInicial: 'cargando',\n    auditoria: null, audPage: 1, audCargando: false, audErr: null,\n"
-        "    audFiltros: { accion: '', desde: '', hasta: '', empleado: '' },",
-        "Bitácora: estado",
-    ),
     # --- CABLEADO: la entrada del menú solo para quien puede auditar ---
     # El canvas trae el botón PLANO (siempre visible), que es lo correcto para un diseño.
     # Quién lo ve depende del rol, y eso es cableado: la capacidad `auditoria_ver` la calcula
@@ -1697,12 +2358,6 @@ EDICIONES = [
         '        </button>\n'
         '        </sc-if>\n',
         "Bitácora cableado: capacidad para ver la entrada del menú",
-    ),
-    # --- state de la tarjeta de la ficha ---
-    (
-        "    auditoria: null, audPage: 1, audCargando: false, audErr: null,",
-        "    auditoria: null, audPage: 1, audCargando: false, audErr: null, fichaAudData: null,",
-        "Bitácora: estado de la tarjeta de la ficha",
     ),
 ]
 
@@ -1818,6 +2473,134 @@ def verificar_invariantes(html: str) -> None:
           f"{len(CLASES_REQUERIDAS)} clases)")
 
 
+def aplicar_ediciones(html: str) -> str:
+    """Aplica el cableado determinista sin escribir archivos (útil para tests)."""
+    verificar_invariantes(html)
+    for ancla, reemplazo, desc in EDICIONES:
+        cantidad = html.count(ancla)
+        if cantidad != 1:
+            sys.exit(
+                f"ERROR: se esperó exactamente un ancla [{desc}] y hay {cantidad}. "
+                "¿Cambió el diseño? Revisar build.py"
+            )
+        html = html.replace(ancla, reemplazo, 1)
+        print("  [ok] " + desc)
+    return html
+
+
+def verificar_guardas_frontend(html: str, integracion: str) -> None:
+    """Bloquea regresiones de seguridad, identidad y contratos funcionales."""
+    fallas = []
+    prohibidos_integracion = {
+        "API de una máquina local": 'API: "http://localhost:8000/api/v1"',
+        "concatenación de API sin validar": "CONFIG.API +",
+        "resolución de empleado por nombre": "empIdByName",
+        "opciones de empleado por innerHTML": "dl.innerHTML = _rawEmpleados",
+        "separación heurística de nombres": "splitName",
+        "sesión persistida en sessionStorage": "sessionStorage",
+        "autenticación Bearer": "Bearer ",
+        "header Authorization": "Authorization",
+        "endpoint JWT": "/auth/token/",
+        "refresh token": "_refresh",
+        "access token": "_token",
+        "atajo Cerrada durante el alta": '"Cerrada": "cerrar"',
+        "alta implícita de puestos": "getOrCreatePuesto",
+        "puesto global sin sector": "_puestoByName",
+    }
+    prohibidos_html = {
+        "legajo inventado desde el id": "'LEG-'+String(raw.id)",
+        "novedades de ficha asociadas por nombre": "n.emp===raw.name",
+        "filtro de novedades por texto de nombre": "this.normEmp(n.emp).includes(q)",
+        "contrato JWT viejo en el artefacto": "/auth/token/",
+    }
+    requeridos_integracion = {
+        "API relativa": 'API: "/api/v1"',
+        "control de origen de URLs": "url.origin !== window.location.origin",
+        "control de prefijo de API": "url.pathname.indexOf(_apiBase.pathname) !== 0",
+        "timeout de red": "async function fetchConTimeout",
+        "opción segura por textContent": "o.textContent = etiquetaEmpleado(e)",
+        "alta de novedad por ID": "payload.empleado = Number(empId)",
+        "nombre y apellido explícitos": 'nombre: g("nombre"), apellido: g("apellido")',
+        "endpoint de inicialización CSRF": 'apiUrl("/auth/csrf/")',
+        "endpoint de login de sesión": 'apiUrl("/auth/login/")',
+        "endpoint de logout de sesión": 'apiUrl("/auth/logout/")',
+        "cookies limitadas al mismo origen": 'credentials: "same-origin"',
+        "CSRF dinámico en cada mutación": 'opts.headers["X-CSRFToken"] = csrfActual();',
+        "CSRF dinámico en login": '"X-CSRFToken": csrfActual(),',
+        "CSRF dinámico en logout": 'headers: { "X-CSRFToken": csrfActual() }',
+        "401 notifica sesión vencida": "notificarSesionVencida();",
+        "transiciones Tomar/Cerrar permitidas": '["tomar", "aprobar", "rechazar", "cerrar", "anular"]',
+        "motivo obligatorio de rechazo/anulación": 'body.motivo = motivo;',
+        "cancelación segura antes de crear novedad": 'if ((accion === "rechazar" || accion === "anular") && motivoDecision === null) return false;',
+        "fecha al cerrar un rango abierto": "body.fecha_hasta = fechaCierre;",
+        "puesto resuelto por sector": "_puestoBySectorNombre[clavePuesto(sectorId, nombre)]",
+        "alta usa puesto existente": "var puestoId = puestoSeleccionado(sectorId, g(\"puesto\"));",
+        "detalle de empleado auditado": 'await jget("/empleados/" + id + "/")',
+        "reingreso consulta DNI en endpoint auditado": 'jget("/empleados/por-dni/?dni="',
+        "catálogo de supervisores": 'await jget("/supervisores/?activo=true")',
+        "asignación explícita de supervisor": '"/supervisor/"',
+        "checklist filtrado por sector": 'String(p.sector == null ? "" : p.sector)',
+        "inicio explícito de checklist": 'async iniciarChecklistFicha(empleadoId, datos)',
+    }
+    requeridos_html = {
+        "legajo real": "v:raw.legajo||'—'",
+        "ficha por empleado ID": "String(n._empId)===String(raw.id)",
+        "selector de novedades con ID": '<option value="{{ o.id }}">{{ o.label }}</option>',
+        "botón Tomar novedad": 'onClick="{{ tomarNov }}"',
+        "botón Cerrar novedad": 'onClick="{{ cerrarNov }}"',
+        "botón Tomar prórroga": 'onClick="{{ t.doTomar }}"',
+        "botón Cerrar prórroga": 'onClick="{{ t.doCerrar }}"',
+        "reingreso pide empresa": 'data-reingreso="empresa"',
+        "reingreso pide sector": 'data-reingreso="sector"',
+        "reingreso pide puesto": 'data-reingreso="puesto"',
+        "reingreso pide fecha": 'data-reingreso="fecha"',
+        "reingreso permite supervisor": 'data-reingreso="supervisor"',
+        "puestos parametrizados en Configuración": "Puestos por sector",
+        "checklist con alcance sector": 'aria-label="Sector del checklist"',
+        "publicar checklist": 'onClick="{{ publicarChecklist }}"',
+        "archivar checklist": 'onClick="{{ archivarChecklist }}"',
+        "inicio explícito desde ficha": 'onClick="{{ fichaChk.iniciar }}"',
+        "reasignación de supervisor": 'onChange="{{ ficha.cambiarSupervisor }}"',
+        "carga inicial respeta alcance de dotación": (
+            "const veDotacion = window.CeiboAPI.puede('ve_dotacion');"
+        ),
+        "autoconsulta abre la ficha propia": "if (!veDotacion && e && e.length === 1)",
+        "ficha segura sin empleados asignados": "name:'Sin empleados asignados'",
+        "detalle seguro sin novedades disponibles": "tipo:'Sin novedades disponibles'",
+        "dashboard oculto sin alcance de dotación": (
+            '<sc-if value="{{ puedeDotacion }}" hint-placeholder-val="{{ true }}">\n'
+            '        <button type="button" onClick="{{ goDash }}"'
+        ),
+        "alertas ocultas sin alcance de dotación": (
+            '<sc-if value="{{ puedeDotacion }}" hint-placeholder-val="{{ true }}">\n'
+            '        <button type="button" onClick="{{ goAle }}"'
+        ),
+        "configuración oculta sin capacidad": (
+            '<sc-if value="{{ puedeConfig }}" hint-placeholder-val="{{ true }}">\n'
+            '        <button type="button" onClick="{{ goCfg }}"'
+        ),
+        "reportes ocultos sin capacidad": '<sc-if value="{{ puedeReportes }}"',
+    }
+    for desc, patron in prohibidos_integracion.items():
+        if patron in integracion:
+            fallas.append(f"{desc}: sigue presente `{patron}`")
+    for desc, patron in prohibidos_html.items():
+        if patron in html:
+            fallas.append(f"{desc}: sigue presente `{patron}`")
+    for desc, patron in requeridos_integracion.items():
+        if patron not in integracion:
+            fallas.append(f"{desc}: falta `{patron}`")
+    for desc, patron in requeridos_html.items():
+        if patron not in html:
+            fallas.append(f"{desc}: falta `{patron}`")
+    if fallas:
+        print("\nERROR: fallaron las guardas de seguridad/identidad del frontend.\n")
+        for falla in fallas:
+            print("  - " + falla)
+        sys.exit("\nEl artefacto no se publica hasta corregir estas regresiones.")
+    print("  [ok] guardas frontend (sesión+CSRF, API same-origin, DOM, IDs y transiciones)")
+
+
 # Los assets se publican con el hash de su contenido en el nombre. Antes se llamaban
 # siempre `ceibo-api.js` y `support.js`: al actualizar, un navegador con la versión vieja
 # en caché podía quedarse con el JS anterior y pedir el index.html nuevo. El resultado no
@@ -1826,42 +2609,192 @@ def verificar_invariantes(html: str) -> None:
 # pide exactamente los archivos con los que se construyó: la mezcla ya no puede ocurrir.
 # El único archivo con nombre fijo es index.html, y quedarse con uno viejo solo sirve la
 # versión anterior completa y coherente, que es una falla aceptable.
-ASSETS = [
-    ("support.js", lambda: DESIGN / "support.js"),
-    ("ceibo-api.js", lambda: RAIZ / "integration" / "ceibo-api.js"),
-]
+VENDOR = RAIZ / "vendor"
+
+
+def _nombre_hasheado(nombre: str, datos: bytes) -> str:
+    base, ext = nombre.rsplit(".", 1)
+    return f"{base}.{hashlib.sha256(datos).hexdigest()[:10]}.{ext}"
+
+
+def generar_runtime_csp(html: str, react_nombre: str, react_dom_nombre: str) -> bytes:
+    """Convierte el runtime del snapshot en uno estático, same-origin y sin evaluación.
+
+    Claude Design entrega la lógica como texto y su runtime la ejecuta con ``new Function``.
+    En producción el build ya conoce esa lógica: se inserta como clase JavaScript normal.
+    También se deshabilita ``x-import`` (no se usa en Ceibo), porque su contrato consiste
+    justamente en descargar y evaluar código arbitrario en el navegador.
+    """
+    halladas = re.findall(
+        r'<script type="text/x-dc" data-dc-script>\s*(.*?)\s*</script>',
+        html,
+        flags=re.DOTALL,
+    )
+    if len(halladas) != 1:
+        sys.exit(
+            "ERROR: se esperaba una única lógica data-dc-script para compilar el runtime "
+            f"estático y se encontraron {len(halladas)}."
+        )
+    logica = halladas[0]
+    runtime = (DESIGN / "support.js").read_text(encoding="utf-8")
+
+    reemplazo_logica = (
+        "  function evalDcLogic(_src) {\n"
+        "    const DCLogic = StreamableLogic;\n"
+        f"{logica}\n"
+        "    return Component;\n"
+        "  }\n\n"
+    )
+    runtime, cantidad = re.subn(
+        r"  function evalDcLogic\(src\) \{.*?(?=  // src/component\.ts)",
+        lambda _m: reemplazo_logica,
+        runtime,
+        count=1,
+        flags=re.DOTALL,
+    )
+    if cantidad != 1:
+        sys.exit("ERROR: cambió evalDcLogic en design/support.js; revisar el compilador CSP.")
+
+    externo_estatico = r'''  // src/external.ts (deshabilitado para producción)
+  function createExternalModules() {
+    const mensaje = "x-import está deshabilitado: el artefacto de producción solo ejecuta código vendorizado.";
+    return {
+      load: (_kind, url) => {
+        console.error("[dc-runtime] " + mensaje, url);
+        return Promise.resolve();
+      },
+      resolve: () => null,
+      resolveGlobal: (url, name) => {
+        if (url) return null;
+        let actual = window;
+        for (const parte of String(name || "").split(".")) {
+          actual = actual == null ? undefined : actual[parte];
+        }
+        if (typeof actual === "function") return actual;
+        if (actual && typeof actual === "object" && typeof actual.$$typeof === "symbol") return actual;
+        return null;
+      },
+      getError: () => mensaje
+    };
+  }
+
+'''
+    runtime, cantidad = re.subn(
+        r"  // src/external\.ts.*?(?=  // src/atomics\.ts)",
+        lambda _m: externo_estatico,
+        runtime,
+        count=1,
+        flags=re.DOTALL,
+    )
+    if cantidad != 1:
+        sys.exit("ERROR: cambió el módulo x-import en design/support.js; revisar el compilador CSP.")
+
+    reemplazos = {
+        '"https://unpkg.com/react@18.3.1/umd/react.production.min.js"':
+            f'"./{react_nombre}"',
+        '"https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"':
+            f'"./{react_dom_nombre}"',
+    }
+    for anterior, nuevo in reemplazos.items():
+        if runtime.count(anterior) != 1:
+            sys.exit(f"ERROR: no se pudo localizar la dependencia vendorizada {anterior}.")
+        runtime = runtime.replace(anterior, nuevo, 1)
+
+    if "new Function" in runtime or "eval(" in runtime:
+        sys.exit("ERROR: el runtime generado todavía contiene evaluación dinámica.")
+    if "https://unpkg.com" in runtime:
+        sys.exit("ERROR: el runtime generado todavía depende de unpkg.")
+    return runtime.encode("utf-8")
+
+
+def _assets_produccion(html: str) -> list[tuple[str, bytes, bool]]:
+    react = (VENDOR / "react-18.3.1.production.min.js").read_bytes()
+    react_dom = (VENDOR / "react-dom-18.3.1.production.min.js").read_bytes()
+    react_nombre = _nombre_hasheado("react.js", react)
+    react_dom_nombre = _nombre_hasheado("react-dom.js", react_dom)
+    runtime = generar_runtime_csp(html, react_nombre, react_dom_nombre)
+    return [
+        ("react.js", react, False),
+        ("react-dom.js", react_dom, False),
+        ("support.js", runtime, True),
+        ("ceibo-api.js", (RAIZ / "integration" / "ceibo-api.js").read_bytes(), True),
+        ("ceibo-theme.js", (RAIZ / "integration" / "ceibo-theme.js").read_bytes(), True),
+    ]
 
 
 def escribir_assets(html: str) -> str:
-    """Copia los assets con hash en el nombre y reescribe sus <script> en el HTML."""
+    """Escribe assets CSP-friendly con hash y reescribe sus referencias del HTML."""
+    DIST.mkdir(exist_ok=True)
     vigentes = set()
-    for nombre, origen in ASSETS:
-        datos = origen().read_bytes()
-        h = hashlib.sha256(datos).hexdigest()[:10]
-        base, ext = nombre.rsplit(".", 1)
-        hasheado = f"{base}.{h}.{ext}"
+    assets = _assets_produccion(html)
+    for nombre, datos, referenciado in assets:
+        hasheado = _nombre_hasheado(nombre, datos)
         (DIST / hasheado).write_bytes(datos)
         vigentes.add(hasheado)
-        ancla = f'<script src="./{nombre}"></script>'
-        if ancla not in html:
-            sys.exit(f"ERROR: no se encontró el <script> de {nombre} para hashear. Revisar build.py")
-        html = html.replace(ancla, f'<script src="./{hasheado}"></script>', 1)
+        if referenciado:
+            ancla = f'<script src="./{nombre}"></script>'
+            if ancla not in html:
+                sys.exit(
+                    f"ERROR: no se encontró el <script> de {nombre} para hashear. "
+                    "Revisar build.py"
+                )
+            html = html.replace(ancla, f'<script src="./{hasheado}"></script>', 1)
         print(f"  [ok] asset {nombre} -> {hasheado}")
 
     # Borrar versiones anteriores: si no, dist/ va juntando un archivo por cada build y no
     # se distingue cuál está en uso. Solo se tocan los que matchean el patrón hasheado.
-    patron = re.compile(r"^(support|ceibo-api)\.[0-9a-f]{10}\.js$")
+    patron = re.compile(
+        r"^(support|ceibo-api|ceibo-theme|react|react-dom)\.[0-9a-f]{10}\.js$"
+    )
     for viejo in DIST.iterdir():
         if viejo.name not in vigentes and patron.match(viejo.name):
             viejo.unlink()
             print(f"  [--] asset viejo removido: {viejo.name}")
     # Los nombres sin hash de builds anteriores también sobran y confunden.
-    for nombre, _ in ASSETS:
+    for nombre, _, _ in assets:
         obsoleto = DIST / nombre
         if obsoleto.exists():
             obsoleto.unlink()
             print(f"  [--] asset sin hash removido: {nombre}")
+    shutil.copyfile(VENDOR / "LICENSE.react.txt", DIST / "LICENSE.react.txt")
     return html
+
+
+def verificar_artefacto_produccion(html: str) -> None:
+    """Corta si el resultado vuelve a necesitar CDN, eval o JavaScript inline."""
+    fallas = []
+    if "fonts.googleapis.com" in html or "fonts.gstatic.com" in html:
+        fallas.append("el HTML todavía carga Google Fonts")
+    if "unpkg.com" in html:
+        fallas.append("el HTML todavía carga unpkg")
+    for tag in re.findall(r"<script\b[^>]*>", html, flags=re.IGNORECASE):
+        if "src=" not in tag and 'type="text/x-dc"' not in tag:
+            fallas.append(f"JavaScript inline incompatible con script-src 'self': {tag}")
+
+    soporte = re.search(r'<script src="\./(support\.[0-9a-f]{10}\.js)"></script>', html)
+    if not soporte:
+        fallas.append("no se encontró el runtime support hasheado")
+    else:
+        runtime = (DIST / soporte.group(1)).read_text(encoding="utf-8")
+        for patron, detalle in (
+            ("new Function", "new Function"),
+            ("eval(", "eval"),
+            ("unpkg.com", "CDN unpkg"),
+            ("@babel", "Babel dinámico"),
+        ):
+            if patron in runtime:
+                fallas.append(f"support generado todavía contiene {detalle}")
+        if not re.search(r'REACT_URL = "\./react\.[0-9a-f]{10}\.js"', runtime):
+            fallas.append("support no apunta al React vendorizado y hasheado")
+        if not re.search(r'REACT_DOM_URL = "\./react-dom\.[0-9a-f]{10}\.js"', runtime):
+            fallas.append("support no apunta al ReactDOM vendorizado y hasheado")
+
+    if fallas:
+        print("\nERROR: el artefacto no cumple las guardas CSP/reproducibilidad.\n")
+        for falla in fallas:
+            print("  - " + falla)
+        sys.exit("\nNo se publica un frontend que ejecute código remoto o dinámico.")
+    print("  [ok] artefacto producción (React local, sin CDN, eval ni JavaScript inline)")
 
 
 def main():
@@ -1876,19 +2809,16 @@ def main():
     # (La sección "Egreso" del alta ya no viene en el canvas (export 2026-07-10); no hay
     #  nada que remover acá.)
 
-    verificar_invariantes(html)
-
-    for ancla, reemplazo, desc in EDICIONES:
-        if ancla not in html:
-            sys.exit(f"ERROR: ancla no encontrada [{desc}]. ¿Cambió el diseño? Revisar build.py")
-        html = html.replace(ancla, reemplazo, 1)
-        print("  [ok] "+desc)
+    html = aplicar_ediciones(html)
+    integracion = (RAIZ / "integration" / "ceibo-api.js").read_text(encoding="utf-8")
+    verificar_guardas_frontend(html, integracion)
 
     DIST.mkdir(exist_ok=True)
     html = escribir_assets(html)
+    verificar_artefacto_produccion(html)
     (DIST / "index.html").write_text(html, encoding="utf-8")
     print(f"\nOK -> {DIST / 'index.html'}")
-    print("Servir:  cd dist && python -m http.server 8080")
+    print("Servir:  python dev_server.py")
 
 
 if __name__ == "__main__":

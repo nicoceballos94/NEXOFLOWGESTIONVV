@@ -7,6 +7,8 @@ Dos superficies:
   para quien puede ver la ficha; tildar, RRHH/Admin.
 """
 from django.shortcuts import get_object_or_404
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import mixins, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -16,15 +18,15 @@ from rest_framework.views import APIView
 from apps.empleados import selectors as empleados_selectors
 from apps.empleados.models import EstadoRelacion
 from common import roles
-from common.permissions import LecturaAutenticadaEscrituraPorRol, RolRequerido
+from common.permissions import RolRequerido
 
 from .. import selectors, services
 from ..models import ItemProceso, PlantillaChecklist, ProcesoEmpleado, TipoProceso
 from .serializers import (
     ActualizarItemSerializer,
-    ActualizarPlantillaSerializer,
     CrearItemSerializer,
     CrearPlantillaSerializer,
+    IniciarProcesoSerializer,
     PlantillaChecklistSerializer,
     TildarItemSerializer,
 )
@@ -37,10 +39,10 @@ class PlantillaChecklistViewSet(
     mixins.RetrieveModelMixin,
     viewsets.GenericViewSet,
 ):
-    """ABM de plantillas de checklist (Configuración). Lectura autenticada; escritura RRHH."""
+    """Configuración interna de plantillas: lectura y escritura solo RRHH/Admin."""
 
     serializer_class = PlantillaChecklistSerializer
-    permission_classes = [LecturaAutenticadaEscrituraPorRol(roles.ADMIN, roles.RRHH)]
+    permission_classes = [_SoloRRHH]
 
     def get_queryset(self):
         return selectors.plantillas_visibles(filtros=self.request.query_params)
@@ -51,12 +53,20 @@ class PlantillaChecklistViewSet(
         plantilla = services.crear_plantilla(actor=request.user, **entrada.validated_data)
         return Response(PlantillaChecklistSerializer(plantilla).data, status=201)
 
-    def partial_update(self, request, pk=None):
-        plantilla = get_object_or_404(PlantillaChecklist, pk=pk)
-        entrada = ActualizarPlantillaSerializer(data=request.data, partial=True)
-        entrada.is_valid(raise_exception=True)
-        plantilla.activa = entrada.validated_data["activa"]
-        plantilla.save(update_fields=["activa", "actualizado_en"])
+    @action(detail=True, methods=["post"])
+    def publicar(self, request, pk=None):
+        plantilla = services.publicar_plantilla(
+            actor=request.user,
+            plantilla=get_object_or_404(PlantillaChecklist, pk=pk),
+        )
+        return Response(PlantillaChecklistSerializer(plantilla).data)
+
+    @action(detail=True, methods=["post"])
+    def archivar(self, request, pk=None):
+        plantilla = services.archivar_plantilla(
+            actor=request.user,
+            plantilla=get_object_or_404(PlantillaChecklist, pk=pk),
+        )
         return Response(PlantillaChecklistSerializer(plantilla).data)
 
     @action(detail=True, methods=["post"], url_path="items")
@@ -69,10 +79,20 @@ class PlantillaChecklistViewSet(
         )
         return Response(PlantillaChecklistSerializer(plantilla).data, status=201)
 
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                "item_id",
+                OpenApiTypes.INT,
+                OpenApiParameter.PATH,
+                description="ID del ítem de la plantilla.",
+            )
+        ]
+    )
     @action(
         detail=True,
         methods=["patch"],
-        url_path=r"items/(?P<item_id>[^/.]+)",
+        url_path=r"items/(?P<item_id>\d+)",
     )
     def actualizar_item(self, request, pk=None, item_id=None):
         plantilla = get_object_or_404(PlantillaChecklist, pk=pk)
@@ -87,16 +107,23 @@ class ChecklistEmpleadoView(APIView):
     """La tarjeta de la ficha: onboarding si la relación está activa, offboarding si dado de baja.
 
     Se resuelve el empleado por el selector de empleados para respetar el scope de la ficha
-    (§7). La creación del proceso es perezosa (primera apertura), por eso un GET puede crear
-    la fila: es idempotente y es el disparador que define la spec ("aparece en la ficha").
+    (§7). GET es lectura pura; el proceso se inicia de forma explícita e idempotente con
+    POST, para que una consulta o un crawler nunca produzcan estado de negocio.
     """
 
-    permission_classes = [IsAuthenticated]
+    def get_permissions(self):
+        if self.request.method == "GET":
+            return [IsAuthenticated()]
+        return [IsAuthenticated(), _SoloRRHH()]
 
-    def get(self, request, empleado_id=None):
-        empleado = get_object_or_404(
+    def _empleado(self, request, empleado_id):
+        return get_object_or_404(
             empleados_selectors.empleados_visibles_para(usuario=request.user), pk=empleado_id
         )
+
+    @extend_schema(responses=OpenApiTypes.OBJECT)
+    def get(self, request, empleado_id=None):
+        empleado = self._empleado(request, empleado_id)
         relacion_activa = empleado.relacion_activa
         if relacion_activa is not None:
             relacion, tipo = relacion_activa, TipoProceso.INGRESO
@@ -106,15 +133,62 @@ class ChecklistEmpleadoView(APIView):
             tipo = TipoProceso.EGRESO
         if relacion is None:
             return Response({"tarjeta": None})
-        proceso = services.obtener_o_crear_proceso(
-            actor=request.user, relacion=relacion, tipo_proceso=tipo
+        proceso = (
+            ProcesoEmpleado.objects.select_related("relacion_laboral__empleado")
+            .prefetch_related("items")
+            .filter(relacion_laboral=relacion, tipo_proceso=tipo)
+            .first()
+        )
+        if proceso is None:
+            return Response(
+                {
+                    "tarjeta": None,
+                    "puede_iniciar": request.user.tiene_rol(roles.ADMIN, roles.RRHH),
+                    "relacion_laboral": relacion.pk,
+                    "tipo_proceso": tipo,
+                }
+            )
+        return Response({"tarjeta": selectors.armar_tarjeta(proceso=proceso)})
+
+    @extend_schema(
+        request=IniciarProcesoSerializer,
+        responses={201: OpenApiTypes.OBJECT},
+    )
+    def post(self, request, empleado_id=None):
+        empleado = self._empleado(request, empleado_id)
+        entrada = IniciarProcesoSerializer(data=request.data)
+        entrada.is_valid(raise_exception=True)
+        relacion = entrada.validated_data["relacion_laboral"]
+        tipo = entrada.validated_data["tipo_proceso"]
+        if relacion.empleado_id != empleado.pk:
+            from rest_framework.exceptions import ValidationError
+
+            raise ValidationError(
+                {"relacion_laboral": "La relación no pertenece al empleado de la URL."}
+            )
+        if tipo == TipoProceso.INGRESO and relacion.estado != EstadoRelacion.ACTIVA:
+            from rest_framework.exceptions import ValidationError
+
+            raise ValidationError(
+                {"tipo_proceso": "El onboarding requiere una relación activa."}
+            )
+        if tipo == TipoProceso.EGRESO and relacion.estado != EstadoRelacion.FINALIZADA:
+            from rest_framework.exceptions import ValidationError
+
+            raise ValidationError(
+                {"tipo_proceso": "El offboarding requiere una relación finalizada."}
+            )
+        proceso = services.iniciar_proceso(
+            actor=request.user,
+            relacion=relacion,
+            tipo_proceso=tipo,
         )
         proceso = (
             ProcesoEmpleado.objects.select_related("relacion_laboral__empleado")
             .prefetch_related("items")
             .get(pk=proceso.pk)
         )
-        return Response({"tarjeta": selectors.armar_tarjeta(proceso=proceso)})
+        return Response({"tarjeta": selectors.armar_tarjeta(proceso=proceso)}, status=201)
 
 
 class TildarItemChecklistView(APIView):
@@ -125,6 +199,10 @@ class TildarItemChecklistView(APIView):
 
     permission_classes = [IsAuthenticated, _SoloRRHH]
 
+    @extend_schema(
+        request=TildarItemSerializer,
+        responses=OpenApiTypes.OBJECT,
+    )
     def post(self, request, empleado_id=None, item_id=None):
         item = get_object_or_404(
             ItemProceso.objects.select_related("proceso__relacion_laboral__empleado"),

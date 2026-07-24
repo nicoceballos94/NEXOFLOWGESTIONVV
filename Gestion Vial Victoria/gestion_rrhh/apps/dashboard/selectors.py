@@ -19,8 +19,13 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
+from django.utils import timezone
+
 from apps.empleados.models import EstadoRelacion, RelacionLaboral
 from apps.novedades.models import EstadoNovedad, Novedad
+from apps.novedades.periodos import cadena_intersecta_desde
+
+from . import scope
 
 # Tipos que cuentan como ausentismo (acordado): ausencias no planificadas.
 CODIGOS_AUSENTISMO = ("FALTA", "LICENCIA_MEDICA", "ACCIDENTE")
@@ -41,6 +46,12 @@ def _sumar_meses(inicio: date, meses: int) -> date:
     """Suma `meses` a un día-1 de mes y devuelve el día-1 resultante."""
     total = inicio.year * 12 + (inicio.month - 1) + meses
     return date(total // 12, total % 12 + 1, 1)
+
+
+def periodo_intersecta_desde(desde: date):
+    """Alias local conservado para consumidores históricos del dashboard."""
+
+    return cadena_intersecta_desde(desde)
 
 
 class _Dotacion:
@@ -64,9 +75,10 @@ class _Dotacion:
         self._filas = list(filas)  # (empleado_id, estado, fecha_ingreso, fecha_egreso)
 
     @classmethod
-    def leer(cls) -> "_Dotacion":
+    def leer(cls, *, usuario=None) -> "_Dotacion":
+        relaciones = scope.relaciones(RelacionLaboral.objects.all(), usuario)
         return cls(
-            RelacionLaboral.objects.values_list(
+            relaciones.values_list(
                 "empleado_id", "estado", "fecha_ingreso", "fecha_egreso"
             )
         )
@@ -81,12 +93,14 @@ class _Dotacion:
 
     def activos_a(self, fecha: date) -> int:
         """Empleados con al menos una relación vigente en `fecha` (por fechas):
-        ingresó en/antes de `fecha` y (sin egreso o egresó después). Reconstrucción
-        histórica para la variación y la dotación media de la rotación."""
+        ingresó en/antes de `fecha` y (sin egreso o egresó ese día/después). La fecha de
+        egreso es inclusiva, igual que la constraint de vigencias. Reconstrucción histórica
+        para la variación y la dotación media de la rotación.
+        """
         return len({
             emp
             for emp, _, ingreso, egreso in self._filas
-            if ingreso <= fecha and (egreso is None or egreso > fecha)
+            if ingreso <= fecha and (egreso is None or egreso >= fecha)
         })
 
     def ingresos_en(self, desde: date, hasta: date) -> int:
@@ -100,16 +114,18 @@ class _Dotacion:
         )
 
 
-def _ausentismo_en(desde: date, hasta: date) -> int:
-    """Novedades madre de ausentismo con fecha_desde en [desde, hasta)."""
+def _ausentismo_en(desde: date, hasta: date, *, usuario=None) -> int:
+    """Novedades madre cuyo período intersecta ``[desde, hasta)``."""
+    novedades = scope.novedades(Novedad.objects.all(), usuario)
     return (
-        Novedad.objects.filter(
+        novedades.filter(
             novedad_origen__isnull=True,  # solo madres; no doble-contar prórrogas
             tipo_novedad__codigo__in=CODIGOS_AUSENTISMO,
-            fecha_desde__gte=desde,
             fecha_desde__lt=hasta,
         )
+        .filter(periodo_intersecta_desde(desde))
         .exclude(estado__in=ESTADOS_NOVEDAD_EXCLUIDOS)
+        .distinct()
         .count()
     )
 
@@ -128,14 +144,22 @@ def _rotacion_periodo(dotacion: _Dotacion, ini: date, fin: date, activos_fin: in
     return _rotacion(dotacion.ingresos_en(ini, fin), dotacion.egresos_en(ini, fin), dot_prom)
 
 
-def metricas_dashboard(*, hoy: date | None = None) -> dict:
-    """Todas las métricas del panel, con variación vs. el mes anterior."""
-    hoy = hoy or date.today()
+def metricas_dashboard(*, hoy: date | None = None, usuario=None) -> dict:
+    """Métricas globales o, para Supervisor, únicamente el stock de su equipo actual.
+
+    El modelo guarda el supervisor actual, no su historial de asignaciones. Proyectar ese
+    equipo hacia atrás produciría altas, bajas y rotación ficticias; por eso esos indicadores
+    se marcan explícitamente como no disponibles para ese alcance.
+    """
+    hoy = hoy or timezone.localdate()
+    equipo_actual = scope.supervisor_restringido(usuario)
     ini_mes = _inicio_mes(hoy)
     ini_mes_sig = _sumar_meses(ini_mes, 1)
     ini_mes_ant = _sumar_meses(ini_mes, -1)
 
-    dotacion = _Dotacion.leer()  # única lectura de relaciones; el resto se cuenta en memoria
+    dotacion = _Dotacion.leer(
+        usuario=usuario
+    )  # única lectura de relaciones; el resto se cuenta en memoria
 
     # --- KPIs (stock y flujo) ---
     activos_ahora = dotacion.activos_ahora()                # valor del KPI (por estado)
@@ -146,8 +170,8 @@ def metricas_dashboard(*, hoy: date | None = None) -> dict:
     ingresos_mes_ant = dotacion.ingresos_en(ini_mes_ant, ini_mes)
     egresos_mes = dotacion.egresos_en(ini_mes, ini_mes_sig)
     egresos_mes_ant = dotacion.egresos_en(ini_mes_ant, ini_mes)
-    ausentismo_mes = _ausentismo_en(ini_mes, ini_mes_sig)
-    ausentismo_mes_ant = _ausentismo_en(ini_mes_ant, ini_mes)
+    ausentismo_mes = _ausentismo_en(ini_mes, ini_mes_sig, usuario=usuario)
+    ausentismo_mes_ant = _ausentismo_en(ini_mes_ant, ini_mes, usuario=usuario)
 
     # --- Rotación mensual / anual + serie de 12 meses para el gráfico ---
     rot_mensual = _rotacion_periodo(dotacion, ini_mes, ini_mes_sig, activos_hoy)
@@ -176,49 +200,56 @@ def metricas_dashboard(*, hoy: date | None = None) -> dict:
     # empresa se resuelve aparte, por su relación. La suma se hace en Python para tratar
     # bien las faltas abiertas (fecha_hasta null cuenta como 1 día).
     faltas = (
-        Novedad.objects.filter(
+        scope.novedades(Novedad.objects.all(), usuario)
+        .filter(
             novedad_origen__isnull=True,
             tipo_novedad__codigo="FALTA",
-            fecha_desde__gte=ini_mes,
             fecha_desde__lt=ini_mes_sig,
         )
+        .filter(periodo_intersecta_desde(ini_mes))
         .exclude(estado__in=ESTADOS_NOVEDAD_EXCLUIDOS)
+        .distinct()
         .values(
-            "empleado_id", "empleado__nombre", "empleado__apellido",
-            "fecha_desde", "fecha_hasta",
+            "empleado_id",
+            "empleado__nombre",
+            "empleado__apellido",
+            "relacion_laboral__empresa__nombre",
+            "fecha_desde",
+            "fecha_hasta",
         )
     )
     acc: dict[int, dict] = {}
     for f in faltas:
-        fin = f["fecha_hasta"] or f["fecha_desde"]
-        dias = (fin - f["fecha_desde"]).days + 1
+        inicio = max(f["fecha_desde"], ini_mes)
+        # Para una FALTA legada sin fin, el fin efectivo es el mismo día de inicio.
+        fin = min(
+            f["fecha_hasta"] or f["fecha_desde"],
+            hoy,
+            ini_mes_sig - timedelta(days=1),
+        )
+        dias = max((fin - inicio).days + 1, 0)
         e = acc.setdefault(
             f["empleado_id"],
-            {"nombre": f["empleado__nombre"], "apellido": f["empleado__apellido"], "dias": 0},
+            {
+                "nombre": f["empleado__nombre"],
+                "apellido": f["empleado__apellido"],
+                "empresa": f["relacion_laboral__empresa__nombre"],
+                "dias": 0,
+            },
         )
         e["dias"] += dias
     # Top 5 por días (desc), desempate por apellido.
     top = sorted(acc.items(), key=lambda kv: (-kv[1]["dias"], kv[1]["apellido"]))[:5]
-    # Empresa de cada empleado del ranking: la de su relación ACTIVA; si no tiene,
-    # la de la más reciente. Evita el "—" cuando la falta no trae relación asociada.
-    ids = [empleado_id for empleado_id, _ in top]
-    empresa_por_empleado: dict[int, str] = {}
-    for rel in (
-        RelacionLaboral.objects.filter(empleado_id__in=ids)
-        .select_related("empresa")
-        .order_by("empleado_id", "estado", "-fecha_ingreso")  # ACTIVA < FINALIZADA, luego recencia
-    ):
-        empresa_por_empleado.setdefault(rel.empleado_id, rel.empresa.nombre)
     ranking_faltas = [
         {
             "nombre": f"{datos['nombre']} {datos['apellido']}".strip(),
-            "empresa": empresa_por_empleado.get(empleado_id, "—"),
+            "empresa": datos["empresa"],
             "total": datos["dias"],
         }
         for empleado_id, datos in top
     ]
 
-    return {
+    resultado = {
         "periodo": {
             "mes": ini_mes.isoformat(),
             "mes_label": f"{_MESES_LARGO[ini_mes.month - 1]} {ini_mes.year}",
@@ -234,3 +265,25 @@ def metricas_dashboard(*, hoy: date | None = None) -> dict:
         },
         "ranking_faltas": ranking_faltas,
     }
+    if equipo_actual:
+        resultado["alcance"] = {
+            "tipo": "EQUIPO_ACTUAL",
+            "historico_disponible": False,
+        }
+        resultado["activos"]["delta"] = None
+        resultado["ingresos_mes"] = {"disponible": False}
+        resultado["egresos_mes"] = {"disponible": False}
+        resultado["rotacion"] = {
+            "disponible": False,
+            "motivo": (
+                "No existe historial de asignación de supervisores en MVP1; "
+                "no se proyecta el equipo actual hacia el pasado."
+            ),
+            "serie": [],
+        }
+    else:
+        resultado["alcance"] = {
+            "tipo": "DOTACION_GLOBAL",
+            "historico_disponible": True,
+        }
+    return resultado

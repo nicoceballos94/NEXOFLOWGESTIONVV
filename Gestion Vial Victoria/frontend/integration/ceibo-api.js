@@ -12,44 +12,35 @@
   "use strict";
 
   var CONFIG = {
-    API: "http://localhost:8000/api/v1",
+    // Producción sirve frontend y Django bajo el mismo origen. El desarrollo local debe
+    // usar el mismo proxy; no se codifican host/puerto de una máquina concreta acá.
+    API: "/api/v1",
+    TIMEOUT_MS: 20000,
   };
 
-  // Sesión. El access vive solo en memoria; el refresh se persiste en sessionStorage para
-  // que un F5 no eche al usuario, y muere al cerrar la pestaña (en una PC compartida de
-  // oficina, localStorage dejaría la sesión abierta para el siguiente que la use).
-  var _token = null, _refresh = null, _perfil = null;
-  var CLAVE_SESION = "ceibo.refresh";
-  // Lo llama el cableado para volver a la pantalla de login cuando la sesión muere sola
-  // (refresh vencido o revocado). Sin esto, la app quedaba mostrando datos viejos y cada
-  // acción fallaba con un 401 silencioso.
+  // Sesión Django. La credencial vive exclusivamente en la cookie HttpOnly del servidor:
+  // JavaScript no recibe ni persiste credenciales de API. El perfil sí queda en memoria
+  // para renderizar capacidades; al recargar se reconstruye desde /mi/perfil/.
+  var _perfil = null;
+  // Lo llama el cableado para volver a la pantalla de login cuando el servidor responde 401.
   var _onSesionVencida = null;
-
-  function guardarRefresh(valor) {
-    _refresh = valor || null;
-    try {
-      if (valor) sessionStorage.setItem(CLAVE_SESION, valor);
-      else sessionStorage.removeItem(CLAVE_SESION);
-    } catch (e) {
-      // Modo incógnito estricto o storage bloqueado: la sesión sigue viva en memoria,
-      // solo que no sobrevive al F5. No es motivo para romper el login.
-      console.warn("[ceibo] sessionStorage no disponible; la sesión no sobrevive al refresco");
-    }
-  }
+  var _sesionVencidaNotificada = false;
 
   function limpiarSesion() {
-    _token = null;
     _perfil = null;
-    guardarRefresh(null);
   }
   var _empresaByName = {}, _empresaById = {};
   var _sectorByName = {}, _sectorById = {};
-  var _puestoByName = {}, _puestoById = {};
+  // Un nombre de puesto solo es único DENTRO de su sector. El índice compuesto evita que
+  // "Encargado" de Taller termine resolviendo al "Encargado" de Administración.
+  var _puestoBySectorNombre = {}, _puestoById = {};
   // Catálogo con el flag `activa/activo`: los dropdowns de alta ofrecen SOLO los activos (una
   // empresa/sector dado de baja no se puede elegir para una relación nueva), pero el ABM de
   // Configuración lista todos para poder reactivarlos. Los mapas de arriba resuelven nombre↔id.
   var _empresasCat = [];          // [{ id, nombre, activa }]
   var _sectoresCat = [];          // [{ id, nombre, activo }]
+  var _puestosCat = [];           // [{ id, nombre, sector, activo }]
+  var _supervisoresCat = [];      // [{ id, username, nombre_completo }]
   var _rawEmpleados = [];
   var _empById = {};              // id → { name, empresa } (para adaptar novedades)
   // relación laboral → nombre de empresa. La novedad guarda de QUÉ relación es, así que la
@@ -61,9 +52,8 @@
   var _docsByEmp = {};            // empleado id → documentos crudos (para precargar la edición)
   var _fotoUrls = {};             // empleado id → objectURL de su foto (blob cacheado, se revoca)
 
-  // El blob de la foto se descarga con Authorization (media/ no es público), así que no puede
-  // ir directo en <img src>: hay que traerlo por fetch y envolverlo en un objectURL. Estos se
-  // revocan a mano (al reemplazar y al desloguear) o quedan retenidos en memoria para siempre.
+  // El blob de la foto se descarga por el endpoint autenticado y se envuelve en un objectURL.
+  // Así se tratan 401/403 y se lo puede revocar al reemplazar o cerrar sesión.
   function revocarFoto(empId) {
     if (_fotoUrls[empId]) { URL.revokeObjectURL(_fotoUrls[empId]); delete _fotoUrls[empId]; }
   }
@@ -72,37 +62,98 @@
   }
 
   // ---------- HTTP ----------
-  function auth() { return { Authorization: "Bearer " + _token }; }
-  // El access token dura 15 min (SIMPLE_JWT). Se renueva con el refresh ante un 401,
-  // así una sesión de trabajo larga no muere con "token inválido" a mitad de una acción.
-  async function refreshToken() {
-    if (!_refresh) return false;
-    var r = await fetch(CONFIG.API + "/auth/token/refresh/", {
-      method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ refresh: _refresh }),
-    });
-    if (!r.ok) { limpiarSesion(); return false; }
-    var d = await r.json().catch(function () { return {}; });
-    if (!d.access) { limpiarSesion(); return false; }
-    _token = d.access;
-    if (d.refresh) guardarRefresh(d.refresh);  // ROTATE_REFRESH_TOKENS=True → llega uno nuevo
-    return true;
+  var _apiBase = new URL(CONFIG.API.replace(/\/+$/, "") + "/", window.location.origin);
+  function apiUrl(path) {
+    var raw = String(path || "");
+    var url = /^https?:\/\//i.test(raw)
+      ? new URL(raw)
+      : new URL(raw.replace(/^\/+/, ""), _apiBase);
+    // Una cookie de sesión nunca debe acompañar un `next` o una ruta que salga del API del
+    // mismo origen. DRF suele devolver `next` absoluto, por eso no alcanza con concatenar.
+    if (url.origin !== window.location.origin ||
+        url.pathname.indexOf(_apiBase.pathname) !== 0) {
+      throw new Error("La API devolvió una URL de paginación no permitida.");
+    }
+    return url.href;
   }
-  // fetch con Authorization y reintento único ante 401 (access vencido → refresh → retry).
-  async function authedFetch(url, opts) {
-    opts = opts || {};
-    opts.headers = Object.assign({}, opts.headers, auth());
-    var r = await fetch(url, opts);
-    if (r.status === 401) {
-      if (await refreshToken()) {
-        opts.headers = Object.assign({}, opts.headers, auth());
-        r = await fetch(url, opts);
-      } else if (_onSesionVencida) {
-        // El refresh ya no sirve: la sesión terminó de verdad. Se avisa una sola vez
-        // (limpiarSesion() ya corrió dentro de refreshToken) para volver al login en vez
-        // de dejar la app mostrando datos viejos que ya nadie puede actualizar.
-        _onSesionVencida();
+  async function fetchConTimeout(url, opts) {
+    opts = Object.assign({}, opts || {});
+    if (typeof AbortController === "undefined") return fetch(url, opts);
+    var externo = opts.signal || null;
+    var ctrl = new AbortController();
+    var vencio = false;
+    var propagarAbort = function () { ctrl.abort(); };
+    if (externo) {
+      if (externo.aborted) ctrl.abort();
+      else externo.addEventListener("abort", propagarAbort, { once: true });
+    }
+    opts.signal = ctrl.signal;
+    var timer = setTimeout(function () {
+      vencio = true;
+      ctrl.abort();
+    }, CONFIG.TIMEOUT_MS);
+    try {
+      return await fetch(url, opts);
+    } catch (e) {
+      if (vencio) {
+        var timeout = new Error("La solicitud tardó demasiado. Revisá la conexión e intentá de nuevo.");
+        timeout.codigo = "TIMEOUT";
+        throw timeout;
       }
+      throw e;
+    } finally {
+      clearTimeout(timer);
+      if (externo) externo.removeEventListener("abort", propagarAbort);
+    }
+  }
+  function leerCookie(nombre) {
+    var prefijo = encodeURIComponent(nombre) + "=";
+    var partes = String(document.cookie || "").split(";");
+    for (var i = 0; i < partes.length; i += 1) {
+      var parte = partes[i].trim();
+      if (parte.indexOf(prefijo) === 0) {
+        try { return decodeURIComponent(parte.slice(prefijo.length)); }
+        catch (e) { return parte.slice(prefijo.length); }
+      }
+    }
+    return "";
+  }
+  function csrfActual() { return leerCookie("csrftoken"); }
+  function esMutacion(method) {
+    return ["POST", "PUT", "PATCH", "DELETE"].indexOf(String(method || "GET").toUpperCase()) >= 0;
+  }
+  async function asegurarCsrf() {
+    if (csrfActual()) return csrfActual();
+    var r = await fetchConTimeout(apiUrl("/auth/csrf/"), {
+      method: "GET",
+      credentials: "same-origin",
+      headers: { accept: "application/json" },
+    });
+    if (!r.ok) throw new Error("No se pudo inicializar la protección CSRF (error " + r.status + ").");
+    var csrf = csrfActual();
+    if (!csrf) throw new Error("El servidor no entregó la cookie CSRF.");
+    return csrf;
+  }
+  function notificarSesionVencida() {
+    limpiarSesion();
+    if (_sesionVencidaNotificada) return;
+    _sesionVencidaNotificada = true;
+    if (_onSesionVencida) _onSesionVencida();
+  }
+  // Fetch de sesión same-origin. El CSRF se lee de document.cookie justo antes de CADA
+  // mutación: Django lo rota al iniciar sesión y cachearlo dejaría logout/PATCH en 403.
+  async function authedFetch(url, opts) {
+    opts = Object.assign({}, opts || {});
+    opts.credentials = "same-origin";
+    opts.headers = Object.assign({}, opts.headers || {});
+    if (esMutacion(opts.method)) {
+      await asegurarCsrf();
+      opts.headers["X-CSRFToken"] = csrfActual();
+    }
+    var r = await fetchConTimeout(url, opts);
+    if (r.status === 401) {
+      // No se reintenta una mutación: la sesión ya no existe y repetirla sería ambiguo.
+      notificarSesionVencida();
     }
     return r;
   }
@@ -117,7 +168,7 @@
     return out;
   }
   async function jget(path) {
-    var r = await authedFetch(CONFIG.API + path, {});
+    var r = await authedFetch(apiUrl(path), {});
     if (!r.ok) {
       // El status va como propiedad, no solo en el texto: quien llama distingue un 403 (el rol
       // no ve este recurso) de un fallo de red sin tener que parsear el mensaje.
@@ -128,7 +179,7 @@
     return r.json();
   }
   async function jsend(method, path, body) {
-    var r = await authedFetch(CONFIG.API + path, {
+    var r = await authedFetch(apiUrl(path), {
       method: method,
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
@@ -150,13 +201,13 @@
   // a medias, sin un solo error visible. Un fallo tiene que romper ruidoso, no mentir.
   // `page_size` tope 100 (max_page_size del backend): pedir 200 se clampeaba en silencio.
   async function getAllPages(path) {
-    var rows = [], url = CONFIG.API + path;
+    var rows = [], url = apiUrl(path);
     while (url) {
       var r = await authedFetch(url, {});
       if (!r.ok) throw new Error("GET " + path + " → " + r.status);
       var d = await r.json();
       rows = rows.concat(d.results || []);
-      url = d.next;
+      url = d.next ? apiUrl(d.next) : null;
     }
     return rows;
   }
@@ -200,11 +251,6 @@
     var mm = String(d.getMonth() + 1).padStart(2, "0"), dd = String(d.getDate()).padStart(2, "0");
     return d.getFullYear() + "-" + mm + "-" + dd;
   }
-  function splitName(full) {
-    var parts = (full || "").trim().split(/\s+/);
-    if (parts.length <= 1) return { nombre: parts[0] || "", apellido: "" };
-    return { nombre: parts[0], apellido: parts.slice(1).join(" ") };
-  }
   // Un ingreso reciente no es "1 años": bajo el año se informa en meses (y bajo el mes,
   // en días), porque el período de prueba se cuenta en meses y redondearlo a un año
   // falsea el dato justo cuando más importa.
@@ -232,6 +278,13 @@
     if (i < 0) return s;
     var apellido = s.slice(0, i).trim(), nombre = s.slice(i + 1).trim();
     return nombre && apellido ? nombre + " " + apellido : s;
+  }
+  function nombreDeEmpleado(e) {
+    return ((e && e.nombre || "") + " " + (e && e.apellido || "")).trim();
+  }
+  function etiquetaEmpleado(e) {
+    var nombre = nombreDeEmpleado(e) || "Empleado";
+    return e && e.legajo ? e.legajo + " · " + nombre : nombre;
   }
   function stripAccents(s) { return (s || "").normalize("NFD").replace(/[̀-ͯ]/g, ""); }
   function normLabel(s) { return stripAccents((s || "").replace(/\s*·\s*$/, "").trim().toLowerCase()); }
@@ -263,9 +316,21 @@
   Object.keys(TIPONOV).forEach(function (k) { TIPONOV_REV[TIPONOV[k]] = k; });
   var CLASIF = { "Justificada": "JUSTIFICADA", "Injustificada": "INJUSTIFICADA" };
   var CLASIF_REV = { "JUSTIFICADA": "Justificada", "INJUSTIFICADA": "Injustificada" };
-  // Estado elegido en el alta → endpoint de transición (los que hoy existen en el backend).
-  // "Registrada" es el estado natural; "En proceso"/"Cerrada" aún no tienen endpoint.
+  // Estado elegido en el alta → endpoint de decisión. "En proceso" y "Cerrada" se excluyen:
+  // requieren las acciones explícitas Tomar/Cerrar desde el detalle.
   var ESTADONOV = { "Aprobada": "aprobar", "Rechazada": "rechazar", "Anulada": "anular" };
+  function pedirMotivoDecision(accion) {
+    if (accion !== "rechazar" && accion !== "anular") return "";
+    var sustantivo = accion === "rechazar" ? "rechazo" : "anulación";
+    var motivo = window.prompt("Ingresá el motivo de la " + sustantivo + " (obligatorio):", "");
+    if (motivo === null) return null;  // Cancelar no dispara ninguna mutación.
+    motivo = motivo.trim();
+    if (!motivo) {
+      showToast("El motivo de la " + sustantivo + " es obligatorio.", "error");
+      return null;
+    }
+    return motivo;
+  }
 
   function fmtRango(desdeISO, hastaISO) {
     var d = fmtISOtoDMY(desdeISO);
@@ -314,7 +379,8 @@
       };
     });
     return {
-      id: e.id, name: (e.nombre + " " + e.apellido).trim(), dni: e.dni,
+      id: e.id, legajo: e.legajo || "", nombre: e.nombre || "", apellido: e.apellido || "",
+      name: nombreDeEmpleado(e), dni: e.dni,
       empresa: _empresaById[activa.empresa] || "—", sector: _sectorById[activa.sector] || "—",
       puesto: _puestoById[activa.puesto] || "—", estado: e.activo ? "activo" : "inactivo",
       ingreso: fmtISOtoDMY(activa.fecha_ingreso), antig: anios(activa),
@@ -330,6 +396,7 @@
       _fotoUrl: e.foto_url || null,
       _relacionActivaId: activa.id || null, _empresaId: activa.empresa || null,
       _sectorId: activa.sector || null, _puestoId: activa.puesto || null,
+      _supervisorId: activa.supervisor || null,
       _jornadaLegal: activa.jornada_legal || "", _tipoContrato: activa.tipo_contrato || "",
       _nacISO: e.fecha_nacimiento || "", _ingresoISO: activa.fecha_ingreso || "",
     };
@@ -369,22 +436,30 @@
     return out;
   }
 
-  async function getOrCreatePuesto(nombre) {
-    nombre = (nombre || "").trim();
-    if (!nombre) return null;
-    var key = nombre.toLowerCase();
-    if (_puestoByName[key]) return _puestoByName[key];
-    var p = await jsend("POST", "/puestos/", { nombre: nombre });
-    _puestoByName[key] = p.id; _puestoById[p.id] = p.nombre;
-    return p.id;
+  function clavePuesto(sectorId, nombre) {
+    return String(sectorId || "") + "|" + normLabel(nombre);
   }
-  // Busca una persona por DNI EXACTO (el `q` del backend es icontains, así que se filtra
-  // el match exacto acá). Devuelve el empleado crudo (con `relaciones`/`activo`) o null.
-  // Es la clave del alta: si el DNI ya existe, no es un alta nueva sino un reingreso.
+  function puestoSeleccionado(sectorId, nombre) {
+    nombre = (nombre || "").trim();
+    if (!sectorId) throw new Error("Seleccioná el sector.");
+    if (!nombre) throw new Error("Seleccioná un puesto.");
+    var id = _puestoBySectorNombre[clavePuesto(sectorId, nombre)];
+    var puesto = _puestosCat.find(function (p) { return p.id === id; });
+    if (!puesto || !puesto.activo || Number(puesto.sector) !== Number(sectorId)) {
+      throw new Error("El puesto elegido no está activo o no pertenece al sector seleccionado.");
+    }
+    return id;
+  }
+  // Busca una persona por DNI completo en el endpoint restringido y auditado. El listado
+  // general ya no expone DNI (PII), por eso jamás se intenta inferir el reingreso desde ahí.
   async function findEmpleadoByDni(dni) {
     if (!dni) return null;
-    var arr = await getAllPages("/empleados/?q=" + encodeURIComponent(dni) + "&page_size=50");
-    return arr.find(function (e) { return String(e.dni) === String(dni); }) || null;
+    try {
+      return await jget("/empleados/por-dni/?dni=" + encodeURIComponent(dni));
+    } catch (e) {
+      if (e && e.status === 404) return null;
+      throw e;
+    }
   }
 
   // ---------- form de alta: lectura/escritura por etiqueta ----------
@@ -516,24 +591,20 @@
   var SIN_PERMISO = { __sinPermiso: true };
 
   // ---------- campos de la ficha que el guardado NO toca ----------
-  // El PATCH de edición va contra ActualizarEmpleadoSerializer, que expone SOLO datos de la
-  // persona. El DNI no está entre ellos, y todo lo que cuelga de la relación laboral
-  // (empresa, sector, puesto, ingreso, jornada) se cambia por sus propios endpoints: no hay
-  // PATCH de relación, solo crear y finalizar. Con los campos habilitados el form aceptaba
-  // ediciones que el PATCH descartaba sin decir nada —se guardaba "bien" y el sector seguía
-  // igual—, así que se bloquean y se explica el motivo en pantalla.
+  // La edición combinada guarda persona + asignación en una transacción. Empresa, ingreso,
+  // estado y supervisor conservan flujos propios; sector, puesto y jornada sí se actualizan
+  // desde la ficha y quedan registrados en la bitácora.
   var EMPRESA_LOCK_MSG =
     "La empresa no se edita desde la ficha. Para mover al empleado a otra empresa, " +
     "registrá su salida (baja) y luego su reingreso.";
   var RELACION_LOCK_MSG =
-    "Sector, puesto, fecha de ingreso y jornada son parte de la relación laboral y no se " +
-    "editan desde la ficha: se cambian registrando la baja y el reingreso.";
+    "La fecha de ingreso es parte de la vigencia y el supervisor se reasigna desde la ficha.";
   var DNI_LOCK_MSG = "El DNI identifica a la persona y no se edita desde la ficha.";
   var ESTADO_LOCK_MSG =
     "El estado no se elige a mano: sale de la relación laboral (activo mientras haya una " +
     "relación ACTIVA). Se cambia dando de baja o registrando el reingreso.";
   // Campos de la relación laboral, por etiqueta normalizada (las claves de readAltaForm).
-  var CAMPOS_RELACION = ["sector", "puesto", "fecha de ingreso", "jornada legal"];
+  var CAMPOS_RELACION_BLOQUEADOS = ["supervisor", "fecha de ingreso"];
 
   function lockCampo(el, msg) {
     if (!el) return;
@@ -577,8 +648,8 @@
     var nota = document.createElement("div");
     nota.setAttribute("data-ceibo-nota", "1");
     nota.textContent =
-      "Los datos laborales no se editan desde la ficha: se cambian registrando la baja y " +
-      "el reingreso. Acá se guardan solo los datos personales, de contacto y de cobertura.";
+      "Sector, puesto y jornada se guardan junto con los datos personales. La empresa y " +
+      "la fecha de ingreso conservan su historial; el supervisor se reasigna desde la ficha.";
     nota.style.cssText =
       "font-size:11.5px;line-height:1.45;color:var(--text3);background:var(--surface);" +
       "border:1px solid var(--border2);border-radius:9px;padding:9px 11px;margin-bottom:12px";
@@ -611,6 +682,43 @@
     poblarSelectDesde(sel, _sectoresCat.filter(function (s) { return s.activo; })
       .map(function (s) { return s.nombre; }), incluir);
   }
+  function poblarSelectPuestos(sel, sector, incluir) {
+    if (!sel || sel.tagName !== "SELECT") return;
+    var sectorId = typeof sector === "number" ? sector : _sectorByName[sector];
+    var nombres = _puestosCat.filter(function (p) {
+      return p.activo && Number(p.sector) === Number(sectorId);
+    }).map(function (p) { return p.nombre; });
+    poblarSelectDesde(sel, nombres, incluir);
+    var vacia = document.createElement("option");
+    vacia.value = "";
+    vacia.textContent = sectorId ? "Seleccionar puesto…" : "Primero seleccioná un sector";
+    sel.insertBefore(vacia, sel.firstChild);
+    sel.value = incluir && nombres.indexOf(incluir) >= 0 ? incluir : "";
+    sel.disabled = !sectorId;
+  }
+  function poblarSelectSupervisores(sel, incluir) {
+    if (!sel || sel.tagName !== "SELECT") return;
+    sel.replaceChildren();
+    var vacia = document.createElement("option");
+    vacia.value = "";
+    vacia.textContent = "Sin supervisor asignado";
+    sel.appendChild(vacia);
+    _supervisoresCat.forEach(function (s) {
+      var o = document.createElement("option");
+      o.value = String(s.id);
+      o.textContent = s.nombre_completo || s.username;
+      sel.appendChild(o);
+    });
+    if (incluir != null && !_supervisoresCat.some(function (s) {
+      return Number(s.id) === Number(incluir);
+    })) {
+      var legado = document.createElement("option");
+      legado.value = String(incluir);
+      legado.textContent = "Supervisor actual #" + incluir;
+      sel.appendChild(legado);
+    }
+    sel.value = incluir == null ? "" : String(incluir);
+  }
   // Mantiene el catálogo en memoria tras un alta/edición/baja, para que el dropdown de alta
   // refleje el cambio sin recargar toda la app.
   function _upsertEmpresaCat(e) {
@@ -622,6 +730,25 @@
     var row = { id: s.id, nombre: s.nombre, activo: !!s.activo };
     var i = _sectoresCat.findIndex(function (x) { return x.id === s.id; });
     if (i >= 0) _sectoresCat[i] = row; else _sectoresCat.push(row);
+  }
+  function _reindexPuestos() {
+    _puestoBySectorNombre = {};
+    _puestoById = {};
+    _puestosCat.forEach(function (p) {
+      _puestoById[p.id] = p.nombre;
+      if (p.sector != null) {
+        _puestoBySectorNombre[clavePuesto(p.sector, p.nombre)] = p.id;
+      }
+    });
+  }
+  function _upsertPuestoCat(p) {
+    var row = {
+      id: p.id, nombre: p.nombre, sector: p.sector == null ? null : Number(p.sector),
+      activo: !!p.activo,
+    };
+    var i = _puestosCat.findIndex(function (x) { return x.id === p.id; });
+    if (i >= 0) _puestosCat[i] = row; else _puestosCat.push(row);
+    _reindexPuestos();
   }
 
   function unlockEmpresa(el) {
@@ -642,12 +769,11 @@
 
   // ---------- helpers de novedad ----------
   var ESTADO_NOV_LOCK_MSG =
-    "El estado no se edita acá: se cambia con Aprobar, Rechazar o Anular desde el detalle " +
+    "El estado no se edita acá: se cambia con Tomar, Aprobar, Rechazar, Cerrar o Anular desde el detalle " +
     "de la novedad.";
-  // El canvas ofrece los seis estados del dominio, pero el backend solo tiene endpoint para
-  // aprobar/rechazar/anular. Elegir "En proceso" o "Cerrada" no hacía nada: la novedad
-  // quedaba Registrada y nadie avisaba. Se retiran del <select> hasta que existan, que es
-  // más honesto que aceptarlas y perderlas.
+  // El canvas ofrece los seis estados del dominio. El alta nace Registrada y puede encadenar
+  // una decisión soportada, pero nunca simula "En proceso" ni "Cerrada": esas transiciones
+  // registran actor y momento y se ejecutan desde el detalle.
   function podarEstadosNov(sel) {
     if (!sel || sel.tagName !== "SELECT") return;
     Array.prototype.slice.call(sel.options).forEach(function (o) {
@@ -656,14 +782,22 @@
     });
     sel.value = "Registrada";
   }
-  // Resuelve el id de empleado por nombre escrito (autocompletado); null si no está en la base.
-  function empIdByName(name) {
-    var key = normLabel(name);
-    if (!key) return null;
-    var found = _rawEmpleados.find(function (e) {
-      return normLabel((e.nombre + " " + e.apellido).trim()) === key;
+  function poblarSelectEmpleados(sel, seleccionado) {
+    if (!sel || sel.tagName !== "SELECT") return;
+    sel.replaceChildren();
+    var vacia = document.createElement("option");
+    vacia.value = "";
+    vacia.textContent = "Seleccionar empleado…";
+    sel.appendChild(vacia);
+    _rawEmpleados.filter(function (e) { return e.activo; }).forEach(function (e) {
+      var o = document.createElement("option");
+      o.value = String(e.id);
+      // `textContent` es deliberado: nombre/apellido son datos editables y nunca deben
+      // convertirse en markup. El legajo permite distinguir homónimos sin mostrar PII.
+      o.textContent = etiquetaEmpleado(e);
+      sel.appendChild(o);
     });
-    return found ? found.id : null;
+    sel.value = seleccionado == null ? "" : String(seleccionado);
   }
   function addDaysISO(iso, n) {
     var p = iso.split("-");
@@ -708,6 +842,7 @@
       { key: "ausentismo_mes", label: "Ausentismo del mes", sub: mes, goodUp: false },
     ];
     return cards.map(function (c, i) {
+      if (d[c.key] && d[c.key].disponible === false) return null;
       var m = d[c.key] || { valor: 0, delta: 0 };
       var dl = kpiDelta(m.delta, c.goodUp);
       return {
@@ -715,7 +850,7 @@
         delta: dl.txt, deltaStyle: dl.style,
         icon: (mockMetrics[i] && mockMetrics[i].icon) || "",
       };
-    });
+    }).filter(Boolean);
   }
   function dashRank(d) {
     var arr = d.ranking_faltas || [];
@@ -730,6 +865,19 @@
   // Sparkline sobre el viewBox 0 0 560 190 del diseño (x: 20→540, y: 40→160).
   function dashRotacion(d, rotState) {
     var rot = d.rotacion || {}, serie = rot.serie || [];
+    if (rot.disponible === false) {
+      return {
+        rotValor: "No disponible",
+        rotDelta: "El equipo actual no tiene historial de asignación",
+        rotDeltaStyle: "font-size:12px;color:var(--text3);font-weight:600",
+        rotPeriodoLbl: "alcance: equipo actual",
+        rotPoints: "",
+        rotArea: "",
+        rotDotX: 20,
+        rotDotY: 160,
+        rotLabels: [],
+      };
+    }
     var pick = (rotState === "a") ? (rot.anual || {}) : (rot.mensual || {});
     var dpts = pick.delta_pts || 0, same = !dpts, up = dpts > 0;
     var color = same ? "var(--text3)" : (up ? "var(--bad)" : "var(--ok)");
@@ -929,20 +1077,28 @@
     // sesión la abre una persona con sus credenciales.
     onSesionVencida(cb) { _onSesionVencida = cb; },
 
-    hayToken() { return !!_token; },
+    haySesion() { return !!_perfil; },
     perfil() { return _perfil; },
 
     // Capacidades del rol (A5): qué acciones de escritura habilita, calculadas por el
     // backend (common/capacidades.py) y servidas en /mi/perfil/. El front las usa SOLO
     // para esconder botones; la seguridad real es el 403 del backend. Default restrictivo:
-    // sin perfil o sin el objeto (token viejo, rol sin permisos), todo en false, así que
+    // sin perfil o sin el objeto (sesión vieja, rol sin permisos), todo en false, así que
     // Empleado/Servicio no ven acciones de escritura en vez de verlas y comerse un 403.
     capacidades() { return (_perfil && _perfil.capacidades) || {}; },
     puede(clave) { return !!this.capacidades()[clave]; },
 
     async login(usuario, clave) {
-      var r = await fetch(CONFIG.API + "/auth/token/", {
-        method: "POST", headers: { "content-type": "application/json" },
+      // El primer CSRF habilita el POST de login. Django lo rota al autenticar, por eso
+      // no se conserva esta variable para pedidos posteriores: authedFetch relee la cookie.
+      await asegurarCsrf();
+      var r = await fetchConTimeout(apiUrl("/auth/login/"), {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {
+          "content-type": "application/json",
+          "X-CSRFToken": csrfActual(),
+        },
         body: JSON.stringify({ username: usuario, password: clave }),
       });
       if (!r.ok) {
@@ -951,31 +1107,27 @@
         // usuario no puede hacer nada con "error 429", pero sí con "esperá un minuto".
         if (r.status === 429) throw new Error("Demasiados intentos. Esperá un minuto y probá de nuevo.");
         if (r.status === 401) throw new Error("Usuario o contraseña incorrectos.");
+        if (r.status === 403) throw new Error("La protección de sesión venció. Recargá e intentá de nuevo.");
         throw new Error("No se pudo iniciar sesión (error " + r.status + ").");
       }
       var d = await r.json().catch(function () { return {}; });
-      if (!d.access) throw new Error("El servidor no devolvió un token válido.");
-      _token = d.access;
-      guardarRefresh(d.refresh || null);
-      await this.cargarPerfil();
+      if (!d.username) throw new Error("El servidor no devolvió un perfil válido.");
+      _perfil = d;
+      _sesionVencidaNotificada = false;
       return _perfil;
     },
 
-    // Reabre la sesión al recargar la página: el access murió con el JS, pero el refresh
-    // sobrevivió en sessionStorage. Devuelve false si no hay nada que restaurar o si el
-    // refresh ya no sirve — en ambos casos, a la pantalla de login.
+    // Reabre la sesión al recargar: el navegador manda la cookie HttpOnly y /mi/perfil/
+    // confirma si sigue vigente. No hay credenciales copiadas en storage ni en memoria JS.
     async restaurarSesion() {
-      if (!_refresh) {
-        try { _refresh = sessionStorage.getItem(CLAVE_SESION) || null; } catch (e) { _refresh = null; }
-      }
-      if (!_refresh) return false;
-      if (!await refreshToken()) return false;
       try {
+        await asegurarCsrf();
         await this.cargarPerfil();
       } catch (e) {
         limpiarSesion();
         return false;
       }
+      _sesionVencidaNotificada = false;
       return true;
     },
 
@@ -1002,14 +1154,28 @@
       };
     },
 
-    logout() {
+    async logout(remoto) {
+      // Ante un 401 la UI ya sabe que la sesión murió y llama con `false`: no tiene sentido
+      // intentar cerrar en el servidor otra vez. El botón normal siempre hace POST real.
+      if (remoto !== false) {
+        await asegurarCsrf();
+        var r = await fetchConTimeout(apiUrl("/auth/logout/"), {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "X-CSRFToken": csrfActual() },
+        });
+        if (!r.ok && r.status !== 401) {
+          throw new Error("No se pudo cerrar la sesión (error " + r.status + ").");
+        }
+      }
       limpiarSesion();
+      _sesionVencidaNotificada = false;
       // Los índices de la sesión anterior no pueden sobrevivir al cambio de usuario: el
       // que entre después ve lo que su rol permita, no lo que quedó cacheado del anterior.
       _empresaByName = {}; _empresaById = {};
       _sectorByName = {}; _sectorById = {};
-      _puestoByName = {}; _puestoById = {};
-      _empresasCat = []; _sectoresCat = [];
+      _puestoBySectorNombre = {}; _puestoById = {};
+      _empresasCat = []; _sectoresCat = []; _puestosCat = []; _supervisoresCat = [];
       _rawEmpleados = []; _empById = {}; _empresaByRelacionId = {};
       _tipoNovByCodigo = {}; _novRawById = {}; _tipoDocByNombre = {}; _docsByEmp = {};
       revocarTodasLasFotos();   // los blobs de foto del usuario anterior no sobreviven al logout
@@ -1023,9 +1189,23 @@
       sec.forEach(function (x) { _sectorByName[x.nombre] = x.id; _sectorById[x.id] = x.nombre; });
       _empresasCat = emp.map(function (x) { return { id: x.id, nombre: x.nombre, activa: !!x.activa }; });
       _sectoresCat = sec.map(function (x) { return { id: x.id, nombre: x.nombre, activo: !!x.activo }; });
-      pue.forEach(function (x) { _puestoByName[x.nombre.toLowerCase()] = x.id; _puestoById[x.id] = x.nombre; });
+      _puestosCat = pue.map(function (x) {
+        return { id: x.id, nombre: x.nombre, sector: x.sector, activo: !!x.activo };
+      });
+      _reindexPuestos();
       var tipos = await getAllPages("/tipos-novedad/?page_size=100");
       tipos.forEach(function (t) { _tipoNovByCodigo[t.codigo] = t; });
+      // El catálogo está restringido a RRHH/Admin. Los demás roles no lo necesitan y no
+      // deben romper su carga inicial por recibir el 403 esperado.
+      if (_perfil && _perfil.capacidades && _perfil.capacidades.empleados_escribir) {
+        try {
+          var supervisores = await jget("/supervisores/?activo=true");
+          _supervisoresCat = Array.isArray(supervisores) ? supervisores : [];
+        } catch (e) {
+          console.warn("[ceibo] catálogo de supervisores no disponible", e);
+          _supervisoresCat = [];
+        }
+      }
       console.log("[ceibo] catálogos: " + emp.length + " empresas, " + sec.length + " sectores, " + pue.length + " puestos, " + tipos.length + " tipos de novedad");
     },
 
@@ -1033,7 +1213,13 @@
       _rawEmpleados = await getAllPages("/empleados/?page_size=100");
       var mapped = _rawEmpleados.map(adapt);
       _empById = {};
-      mapped.forEach(function (m) { _empById[m.id] = { name: m.name, empresa: m.empresa }; });
+      mapped.forEach(function (m) {
+        _empById[m.id] = {
+          id: m.id, legajo: m.legajo, nombre: m.nombre, apellido: m.apellido,
+          name: m.name, label: (m.legajo ? m.legajo + " · " : "") + m.name,
+          empresa: m.empresa,
+        };
+      });
       // Índice relación → empresa: la ficha ya trae TODAS las relaciones (no solo la activa),
       // así que no hace falta pedir nada más para etiquetar bien las novedades viejas.
       _empresaByRelacionId = {};
@@ -1043,6 +1229,25 @@
         });
       });
       console.log("[ceibo] backend conectado: " + mapped.length + " empleados");
+      return mapped;
+    },
+
+    // El listado es deliberadamente un resumen sin PII. La ficha pide el detalle por el
+    // endpoint `retrieve`, que además deja constancia EMPLEADO_CONSULTADO en la bitácora.
+    async getEmpleado(id) {
+      var raw = await jget("/empleados/" + id + "/");
+      var pos = _rawEmpleados.findIndex(function (e) { return e.id === raw.id; });
+      if (pos >= 0) _rawEmpleados[pos] = raw; else _rawEmpleados.push(raw);
+      var mapped = adapt(raw);
+      mapped._detalleCargado = true;
+      _empById[mapped.id] = {
+        id: mapped.id, legajo: mapped.legajo, nombre: mapped.nombre, apellido: mapped.apellido,
+        name: mapped.name, label: (mapped.legajo ? mapped.legajo + " · " : "") + mapped.name,
+        empresa: mapped.empresa,
+      };
+      (raw.relaciones || []).forEach(function (r) {
+        _empresaByRelacionId[r.id] = _empresaById[r.empresa] || "—";
+      });
       return mapped;
     },
 
@@ -1282,6 +1487,82 @@
       return s;
     },
 
+    // ---------- Puestos por sector (ABM en Configuración) ----------
+    // No se crean puestos implícitamente al dar de alta una persona: primero se parametrizan
+    // acá y luego el alta ofrece exclusivamente los activos del sector elegido.
+    async listPuestos() {
+      var rows = await getAllPages("/puestos/?page_size=100");
+      _puestosCat = rows.map(function (p) {
+        return { id: p.id, nombre: p.nombre, sector: p.sector, activo: !!p.activo };
+      });
+      _reindexPuestos();
+      return _puestosCat.map(function (p) {
+        return {
+          id: p.id, nombre: p.nombre, sector: p.sector,
+          sector_nombre: _sectorById[p.sector] || "—", activo: p.activo,
+        };
+      });
+    },
+
+    async crearPuesto(datos) {
+      var nombre = String(datos && datos.nombre || "").trim();
+      var sector = Number(datos && datos.sector);
+      if (!nombre) throw new Error("El nombre del puesto es obligatorio.");
+      if (!sector || !_sectorById[sector]) throw new Error("Seleccioná el sector del puesto.");
+      var p = await jsend("POST", "/puestos/", { nombre: nombre, sector: sector });
+      _upsertPuestoCat(p);
+      showToast("Puesto creado", "ok");
+      return p;
+    },
+
+    async editarPuesto(id, datos) {
+      var nombre = String(datos && datos.nombre || "").trim();
+      var sector = Number(datos && datos.sector);
+      if (!nombre) throw new Error("El nombre del puesto no puede quedar vacío.");
+      if (!sector || !_sectorById[sector]) throw new Error("Seleccioná el sector del puesto.");
+      var p = await jsend("PATCH", "/puestos/" + id + "/", {
+        nombre: nombre, sector: sector,
+      });
+      _upsertPuestoCat(p);
+      showToast("Puesto actualizado", "ok");
+      return p;
+    },
+
+    async togglePuestoActivo(id, activo) {
+      var p = await jsend("PATCH", "/puestos/" + id + "/", { activo: !!activo });
+      _upsertPuestoCat(p);
+      showToast(activo ? "Puesto reactivado" : "Puesto dado de baja", "ok");
+      return p;
+    },
+
+    catalogosUI() {
+      return {
+        empresas: _empresasCat.filter(function (e) { return e.activa; }).map(function (e) {
+          return { id: e.id, nombre: e.nombre };
+        }),
+        sectores: _sectoresCat.filter(function (s) { return s.activo; }).map(function (s) {
+          return { id: s.id, nombre: s.nombre };
+        }),
+        supervisores: _supervisoresCat.map(function (s) {
+          return {
+            id: s.id,
+            nombre: s.nombre_completo || s.username,
+          };
+        }),
+      };
+    },
+
+    async asignarSupervisor(empleadoId, relacionId, supervisorId) {
+      if (!empleadoId || !relacionId) throw new Error("El empleado no tiene relación activa.");
+      var relacion = await jsend(
+        "PATCH",
+        "/empleados/" + empleadoId + "/relaciones/" + relacionId + "/supervisor/",
+        { supervisor: supervisorId ? Number(supervisorId) : null }
+      );
+      showToast(supervisorId ? "Supervisor asignado" : "Supervisor quitado", "ok");
+      return relacion;
+    },
+
     // ---------- Tipos de documento (ABM en Configuración — CU-31) ----------
     // Mismo patrón que empresa/sector: el TipoDocumentoViewSet ya soporta GET/POST/PATCH y baja
     // lógica (activo), restringido a Admin/RRHH. La diferencia con listTiposDoc() —que trae solo
@@ -1379,31 +1660,66 @@
     },
 
     // ---------- Checklists de ingreso/egreso (ABM en Configuración — CU-29/30) ----------
-    // Plantillas configurables por empresa + tipo_proceso (INGRESO/EGRESO). La plantilla se crea
-    // perezosamente al agregar el primer ítem (el back tiene único parcial de plantilla activa por
-    // empresa+tipo). Los ítems DOCUMENTAL enlazan un tipo_documento (id); su "hecho" lo calcula el
-    // back al cargar el documento en el legajo, no se tilda en el ABM.
-    async listChecklist(empresaNombre, tipoProceso) {
+    // Cada alcance es empresa + sector (o General) + tipo de proceso. Se elige primero el
+    // borrador editable; si no existe, la versión publicada queda visible pero inmutable.
+    async listChecklist(empresaNombre, sectorId, tipoProceso) {
       var empId = _empresaByName[empresaNombre];
-      if (empId == null) return { plantillaId: null, items: [] };
+      var sector = sectorId === "" || sectorId == null ? null : Number(sectorId);
+      if (empId == null) {
+        var primera = _empresasCat.filter(function (e) { return e.activa; })[0];
+        if (!primera) return { plantillaId: null, items: [], version: null, estado: null };
+        empId = primera.id;
+        empresaNombre = primera.nombre;
+      }
       var rows = await getAllPages("/onboarding/plantillas/?empresa=" + empId +
         "&tipo_proceso=" + tipoProceso + "&page_size=100");
-      var pl = rows.filter(function (p) { return p.activa; })[0] || rows[0];
-      if (!pl) return { plantillaId: null, items: [] };
+      rows = rows.filter(function (p) {
+        return String(p.sector == null ? "" : p.sector) === String(sector == null ? "" : sector);
+      }).sort(function (a, b) { return Number(b.version || 0) - Number(a.version || 0); });
+      var pl = rows.filter(function (p) { return p.estado === "BORRADOR"; })[0] ||
+        rows.filter(function (p) { return p.estado === "PUBLICADA"; })[0] || rows[0];
+      if (!pl) {
+        return {
+          empresaNombre: empresaNombre, plantillaId: null, items: [],
+          version: null, estado: null, puedeEditar: true,
+        };
+      }
       var items = (pl.items || []).map(function (it) {
         return {
           id: it.id, etiqueta: it.etiqueta, tipo: it.tipo_item,
           doc: it.tipo_documento_nombre || "", tipo_documento: it.tipo_documento, activo: !!it.activo,
         };
       });
-      return { plantillaId: pl.id, items: items };
+      return {
+        empresaNombre: empresaNombre, plantillaId: pl.id, items: items,
+        version: pl.version, estado: pl.estado, puedeEditar: pl.estado === "BORRADOR",
+      };
     },
 
-    // Crea la plantilla de esa empresa+tipo (perezosa: solo cuando hace falta agregar un ítem).
-    async crearPlantillaChecklist(empresaNombre, tipoProceso) {
+    // Crea (o recupera) el borrador del alcance. Si ya hay una publicada, el backend copia
+    // sus ítems en la nueva versión para que editar nunca cambie procesos ya iniciados.
+    async crearPlantillaChecklist(empresaNombre, sectorId, tipoProceso) {
       var empId = _empresaByName[empresaNombre];
       if (empId == null) throw new Error("Empresa desconocida.");
-      return await jsend("POST", "/onboarding/plantillas/", { empresa: empId, tipo_proceso: tipoProceso });
+      var body = { empresa: empId, tipo_proceso: tipoProceso };
+      if (sectorId !== "" && sectorId != null) body.sector = Number(sectorId);
+      var pl = await jsend("POST", "/onboarding/plantillas/", body);
+      showToast("Borrador v" + pl.version + " listo para editar", "ok");
+      return pl;
+    },
+
+    async publicarPlantillaChecklist(plantillaId) {
+      if (!plantillaId) throw new Error("No hay un borrador para publicar.");
+      var pl = await jsend("POST", "/onboarding/plantillas/" + plantillaId + "/publicar/", {});
+      showToast("Checklist v" + pl.version + " publicado", "ok");
+      return pl;
+    },
+
+    async archivarPlantillaChecklist(plantillaId) {
+      if (!plantillaId) throw new Error("No hay una plantilla para archivar.");
+      var pl = await jsend("POST", "/onboarding/plantillas/" + plantillaId + "/archivar/", {});
+      showToast("Checklist v" + pl.version + " archivado", "ok");
+      return pl;
     },
 
     // `datos`: { etiqueta, tipo: 'ACCION'|'DOCUMENTAL', tipo_documento: id|null }
@@ -1448,11 +1764,28 @@
     },
 
     // ---------- Tarjeta de checklist en la ficha (CU-29/30) ----------
-    // El proceso se crea perezosamente en el back al abrir la ficha; devuelve onboarding si la
-    // relación está activa u offboarding si está dada de baja. El "hecho" del ítem documental lo
-    // calcula el back (documento cargado con archivo); acá solo se tilda el de ACCIÓN.
+    // GET es lectura pura. Si no hay proceso devuelve los datos necesarios para que RRHH lo
+    // inicie con una acción explícita; abrir la ficha nunca crea estado de negocio.
     async getChecklistFicha(empleadoId) {
-      var r = await jsend("GET", "/empleados/" + empleadoId + "/checklist/");
+      var r = await jget("/empleados/" + empleadoId + "/checklist/");
+      if (r && r.tarjeta) return _mapTarjetaChecklist(r.tarjeta);
+      return {
+        hay: false,
+        puedeIniciar: !!(r && r.puede_iniciar),
+        relacionId: r && r.relacion_laboral,
+        tipoProceso: r && r.tipo_proceso,
+      };
+    },
+
+    async iniciarChecklistFicha(empleadoId, datos) {
+      if (!datos || !datos.relacionId || !datos.tipoProceso) {
+        throw new Error("No se pudo determinar qué relación y proceso iniciar.");
+      }
+      var r = await jsend("POST", "/empleados/" + empleadoId + "/checklist/", {
+        relacion_laboral: Number(datos.relacionId),
+        tipo_proceso: datos.tipoProceso,
+      });
+      showToast(datos.tipoProceso === "EGRESO" ? "Offboarding iniciado" : "Onboarding iniciado", "ok");
       return _mapTarjetaChecklist(r && r.tarjeta);
     },
 
@@ -1484,10 +1817,9 @@
           out.madreDesde = fmtISOtoDMY(m.fecha_desde);
           out.madreHasta = fmtISOtoDMY(m.fecha_hasta);
           out.madreMotivo = m.motivo || m.tipo_novedad_nombre;
-          // La grilla muestra la vigencia EFECTIVA: madre.desde → hasta de la última
-          // prórroga no anulada (antes mostraba solo el rango original de la madre).
-          var vigHasta = m.fecha_hasta;
-          pros.forEach(function (p) { if (p.estado_display !== "Anulada") vigHasta = p.fecha_hasta; });
+          // La fuente canónica es el cálculo del backend: solo APROBADA/CERRADA extiende
+          // la vigencia. Recalcular acá incluía por error registradas o rechazadas.
+          var vigHasta = (m.vigencia_efectiva && m.vigencia_efectiva.hasta) || m.fecha_hasta;
           out.fecha = fmtRango(m.fecha_desde, vigHasta);
         }
         return out;
@@ -1496,29 +1828,15 @@
       return rows;
     },
 
-    // Prepara el alta de novedad: empleado como autocomplete (input + datalist) validado
-    // contra la base, fecha por defecto = hoy, y fin estimada que se recalcula con los días.
+    // Prepara el alta de novedad: empleado identificado por ID (la etiqueta muestra
+    // legajo + nombre), fecha por defecto = hoy y fin estimada recalculada con los días.
     populateNovForm() {
       if (!document.querySelector('[data-modal="altanov"]')) return;
       var f = readModalForm('[data-modal="altanov"]');
-      // Empleado: convertir el <select> en caja de texto con autocompletado.
       var empEl = f["empleado"];
-      if (empEl && empEl.tagName === "SELECT") {
-        var input = document.createElement("input");
-        input.setAttribute("list", "ceibo-emp-list");
-        input.setAttribute("placeholder", "Escribí el nombre del empleado…");
-        input.setAttribute("autocomplete", "off");
-        input.style.cssText = empEl.style.cssText;  // hereda el look del diseño
-        var dl = document.createElement("datalist");
-        dl.id = "ceibo-emp-list";
-        // Solo empleados ACTIVOS: no se cargan novedades nuevas sobre egresados (el backend
-        // también lo rechaza). Las novedades históricas de un egresado se conservan.
-        dl.innerHTML = _rawEmpleados.filter(function (e) { return e.activo; }).map(function (e) {
-          return '<option value="' + (e.nombre + " " + e.apellido).trim() + '"></option>';
-        }).join("");
-        empEl.parentNode.replaceChild(input, empEl);
-        input.parentNode.appendChild(dl);
-      }
+      // Solo empleados ACTIVOS: no se cargan novedades nuevas sobre egresados (el backend
+      // también lo rechaza). Las opciones se crean como nodos, nunca con `innerHTML`.
+      poblarSelectEmpleados(empEl, null);
       prepararInputCertificado(f);
       // Estado: solo los que el backend sabe aplicar (ver podarEstadosNov).
       podarEstadosNov(f["estado"]);
@@ -1588,8 +1906,10 @@
         return;
       }
       var empEl = f["empleado"];
-      var empId = empEl && empEl.tagName === "SELECT" ? empEl.value : empIdByName(g("empleado"));
-      if (!empId) throw new Error("Empleado inválido: elegí un nombre de la lista de registrados");
+      var empId = empEl && empEl.tagName === "SELECT" ? empEl.value : "";
+      if (!empId || !_empById[empId]) {
+        throw new Error("Empleado inválido: elegí un legajo de la lista.");
+      }
       payload.empleado = Number(empId);
       // El estado se valida ANTES de crear: podarEstadosNov ya saca los no soportados del
       // <select>, pero si el diseño cambia y vuelve a ofrecerlos, esto corta acá en vez de
@@ -1600,12 +1920,17 @@
         throw new Error('El estado "' + estadoSel + '" todavía no se puede aplicar. ' +
           "Registrá la novedad y cambiale el estado desde el detalle.");
       }
+      // Se pide ANTES de crear: cancelar un rechazo/anulación desde el alta no puede dejar
+      // una novedad registrada a medias ni obligar al usuario a adivinar qué ocurrió.
+      var motivoDecision = pedirMotivoDecision(accion);
+      if ((accion === "rechazar" || accion === "anular") && motivoDecision === null) return false;
       var nov = await jsend("POST", "/novedades/", payload);
       if (accion) {
         // La novedad YA existe: si la transición falla hay que decirlo con todas las letras.
         // Un "error" a secas invita a reintentar el alta, y eso duplicaría el registro.
         try {
-          await jsend("POST", "/novedades/" + nov.id + "/" + accion + "/", {});
+          var decisionBody = motivoDecision ? { motivo: motivoDecision } : {};
+          await jsend("POST", "/novedades/" + nov.id + "/" + accion + "/", decisionBody);
         } catch (e) {
           throw new Error('La novedad se registró, pero no se pudo pasar a "' + estadoSel +
             '": ' + e.message + ". No la cargues de nuevo: cambiale el estado desde el detalle.");
@@ -1613,14 +1938,54 @@
       }
       if (cert) await adjuntarCertificado(nov.id, cert, "La novedad se registró");
       showToast("Novedad registrada", "ok");
+      return true;
     },
 
-    // Transición de estado por endpoint dedicado (aprobar/rechazar/anular).
-    async transicionNov(id, accion) {
+    // Transición de estado por endpoint dedicado. La lista cerrada impide que un valor
+    // de UI termine convertido accidentalmente en un path arbitrario.
+    async transicionNov(id, accion, motivo) {
       if (!id) throw new Error("no hay novedad seleccionada");
-      await jsend("POST", "/novedades/" + id + "/" + accion + "/", {});
-      var txt = { aprobar: "aprobada", rechazar: "rechazada", anular: "anulada" }[accion] || accion;
+      var permitidas = ["tomar", "aprobar", "rechazar", "cerrar", "anular"];
+      if (permitidas.indexOf(accion) < 0) throw new Error("transición de novedad inválida");
+      var body = {};
+      if (accion === "rechazar" || accion === "anular") {
+        motivo = motivo == null ? pedirMotivoDecision(accion) : String(motivo).trim();
+        if (!motivo) return false;
+        body.motivo = motivo;
+      }
+      if (accion === "cerrar") {
+        var actual = _novRawById[id];
+        if (!actual) throw new Error("No se pudo determinar el rango actual de la novedad.");
+        // Una novedad con rango abierto necesita que la persona determine el día real de
+        // cierre. Si ya tenía fin, `{}` preserva ese límite y el backend verifica coherencia.
+        if (actual && !actual.fecha_hasta) {
+          var ingresada = window.prompt(
+            "Ingresá la fecha de cierre (dd/mm/aaaa):",
+            fmtISOtoDMY(todayISO())
+          );
+          if (ingresada === null) return false;
+          var fechaCierre = parseFecha(ingresada);
+          if (!fechaCierre) {
+            showToast("Ingresá una fecha de cierre válida (dd/mm/aaaa).", "error");
+            return false;
+          }
+          if (actual.fecha_desde && fechaCierre < actual.fecha_desde) {
+            showToast("La fecha de cierre no puede ser anterior al inicio.", "error");
+            return false;
+          }
+          body.fecha_hasta = fechaCierre;
+        }
+      }
+      await jsend("POST", "/novedades/" + id + "/" + accion + "/", body);
+      var txt = {
+        tomar: "tomada",
+        aprobar: "aprobada",
+        rechazar: "rechazada",
+        cerrar: "cerrada",
+        anular: "anulada",
+      }[accion] || accion;
       showToast("Novedad " + txt, "ok");
+      return true;
     },
 
     // Etiqueta del <select> Tipo para precargar en edición (desde el código real del backend).
@@ -1638,13 +2003,12 @@
       var set = function (k, iso) { if (f[k] != null) f[k].value = iso ? fmtISOtoDMY(iso) : ""; };
       var empEl = f["empleado"];
       if (empEl) {
-        var ro = document.createElement("input");
-        ro.value = (_empById[n.empleado] && _empById[n.empleado].name) || nombreNatural(n.empleado_nombre) || "";
-        ro.disabled = true;
-        ro.style.cssText = empEl.style.cssText + ";opacity:.65;cursor:not-allowed";
-        empEl.parentNode.replaceChild(ro, empEl);
+        poblarSelectEmpleados(empEl, n.empleado);
+        empEl.disabled = true;
+        empEl.style.opacity = ".65";
+        empEl.style.cursor = "not-allowed";
       }
-      // El PATCH de novedad no toca el estado (lo mueven aprobar/rechazar/anular desde el
+      // El PATCH de novedad no toca el estado (lo mueven las acciones explícitas desde el
       // detalle). Editable, prometía un cambio que nunca se mandaba. Se muestra el estado
       // real —no el que dejó el canvas— y se bloquea.
       if (f["estado"]) f["estado"].value = n.estado_display || f["estado"].value;
@@ -1700,9 +2064,8 @@
     async submitAlta(editId, exento) {
       var f = readAltaForm();
       var g = function (k) { var el = f[k]; return el ? el.value.trim() : ""; };
-      var nm = splitName(g("nombre y apellido"));
       var payload = {
-        nombre: nm.nombre, apellido: nm.apellido,
+        nombre: g("nombre"), apellido: g("apellido"),
         cuil: g("cuil") || null,
         fecha_nacimiento: parseFecha(g("fecha de nacimiento")),
         educacion: EDU[g("educacion")] || "",
@@ -1717,22 +2080,43 @@
         observaciones: g("observaciones"),
       };
       if (editId) {
-        await jsend("PATCH", "/empleados/" + editId + "/", payload);   // solo datos de la persona
+        var rawEdit = _rawEmpleados.find(function (e) {
+          return Number(e.id) === Number(editId);
+        });
+        var relEdit = rawEdit && (rawEdit.relaciones || []).find(function (r) {
+          return r.estado === "ACTIVA";
+        });
+        var sobre = { empleado: payload };
+        if (relEdit) {
+          var sectorEdit = _sectorByName[g("sector")];
+          if (!sectorEdit) throw new Error("Seleccioná el sector");
+          sobre.relacion = {
+            sector: sectorEdit,
+            puesto: puestoSeleccionado(sectorEdit, g("puesto")),
+            jornada_legal: JORNADA[g("jornada legal")] || "",
+          };
+        }
+        await jsend("PATCH", "/empleados/" + editId + "/ficha/", sobre);
         showToast("Empleado actualizado", "ok");
         return;
       }
       // Alta completa: empleado + relación ACTIVA.
-      if (!nm.nombre || !g("dni")) throw new Error("Nombre y DNI son obligatorios");
+      if (!payload.nombre || !payload.apellido || !g("dni")) {
+        throw new Error("Nombre, apellido y DNI son obligatorios");
+      }
       var empresaId = _empresaByName[g("empresa")];
       if (!empresaId) throw new Error("Seleccioná la empresa");   // define en qué empresa corre la jornada
+      var sectorId = _sectorByName[g("sector")];
+      if (!sectorId) throw new Error("Seleccioná el sector");
       var fechaIng = parseFecha(g("fecha de ingreso"));
       if (!fechaIng) throw new Error("Fecha de ingreso obligatoria (dd/mm/aaaa)");
       var dni = g("dni").replace(/\./g, "");
-      var puestoId = await getOrCreatePuesto(g("puesto"));
+      var puestoId = puestoSeleccionado(sectorId, g("puesto"));
       var relacion = {
-        empresa: empresaId, sector: _sectorByName[g("sector")],
+        empresa: empresaId, sector: sectorId,
         puesto: puestoId, fecha_ingreso: fechaIng, jornada_legal: JORNADA[g("jornada legal")] || "",
       };
+      if (g("supervisor")) relacion.supervisor = Number(g("supervisor"));
       // ¿Ya existe una persona con ese DNI? Entonces no es un alta nueva: es un REINGRESO.
       // El DNI es único a nivel grupo; se valida contra la base para no chocar con el
       // índice único y, sobre todo, para no duplicar la persona.
@@ -1762,7 +2146,8 @@
       if (!emp) return;
       var f = readAltaForm();
       var set = function (k, v) { if (f[k] != null && v != null) f[k].value = v; };
-      set("nombre y apellido", emp.name);
+      set("nombre", emp.nombre);
+      set("apellido", emp.apellido);
       set("dni", emp.dni);
       set("cuil", emp.cuil);
       set("fecha de nacimiento", emp.nac);           // el input formatea dd/mm/aaaa
@@ -1781,14 +2166,23 @@
       // (el campo queda bloqueado en edición, así que no se puede cambiar por otra inactiva).
       poblarSelectEmpresas(f["empresa"], emp.empresa);
       poblarSelectSectores(f["sector"], emp.sector);
+      poblarSelectPuestos(f["puesto"], emp._sectorId, emp.puesto);
+      poblarSelectSupervisores(f["supervisor"], emp._supervisorId);
       if (f["empresa"] && emp.empresa !== "—") f["empresa"].value = emp.empresa;
       if (f["sector"] && emp.sector !== "—") f["sector"].value = emp.sector;
       if (f["puesto"]) f["puesto"].value = emp.puesto === "—" ? "" : emp.puesto;
-      // El PATCH de edición solo toca datos de la persona: se bloquea todo lo demás para
-      // no aceptar cambios que se descartan en silencio (ver CAMPOS_RELACION arriba).
+      if (f["sector"]) {
+        f["sector"].onchange = function () {
+          poblarSelectPuestos(f["puesto"], f["sector"].value);
+        };
+      }
+      // Empresa/ingreso/supervisor tienen flujos propios. Sector, puesto y jornada quedan
+      // habilitados y se envían en el mismo commit que los datos personales.
       lockCampo(f["empresa"], EMPRESA_LOCK_MSG);
       lockCampo(f["dni"], DNI_LOCK_MSG);
-      CAMPOS_RELACION.forEach(function (k) { lockCampo(f[k], RELACION_LOCK_MSG); });
+      CAMPOS_RELACION_BLOQUEADOS.forEach(function (k) {
+        lockCampo(f[k], RELACION_LOCK_MSG);
+      });
       lockCampo(f["estado"], ESTADO_LOCK_MSG);
       notaEdicion(f);
     },
@@ -1803,9 +2197,19 @@
       // así una empresa/sector creado desde Configuración aparece acá sin recargar.
       poblarSelectEmpresas(f["empresa"]);
       poblarSelectSectores(f["sector"]);
+      poblarSelectPuestos(f["puesto"], null);
+      poblarSelectSupervisores(f["supervisor"], null);
+      if (f["sector"]) {
+        f["sector"].onchange = function () {
+          poblarSelectPuestos(f["puesto"], f["sector"].value);
+        };
+      }
       unlockEmpresa(f["empresa"]);
       unlockCampo(f["dni"]);
-      CAMPOS_RELACION.forEach(function (k) { unlockCampo(f[k]); });
+      CAMPOS_RELACION_BLOQUEADOS.forEach(function (k) { unlockCampo(f[k]); });
+      ["sector", "puesto", "jornada legal"].forEach(function (k) {
+        unlockCampo(f[k]);
+      });
       // El estado se bloquea también en el alta: un alta nace ACTIVA (la relación se crea
       // así) y el <select> nunca se leyó, con lo cual elegir "Inactivo" tampoco hacía nada.
       lockCampo(f["estado"], ESTADO_LOCK_MSG);
@@ -1826,21 +2230,54 @@
       showToast("Baja registrada", "ok");
     },
 
-    // Reingreso: nueva relación ACTIVA (misma empresa de la última relación).
-    // La fecha de reincorporación sale del modal (placeholder empieza "dd/mm/aaaa"); vacío = hoy.
-    // Arrastra sector/puesto/jornada/contrato de la última relación: el modal no los
-    // pregunta, y sin esto la relación nueva queda pelada (la ficha mostraría "—").
+    // Reingreso: cada dato de la nueva relación se elige de nuevo. La relación anterior queda
+    // solo como historial; no es una fuente implícita de empresa, sector ni puesto.
+    prepareReingreso() {
+      var m = document.querySelector('[data-modal="reingreso"]');
+      if (!m) return;
+      var empresa = m.querySelector('[data-reingreso="empresa"]');
+      var sector = m.querySelector('[data-reingreso="sector"]');
+      var puesto = m.querySelector('[data-reingreso="puesto"]');
+      var supervisor = m.querySelector('[data-reingreso="supervisor"]');
+      poblarSelectEmpresas(empresa);
+      poblarSelectSectores(sector);
+      [empresa, sector].forEach(function (sel) {
+        if (!sel) return;
+        var vacia = document.createElement("option");
+        vacia.value = "";
+        vacia.textContent = sel === empresa ? "Seleccionar empresa…" : "Seleccionar sector…";
+        sel.insertBefore(vacia, sel.firstChild);
+        sel.value = "";
+      });
+      poblarSelectPuestos(puesto, null);
+      poblarSelectSupervisores(supervisor, null);
+      if (sector) sector.onchange = function () {
+        poblarSelectPuestos(puesto, sector.value);
+      };
+    },
+
     async reingreso(emp) {
       if (!emp) throw new Error("empleado no encontrado");
-      if (!emp._empresaId) throw new Error("no hay empresa de referencia para el reingreso");
       var m = document.querySelector('[data-modal="reingreso"]');
-      var fEl = m ? m.querySelector('input[placeholder^="dd/mm/aaaa"]') : null;
-      var fecha = parseFecha(fEl ? fEl.value : "") || todayISO();
-      var nueva = { empresa: emp._empresaId, fecha_ingreso: fecha };
-      if (emp._sectorId) nueva.sector = emp._sectorId;
-      if (emp._puestoId) nueva.puesto = emp._puestoId;
-      if (emp._jornadaLegal) nueva.jornada_legal = emp._jornadaLegal;
-      if (emp._tipoContrato) nueva.tipo_contrato = emp._tipoContrato;
+      if (!m) throw new Error("modal de reingreso no encontrado");
+      var empresaNombre = (m.querySelector('[data-reingreso="empresa"]') || {}).value || "";
+      var sectorNombre = (m.querySelector('[data-reingreso="sector"]') || {}).value || "";
+      var puestoNombre = (m.querySelector('[data-reingreso="puesto"]') || {}).value || "";
+      var supervisorId = (m.querySelector('[data-reingreso="supervisor"]') || {}).value || "";
+      var fechaEl = m.querySelector('[data-reingreso="fecha"]');
+      var fecha = parseFecha(fechaEl ? fechaEl.value : "");
+      var empresaId = _empresaByName[empresaNombre];
+      var sectorId = _sectorByName[sectorNombre];
+      if (!empresaId) throw new Error("Seleccioná la empresa del reingreso.");
+      if (!sectorId) throw new Error("Seleccioná el sector del reingreso.");
+      if (!fecha) throw new Error("La fecha de reincorporación es obligatoria.");
+      var nueva = {
+        empresa: empresaId,
+        sector: sectorId,
+        puesto: puestoSeleccionado(sectorId, puestoNombre),
+        fecha_ingreso: fecha,
+      };
+      if (supervisorId) nueva.supervisor = Number(supervisorId);
       await jsend("POST", "/empleados/" + emp.id + "/relaciones/", nueva);
       showToast("Reingreso registrado", "ok");
     },
@@ -1924,7 +2361,7 @@
         ? "/empleados/" + empId + "/documentos/" + docId + "/"
         : "/empleados/" + empId + "/documentos/";
       // Sin content-type a mano: el browser arma el boundary del multipart él solo.
-      var r = await authedFetch(CONFIG.API + path, { method: docId ? "PATCH" : "POST", body: fd });
+      var r = await authedFetch(apiUrl(path), { method: docId ? "PATCH" : "POST", body: fd });
       var data = await r.json().catch(function () { return {}; });
       if (!r.ok) {
         var msg = (data.campos && Object.keys(data.campos).length)
@@ -1937,9 +2374,9 @@
     },
 
     // Descarga del respaldo. No alcanza un <a href>: el endpoint exige el header
-    // Authorization y un link plano no lo manda (por eso media/ no es público).
+    // El cliente común permite tratar sesión vencida y errores de permisos de forma uniforme.
     async descargarDoc(empId, docId) {
-      var r = await authedFetch(CONFIG.API + "/empleados/" + empId + "/documentos/" + docId + "/archivo/", {});
+      var r = await authedFetch(apiUrl("/empleados/" + empId + "/documentos/" + docId + "/archivo/"), {});
       if (!r.ok) throw new Error(r.status === 404 ? "El documento no tiene respaldo cargado." : "Error " + r.status);
       var blob = await r.blob();
       // El nombre legible lo arma el backend en Content-Disposition; se respeta.
@@ -1956,16 +2393,16 @@
     },
 
     async quitarDoc(empId, docId) {
-      var r = await authedFetch(CONFIG.API + "/empleados/" + empId + "/documentos/" + docId + "/", { method: "DELETE" });
+      var r = await authedFetch(apiUrl("/empleados/" + empId + "/documentos/" + docId + "/"), { method: "DELETE" });
       if (!r.ok) throw new Error("No se pudo quitar el documento (" + r.status + ")");
       showToast("Documento quitado", "ok");
     },
 
     // ---------- Foto de perfil del empleado ----------
     // Devuelve un objectURL para poner en <img src>, o null si el empleado no tiene foto.
-    // No sirve un <img src> a la URL de la API: exige Authorization y el media/ no es público.
+    // El cliente común permite tratar sesión vencida y errores antes de crear el objectURL.
     async fotoObjectURL(empId) {
-      var r = await authedFetch(CONFIG.API + "/empleados/" + empId + "/foto/archivo/", {});
+      var r = await authedFetch(apiUrl("/empleados/" + empId + "/foto/archivo/"), {});
       if (r.status === 404) return null;         // sin foto cargada: el canvas muestra el avatar por defecto
       if (!r.ok) throw new Error("No se pudo cargar la foto (" + r.status + ")");
       var blob = await r.blob();
@@ -1979,7 +2416,7 @@
       if (!file) throw new Error("Elegí una imagen.");
       var fd = new FormData();
       fd.append("foto", file);
-      var r = await authedFetch(CONFIG.API + "/empleados/" + empId + "/foto/", { method: "POST", body: fd });
+      var r = await authedFetch(apiUrl("/empleados/" + empId + "/foto/"), { method: "POST", body: fd });
       var data = await r.json().catch(function () { return {}; });
       if (!r.ok) {
         var msg = (data.campos && Object.keys(data.campos).length)
@@ -1993,7 +2430,7 @@
     },
 
     async quitarFoto(empId) {
-      var r = await authedFetch(CONFIG.API + "/empleados/" + empId + "/foto/", { method: "DELETE" });
+      var r = await authedFetch(apiUrl("/empleados/" + empId + "/foto/"), { method: "DELETE" });
       if (!r.ok) throw new Error("No se pudo quitar la foto (" + r.status + ")");
       revocarFoto(empId);
       showToast("Foto quitada", "ok");
@@ -2020,7 +2457,7 @@
       var fd = new FormData();
       fd.append("archivo", file);
       // Sin content-type a mano: el browser arma el boundary del multipart él solo.
-      var r = await authedFetch(CONFIG.API + "/novedades/" + novId + "/adjuntos/", {
+      var r = await authedFetch(apiUrl("/novedades/" + novId + "/adjuntos/"), {
         method: "POST", body: fd,
       });
       var data = await r.json().catch(function () { return {}; });
@@ -2035,7 +2472,7 @@
     },
 
     async descargarAdjunto(novId, adjId) {
-      var r = await authedFetch(CONFIG.API + "/novedades/" + novId + "/adjuntos/" + adjId + "/archivo/", {});
+      var r = await authedFetch(apiUrl("/novedades/" + novId + "/adjuntos/" + adjId + "/archivo/"), {});
       if (!r.ok) throw new Error("No se pudo descargar el respaldo (" + r.status + ")");
       var blob = await r.blob();
       var cd = r.headers.get("content-disposition") || "";
@@ -2051,7 +2488,7 @@
     },
 
     async quitarAdjunto(novId, adjId) {
-      var r = await authedFetch(CONFIG.API + "/novedades/" + novId + "/adjuntos/" + adjId + "/", { method: "DELETE" });
+      var r = await authedFetch(apiUrl("/novedades/" + novId + "/adjuntos/" + adjId + "/"), { method: "DELETE" });
       if (!r.ok) throw new Error("No se pudo quitar el respaldo (" + r.status + ")");
       showToast("Respaldo quitado", "ok");
     },

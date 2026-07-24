@@ -1,10 +1,12 @@
 from django.contrib import admin
 
+from common.admin import AdminSoloLectura
+
 from .models import Novedad, TipoNovedad
 
 
 @admin.register(TipoNovedad)
-class TipoNovedadAdmin(admin.ModelAdmin):
+class TipoNovedadAdmin(AdminSoloLectura, admin.ModelAdmin):
     list_display = (
         "codigo", "nombre", "admite_prorroga", "justifica_ausencia", "ocupa_periodo", "activo"
     )
@@ -13,7 +15,7 @@ class TipoNovedadAdmin(admin.ModelAdmin):
 
 
 @admin.register(Novedad)
-class NovedadAdmin(admin.ModelAdmin):
+class NovedadAdmin(AdminSoloLectura, admin.ModelAdmin):
     list_display = ("id", "empleado", "tipo_novedad", "estado", "fecha_desde", "fecha_hasta")
     list_filter = ("estado", "tipo_novedad", "clasificacion")
     search_fields = ("empleado__apellido", "empleado__legajo", "motivo")

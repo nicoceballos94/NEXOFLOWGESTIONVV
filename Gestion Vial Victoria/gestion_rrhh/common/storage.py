@@ -1,5 +1,9 @@
 """Borrado seguro de los binarios de respaldo. Compartido por empleados y novedades."""
+import logging
+
 from django.db import transaction
+
+logger = logging.getLogger(__name__)
 
 
 def borrar_archivo_al_confirmar(archivo) -> None:
@@ -16,5 +20,21 @@ def borrar_archivo_al_confirmar(archivo) -> None:
     archivo huérfano se limpia, una fila rota no se arregla sola. Por eso el borrado ocurre
     solo cuando la fila ya está confirmada.
     """
-    if archivo:
-        transaction.on_commit(lambda: archivo.delete(save=False))
+    if not archivo:
+        return
+
+    nombre = getattr(archivo, "name", "")
+
+    def borrar_sin_romper_la_respuesta():
+        try:
+            archivo.delete(save=False)
+        except Exception:
+            # La fila ya quedó confirmada: propagar en este punto devolvería 500 aunque la
+            # operación de negocio sí ocurrió. El error queda explícito para alertas y para
+            # una limpieza operativa del eventual huérfano.
+            logger.exception(
+                "No se pudo borrar un archivo huérfano después del commit",
+                extra={"archivo": nombre},
+            )
+
+    transaction.on_commit(borrar_sin_romper_la_respuesta, robust=True)

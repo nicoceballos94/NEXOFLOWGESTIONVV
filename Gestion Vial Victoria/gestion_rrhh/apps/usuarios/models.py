@@ -1,4 +1,5 @@
 from django.contrib.auth.models import AbstractUser
+from django.db import transaction
 
 from common import roles
 
@@ -12,6 +13,18 @@ class Usuario(AbstractUser):
     class Meta:
         verbose_name = "usuario"
         verbose_name_plural = "usuarios"
+
+    def save(self, *args, **kwargs):
+        """Serializa cambios de estado con las asignaciones de equipos.
+
+        Los services que asignan un supervisor usan esta misma fila como mutex. Así una
+        desactivación concurrente no puede validar “sin equipo” y confirmar después de
+        que otra transacción le haya asignado una relación activa.
+        """
+        with transaction.atomic():
+            if self.pk:
+                type(self).objects.select_for_update().filter(pk=self.pk).exists()
+            return super().save(*args, **kwargs)
 
     @property
     def roles(self) -> list[str]:

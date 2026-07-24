@@ -7,14 +7,17 @@ plano, sin los serializers por rol que lo protegen en sus endpoints de origen.
 from datetime import date, timedelta
 
 import pytest
+from django.contrib.auth.models import Permission
+from django.urls import reverse
 from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps.auditoria.models import Accion, RegistroAuditoria
 from apps.auditoria.services import registrar_evento, tomar_foto
+from apps.auditoria.tests.utils import vaciar_bitacora
 from apps.empleados import services as emp_services
 from apps.empleados.models import Empleado
-from apps.organizacion.models import Empresa
+from apps.organizacion.models import Empresa, Puesto, Sector
 from common import roles
 
 pytestmark = pytest.mark.django_db
@@ -35,7 +38,21 @@ def cliente_admin(crear_usuario):
 
 @pytest.fixture
 def empresa():
-    return Empresa.objects.create(nombre="VIAL VICTORIA")
+    empresa = Empresa.objects.create(nombre="VIAL VICTORIA")
+    empresa._sector_prueba = Sector.objects.create(nombre="Operaciones")
+    empresa._puesto_prueba = Puesto.objects.create(
+        nombre="Chofer", sector=empresa._sector_prueba
+    )
+    return empresa
+
+
+def _relacion(empresa, fecha_ingreso):
+    return {
+        "empresa": empresa,
+        "sector": empresa._sector_prueba,
+        "puesto": empresa._puesto_prueba,
+        "fecha_ingreso": fecha_ingreso,
+    }
 
 
 @pytest.fixture
@@ -48,7 +65,7 @@ def empleado(actor, empresa):
     return emp_services.crear_empleado(
         actor=actor,
         datos_empleado={"dni": "30111222", "nombre": "Juan", "apellido": "Pérez"},
-        datos_relacion={"empresa": empresa, "fecha_ingreso": date(2024, 1, 10)},
+        datos_relacion=_relacion(empresa, date(2024, 1, 10)),
     )
 
 
@@ -76,14 +93,52 @@ def test_sin_autenticar_no_entra(empleado):
     assert APIClient().get(URL).status_code == 401
 
 
+def test_admin_de_django_tambien_restringe_la_bitacora_a_rol_admin(
+    client, crear_usuario, empleado
+):
+    rrhh = crear_usuario(username="staff_rrhh", rol=roles.RRHH)
+    rrhh.is_staff = True
+    rrhh.save(update_fields=["is_staff"])
+    rrhh.user_permissions.add(
+        Permission.objects.get(
+            codename="view_registroauditoria",
+            content_type__app_label="auditoria",
+        )
+    )
+    client.force_login(rrhh)
+
+    respuesta = client.get(
+        reverse("admin:auditoria_registroauditoria_changelist")
+    )
+
+    assert respuesta.status_code == 403
+
+
+def test_rol_admin_staff_puede_consultar_la_bitacora_en_admin(
+    client, crear_usuario, empleado
+):
+    administrador = crear_usuario(username="staff_admin", rol=roles.ADMIN)
+    administrador.is_staff = True
+    administrador.save(update_fields=["is_staff"])
+    client.force_login(administrador)
+
+    respuesta = client.get(
+        reverse("admin:auditoria_registroauditoria_changelist")
+    )
+
+    assert respuesta.status_code == 200
+
+
 # --- Filtros ----------------------------------------------------------------------------
 
 
-def test_el_historial_de_una_ficha_sale_de_un_solo_filtro(cliente_admin, actor, empleado):
+def test_el_historial_de_una_ficha_sale_de_un_solo_filtro(
+    cliente_admin, actor, empleado, empresa
+):
     otro = emp_services.crear_empleado(
         actor=actor,
         datos_empleado={"dni": "30999888", "nombre": "Ana", "apellido": "Gómez"},
-        datos_relacion={"empresa": Empresa.objects.first(), "fecha_ingreso": date(2024, 5, 1)},
+        datos_relacion=_relacion(empresa, date(2024, 5, 1)),
     )
 
     resp = cliente_admin.get(URL, {"empleado": empleado.pk})
@@ -145,7 +200,7 @@ def test_lo_mas_nuevo_primero(cliente_admin, actor, empleado):
 
 
 def test_los_cambios_vienen_listos_para_pintar(cliente_admin, actor, empleado):
-    RegistroAuditoria.objects.all().delete()
+    vaciar_bitacora()
     emp_services.actualizar_empleado(
         actor=actor, empleado=empleado, datos_empleado={"telefono": "2664112233"}
     )
@@ -161,7 +216,7 @@ def test_los_cambios_vienen_listos_para_pintar(cliente_admin, actor, empleado):
 
 
 def test_una_baja_se_lee_entera_desde_la_api(cliente_admin, actor, empleado):
-    RegistroAuditoria.objects.all().delete()
+    vaciar_bitacora()
     emp_services.finalizar_relacion(
         actor=actor,
         relacion=empleado.relacion_activa,

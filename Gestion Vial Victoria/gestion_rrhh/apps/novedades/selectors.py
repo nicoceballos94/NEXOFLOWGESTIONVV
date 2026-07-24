@@ -5,33 +5,54 @@ por sector del Supervisor se difiere a la fase de asistencias); el Empleado ve s
 propio. La vigencia efectiva de una cadena de prórrogas se calcula acá, nunca se guarda.
 """
 from django.db.models import Q, QuerySet
+from django.utils.dateparse import parse_date
+from rest_framework.exceptions import ValidationError
 
 from common import roles
 
 from .models import EstadoNovedad, Novedad
+from .periodos import cadena_intersecta_desde
 
 _VERDADERO = {"1", "true", "si", "sí", "yes"}
-
-
-def _puede_ver_todas(usuario) -> bool:
-    return usuario.tiene_rol(roles.ADMIN, roles.RRHH, roles.SUPERVISOR)
 
 
 def novedades_visibles_para(*, usuario, filtros=None, colapsar=False) -> QuerySet[Novedad]:
     qs = Novedad.objects.select_related(
         "empleado", "tipo_novedad", "relacion_laboral__empresa"
     ).prefetch_related("prorrogas")
-    if not _puede_ver_todas(usuario):
+    supervisor_restringido = usuario.tiene_rol(
+        roles.SUPERVISOR
+    ) and not usuario.tiene_rol(
+        roles.ADMIN, roles.RRHH
+    )
+    if supervisor_restringido:
+        qs = qs.filter(
+            Q(
+                relacion_laboral__estado="ACTIVA",
+                relacion_laboral__supervisor=usuario,
+            )
+            | Q(empleado__usuario=usuario)
+        )
+    elif not usuario.tiene_rol(roles.ADMIN, roles.RRHH):
         qs = qs.filter(empleado__usuario=usuario)  # solo lo propio
     filtros = filtros or {}
     expandir = str(filtros.get("expandir_cadenas", "")).lower() in _VERDADERO
     if colapsar and not expandir:
         # Cadenas colapsadas (§6 bis): la lista muestra la madre, no cada prórroga.
         qs = qs.filter(novedad_origen__isnull=True)
-    return _aplicar_filtros(qs, filtros)
+    return _aplicar_filtros(
+        qs,
+        filtros,
+        incluir_motivo=not supervisor_restringido,
+    )
 
 
-def _aplicar_filtros(qs: QuerySet[Novedad], filtros) -> QuerySet[Novedad]:
+def _aplicar_filtros(
+    qs: QuerySet[Novedad],
+    filtros,
+    *,
+    incluir_motivo: bool = True,
+) -> QuerySet[Novedad]:
     empleado = filtros.get("empleado")
     tipo = filtros.get("tipo")  # codigo del catálogo
     estado = filtros.get("estado")
@@ -41,33 +62,50 @@ def _aplicar_filtros(qs: QuerySet[Novedad], filtros) -> QuerySet[Novedad]:
     busqueda = filtros.get("q")
 
     if empleado:
-        qs = qs.filter(empleado_id=empleado)
+        qs = qs.filter(empleado_id=_entero_positivo(empleado, "empleado"))
     if tipo:
         qs = qs.filter(tipo_novedad__codigo=tipo)
     if estado:
+        estados_validos = {valor for valor, _ in EstadoNovedad.choices}
+        if estado not in estados_validos:
+            raise ValidationError({"estado": "Estado de novedad inválido."})
         qs = qs.filter(estado=estado)
     if empresa:
-        # `relacion_laboral` es opcional (p. ej. datos importados fuera del alta). Filtrar
-        # solo por ella hacía desaparecer esas novedades de la lista: se caen del JOIN y no
-        # aparecen bajo NINGUNA empresa. Igual que el ranking del dashboard, se cae a las
-        # relaciones del empleado cuando la novedad no trae la suya.
-        # distinct(): con relación en las dos empresas del grupo, el OR matchea dos veces.
         qs = qs.filter(
-            Q(relacion_laboral__empresa_id=empresa)
-            | Q(relacion_laboral__isnull=True, empleado__relaciones__empresa_id=empresa)
-        ).distinct()
+            relacion_laboral__empresa_id=_entero_positivo(empresa, "empresa")
+        )
     if desde:
-        qs = qs.filter(fecha_desde__gte=desde)
+        desde = _fecha(desde, "desde")
+        qs = qs.filter(cadena_intersecta_desde(desde)).distinct()
     if hasta:
-        qs = qs.filter(fecha_desde__lte=hasta)
+        qs = qs.filter(fecha_desde__lte=_fecha(hasta, "hasta"))
     if busqueda:
-        qs = qs.filter(
-            Q(motivo__icontains=busqueda)
-            | Q(empleado__nombre__icontains=busqueda)
+        criterio = (
+            Q(empleado__nombre__icontains=busqueda)
             | Q(empleado__apellido__icontains=busqueda)
             | Q(empleado__legajo__icontains=busqueda)
         )
+        if incluir_motivo:
+            criterio |= Q(motivo__icontains=busqueda)
+        qs = qs.filter(criterio)
     return qs
+
+
+def _entero_positivo(valor, campo: str) -> int:
+    try:
+        numero = int(valor)
+    except (TypeError, ValueError):
+        raise ValidationError({campo: "Debe ser un identificador numérico."})
+    if numero <= 0:
+        raise ValidationError({campo: "Debe ser un identificador positivo."})
+    return numero
+
+
+def _fecha(valor, campo: str):
+    fecha = parse_date(str(valor))
+    if fecha is None:
+        raise ValidationError({campo: "Debe tener formato AAAA-MM-DD y ser una fecha válida."})
+    return fecha
 
 
 def novedad_madre(novedad: Novedad) -> Novedad:
@@ -77,11 +115,15 @@ def novedad_madre(novedad: Novedad) -> Novedad:
 
 def vigencia_efectiva(madre: Novedad) -> dict:
     """§6 bis: desde = fecha_desde de la madre; hasta = MAX(fecha_hasta) entre madre y
-    prórrogas APROBADAS. `dias_totales` incluye ambos extremos. Todo calculado, nunca guardado.
+    prórrogas APROBADAS o CERRADAS. `dias_totales` incluye ambos extremos. Todo calculado,
+    nunca guardado.
     """
     hasta = madre.fecha_hasta
     for prorroga in madre.prorrogas.all():
-        if prorroga.estado != EstadoNovedad.APROBADA or not prorroga.fecha_hasta:
+        if prorroga.estado not in (
+            EstadoNovedad.APROBADA,
+            EstadoNovedad.CERRADA,
+        ) or not prorroga.fecha_hasta:
             continue
         if hasta is None or prorroga.fecha_hasta > hasta:
             hasta = prorroga.fecha_hasta

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from django.db import transaction
 
+from apps.auditoria.services import Accion, registrar_evento, tomar_foto
 from apps.empleados.models import TipoDocumento
 
 from .models import Parametro
@@ -61,18 +62,30 @@ def _validar_dias(dias) -> int:
 
 
 @transaction.atomic
-def guardar_dias_aviso(*, clave: str, dias: int) -> dict:
+def guardar_dias_aviso(*, clave: str, dias: int, actor=None) -> dict:
     """Guarda la anticipación de una fila. Devuelve la fila actualizada."""
     dias = _validar_dias(dias)
 
     if clave == CLAVE_CONTRATOS:
-        Parametro.objects.update_or_create(
+        parametro_previo = (
+            Parametro.objects.select_for_update().filter(clave=CLAVE_DIAS_AVISO).first()
+        )
+        antes = tomar_foto(parametro_previo) if parametro_previo else {}
+        parametro, _ = Parametro.objects.update_or_create(
             clave=CLAVE_DIAS_AVISO,
             defaults={
                 "valor": {"dias": dias},
                 "descripcion": "Días de anticipación con que se avisa el fin de un contrato.",
             },
         )
+        if actor is not None:
+            registrar_evento(
+                actor=actor,
+                accion=Accion.CONFIG_ACTUALIZADA,
+                objeto=parametro,
+                antes=antes,
+                solo_si_cambia=True,
+            )
         return {"clave": clave, "label": "Contratos a plazo", "hint": HINT_CONTRATOS, "dias": dias}
 
     if not clave.startswith("tipo:"):
@@ -82,9 +95,19 @@ def guardar_dias_aviso(*, clave: str, dias: int) -> dict:
     except ValueError:
         raise ClaveDesconocida(clave)
 
-    tipo = TipoDocumento.objects.filter(pk=tipo_id, activo=True).first()
+    tipo = TipoDocumento.objects.select_for_update().filter(pk=tipo_id, activo=True).first()
     if not tipo:
         raise ClaveDesconocida(clave)
+    antes = tomar_foto(tipo, campos=("dias_aviso",))
     tipo.dias_aviso = dias
     tipo.save(update_fields=["dias_aviso", "actualizado_en"])
+    if actor is not None:
+        registrar_evento(
+            actor=actor,
+            accion=Accion.CONFIG_ACTUALIZADA,
+            objeto=tipo,
+            antes=antes,
+            campos=("dias_aviso",),
+            solo_si_cambia=True,
+        )
     return {"clave": clave, "label": tipo.nombre, "hint": tipo.descripcion, "dias": dias}

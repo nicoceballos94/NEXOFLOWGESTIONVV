@@ -1,5 +1,11 @@
 # Propuesta técnica — Sistema de RRHH y Control de Asistencias
 
+> **Vigencia:** fundamento histórico, no arquitectura operativa de producción. Conserva
+> decisiones futuras y razonamiento útil, pero las secciones de autenticación JWT,
+> importación Excel obligatoria, Servicio compartiendo auth humana y topología de deploy
+> fueron reemplazadas el 2026-07-24. La referencia canónica del MVP1 es
+> [`ARQUITECTURA_MVP1_PRODUCCION.md`](ARQUITECTURA_MVP1_PRODUCCION.md).
+
 > **Origen:** este documento re-fundamenta técnicamente la especificación funcional `MODULO_RRHH_SPEC.md` (pensada para n8n + Google Sheets) sobre el nuevo stack: **Django + DRF + PostgreSQL, monolito modular**. Toma la spec como definición de *qué* hace el sistema y marca dónde la extiende o ajusta.
 >
 > Decisiones ya incorporadas desde la spec: baja lógica vía relación laboral (caso DAMIAN con 2 relaciones), tipos de novedad reales (accidente/falta/licencia/vacaciones, con ampliaciones), los 4 gaps identificados (§2 de la spec), y n8n/Telegram como consumidores.

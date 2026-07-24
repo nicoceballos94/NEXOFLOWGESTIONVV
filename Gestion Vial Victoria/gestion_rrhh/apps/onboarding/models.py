@@ -3,9 +3,9 @@
 Dos mitades:
 - **Plantilla** (`PlantillaChecklist` + `ItemPlantilla`): lo que RRHH configura una vez
   por empresa y tipo de proceso. Es un ABM, vive en Configuración.
-- **Proceso** (`ProcesoEmpleado` + `ItemProceso`): la tarjeta de un empleado concreto.
-  Se crea perezosamente al abrirse en la ficha (onboarding tras el alta; offboarding
-  cuando la relación ya está dada de baja), así `empleados` no depende de esta app.
+- **Proceso** (`ProcesoEmpleado` + `ItemProceso`): la tarjeta de una relación concreta.
+  Se inicia con un POST explícito e idempotente (onboarding tras el alta; offboarding
+  tras la baja), así una lectura nunca produce cambios.
 
 Dos tipos de ítem (spec CU-29):
 - **ACCION**: se tilda a mano; queda la constancia de quién y cuándo (`ItemProceso`).
@@ -18,6 +18,7 @@ un renglón, no le borra el checklist ya cargado a nadie (constancia, sobre todo
 """
 from django.conf import settings
 from django.db import models
+from django.db.models.functions import Coalesce
 
 from common.models import ModeloBase
 
@@ -32,36 +33,82 @@ class TipoItem(models.TextChoices):
     DOCUMENTAL = "DOCUMENTAL", "Documental (enlazado a un documento del legajo)"
 
 
-class PlantillaChecklist(ModeloBase):
-    """Checklist configurable, una activa por (empresa, tipo de proceso).
+class EstadoPlantilla(models.TextChoices):
+    BORRADOR = "BORRADOR", "Borrador"
+    PUBLICADA = "PUBLICADA", "Publicada"
+    ARCHIVADA = "ARCHIVADA", "Archivada"
 
-    El checklist puede diferir entre Vial Victoria y Premocor (decisión de negocio de la
-    spec), por eso cuelga de la empresa. La baja es lógica (`activa`): una plantilla vieja
-    no se borra porque hay `ItemProceso` que la fotografiaron.
+
+class PlantillaChecklist(ModeloBase):
+    """Checklist versionado por empresa, sector opcional y tipo de proceso.
+
+    `sector=None` es el respaldo general de la empresa. Una versión publicada es
+    inmutable; una nueva definición nace como borrador y al publicarse archiva la anterior.
     """
 
     empresa = models.ForeignKey(
         "organizacion.Empresa", on_delete=models.PROTECT, related_name="plantillas_checklist"
     )
+    sector = models.ForeignKey(
+        "organizacion.Sector",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="plantillas_checklist",
+        help_text="Sector al que aplica. Null es una plantilla general de respaldo.",
+    )
     tipo_proceso = models.CharField(max_length=10, choices=TipoProceso.choices)
-    activa = models.BooleanField(default=True)
+    version = models.PositiveSmallIntegerField(default=1, editable=False)
+    estado = models.CharField(
+        max_length=10,
+        choices=EstadoPlantilla.choices,
+        default=EstadoPlantilla.BORRADOR,
+    )
 
     class Meta:
         verbose_name = "plantilla de checklist"
         verbose_name_plural = "plantillas de checklist"
         ordering = ["empresa", "tipo_proceso"]
         constraints = [
-            # Una sola plantilla ACTIVA por (empresa, tipo) — índice único parcial, mismo
-            # patrón que la relación laboral activa. Puede haber plantillas viejas inactivas.
             models.UniqueConstraint(
-                fields=["empresa", "tipo_proceso"],
-                condition=models.Q(activa=True),
-                name="uniq_plantilla_activa_por_empresa_tipo",
-            )
+                models.F("empresa"),
+                Coalesce("sector", models.Value(0)),
+                models.F("tipo_proceso"),
+                models.F("version"),
+                name="uniq_version_plantilla_por_alcance",
+            ),
+            models.UniqueConstraint(
+                models.F("empresa"),
+                Coalesce("sector", models.Value(0)),
+                models.F("tipo_proceso"),
+                condition=models.Q(estado=EstadoPlantilla.PUBLICADA),
+                name="uniq_plantilla_publicada_por_alcance",
+            ),
+            models.UniqueConstraint(
+                models.F("empresa"),
+                Coalesce("sector", models.Value(0)),
+                models.F("tipo_proceso"),
+                condition=models.Q(estado=EstadoPlantilla.BORRADOR),
+                name="uniq_plantilla_borrador_por_alcance",
+            ),
         ]
 
     def __str__(self):
-        return f"{self.get_tipo_proceso_display()} · {self.empresa}"
+        alcance = self.sector or "General"
+        return (
+            f"{self.get_tipo_proceso_display()} · {self.empresa} · {alcance} "
+            f"(v{self.version})"
+        )
+
+    @property
+    def activa(self) -> bool:
+        """Compatibilidad de salida: una plantilla activa es una versión publicada."""
+        return self.estado == EstadoPlantilla.PUBLICADA
+
+    @property
+    def empleado_auditado(self):
+        """La configuración no pertenece al legajo de una persona."""
+        return None
 
 
 class ItemPlantilla(ModeloBase):
@@ -106,13 +153,18 @@ class ItemPlantilla(ModeloBase):
     def __str__(self):
         return f"{self.etiqueta} ({self.get_tipo_item_display()})"
 
+    @property
+    def empleado_auditado(self):
+        """La configuración no pertenece al legajo de una persona."""
+        return None
+
 
 class ProcesoEmpleado(ModeloBase):
     """La tarjeta de checklist de un empleado, anclada a una RELACIÓN laboral.
 
     Se ancla a `relacion_laboral` y no al empleado: el onboarding es por ingreso a una
     empresa, así el reingreso (caso DAMIAN, 2 relaciones) no pisa el checklist anterior.
-    Se crea perezosamente la primera vez que se abre en la ficha.
+    Se inicia mediante una escritura explícita e idempotente.
 
     NO guarda un campo "completado": la compleción se calcula en vivo (ítems hechos / total)
     porque un ítem DOCUMENTAL se completa al cargar un documento desde la app `empleados`,
@@ -139,7 +191,7 @@ class ProcesoEmpleado(ModeloBase):
         ordering = ["-creado_en"]
         constraints = [
             # Un solo proceso por (relación, tipo): no se abren dos onboarding para el mismo
-            # ingreso. Es el ancla del get_or_create perezoso del service.
+            # ingreso. Es el ancla del inicio idempotente del service.
             models.UniqueConstraint(
                 fields=["relacion_laboral", "tipo_proceso"],
                 name="uniq_proceso_por_relacion_tipo",
@@ -149,7 +201,9 @@ class ProcesoEmpleado(ModeloBase):
     def __str__(self):
         return f"{self.get_tipo_proceso_display()} · {self.relacion_laboral}"
 
-
+    @property
+    def empleado_auditado(self):
+        return self.relacion_laboral.empleado
 class ItemProceso(ModeloBase):
     """Foto de un renglón de la plantilla para un proceso concreto, con su estado.
 

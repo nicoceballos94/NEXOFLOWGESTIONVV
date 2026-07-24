@@ -32,9 +32,12 @@ def capacidades_de(usuario) -> dict[str, bool]:
     | novedades_decidir   | Admin/RRHH               | _SoloRRHH (aprobar/rechazar/anular)|
     | catalogos_escribir  | Admin/RRHH               | organización (escritura)          |
     | config_escribir     | Admin/RRHH               | config vencimientos (escritura)   |
+    | reportes_ver        | Admin/RRHH               | reportes históricos               |
     | auditoria_ver       | Admin                    | _SoloAdmin (bitácora)             |
     """
     if usuario is None or not usuario.is_authenticated:
+        return {clave: False for clave in _CLAVES}
+    if usuario.groups.filter(name=roles.SERVICIO).exists():
         return {clave: False for clave in _CLAVES}
     return {
         "ve_dotacion": usuario.tiene_rol(*_OPERATIVOS),
@@ -43,6 +46,7 @@ def capacidades_de(usuario) -> dict[str, bool]:
         "novedades_decidir": usuario.tiene_rol(*_SOLO_RRHH),
         "catalogos_escribir": usuario.tiene_rol(*_SOLO_RRHH),
         "config_escribir": usuario.tiene_rol(*_SOLO_RRHH),
+        "reportes_ver": usuario.tiene_rol(*_SOLO_RRHH),
         "auditoria_ver": usuario.tiene_rol(*_SOLO_ADMIN),
     }
 
@@ -55,5 +59,6 @@ _CLAVES = (
     "novedades_decidir",
     "catalogos_escribir",
     "config_escribir",
+    "reportes_ver",
     "auditoria_ver",
 )

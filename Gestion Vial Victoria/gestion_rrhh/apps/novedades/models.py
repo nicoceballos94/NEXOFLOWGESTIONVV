@@ -9,6 +9,7 @@ fecha "total" y la cadena no pueden contradecirse.
 from django.conf import settings
 from django.contrib.postgres.constraints import ExclusionConstraint
 from django.contrib.postgres.fields import DateRangeField, RangeBoundary, RangeOperators
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Func, Q
 
@@ -102,11 +103,9 @@ class Novedad(ModeloBase):
     )
     relacion_laboral = models.ForeignKey(
         "empleados.RelacionLaboral",
-        null=True,
-        blank=True,
         on_delete=models.PROTECT,
         related_name="novedades",
-        help_text="Contexto empresa/contrato; por defecto la relación activa del empleado.",
+        help_text="Contexto empresa/contrato obligatorio; se deriva de la relación activa.",
     )
     tipo_novedad = models.ForeignKey(
         TipoNovedad, on_delete=models.PROTECT, related_name="novedades"
@@ -130,6 +129,18 @@ class Novedad(ModeloBase):
     )
     motivo = models.CharField(max_length=255, blank=True)
     observaciones = models.TextField(blank=True)
+    motivo_rechazo = models.CharField(
+        max_length=500,
+        blank=True,
+        editable=False,
+        help_text="Razón estructurada y obligatoria cuando el estado es RECHAZADA.",
+    )
+    motivo_anulacion = models.CharField(
+        max_length=500,
+        blank=True,
+        editable=False,
+        help_text="Razón estructurada y obligatoria cuando el estado es ANULADA.",
+    )
     fecha_aviso_empleado = models.DateField(
         null=True, blank=True, help_text="Cuándo avisó el empleado (del front)."
     )
@@ -162,6 +173,42 @@ class Novedad(ModeloBase):
         related_name="novedades_aprobadas",
     )
     aprobada_en = models.DateTimeField(null=True, blank=True)
+    tomada_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        editable=False,
+        on_delete=models.PROTECT,
+        related_name="novedades_tomadas",
+    )
+    tomada_en = models.DateTimeField(null=True, blank=True, editable=False)
+    rechazada_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        editable=False,
+        on_delete=models.PROTECT,
+        related_name="novedades_rechazadas",
+    )
+    rechazada_en = models.DateTimeField(null=True, blank=True, editable=False)
+    anulada_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        editable=False,
+        on_delete=models.PROTECT,
+        related_name="novedades_anuladas",
+    )
+    anulada_en = models.DateTimeField(null=True, blank=True, editable=False)
+    cerrada_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        editable=False,
+        on_delete=models.PROTECT,
+        related_name="novedades_cerradas",
+    )
+    cerrada_en = models.DateTimeField(null=True, blank=True, editable=False)
     ocupa_periodo = models.BooleanField(
         default=False,
         editable=False,
@@ -175,6 +222,23 @@ class Novedad(ModeloBase):
         verbose_name_plural = "novedades"
         ordering = ["-fecha_desde", "-id"]
         constraints = [
+            models.CheckConstraint(
+                name="novedad_fechas_validas",
+                condition=Q(fecha_hasta__isnull=True)
+                | Q(fecha_hasta__gte=models.F("fecha_desde")),
+            ),
+            models.CheckConstraint(
+                name="novedad_horas_positivas_o_null",
+                condition=Q(cantidad_horas__isnull=True) | Q(cantidad_horas__gt=0),
+            ),
+            models.CheckConstraint(
+                name="novedad_rechazada_exige_motivo",
+                condition=~Q(estado=EstadoNovedad.RECHAZADA) | ~Q(motivo_rechazo=""),
+            ),
+            models.CheckConstraint(
+                name="novedad_anulada_exige_motivo",
+                condition=~Q(estado=EstadoNovedad.ANULADA) | ~Q(motivo_anulacion=""),
+            ),
             # Respaldo en la base de la regla que services._validar_sin_solapamiento valida
             # con un mensaje amigable: dos novedades que ocupan período no conviven. La
             # validación en Python puede perder una carrera entre requests concurrentes;
@@ -200,6 +264,29 @@ class Novedad(ModeloBase):
         return f"{self.tipo_novedad} de {self.empleado} ({self.fecha_desde})"
 
     def save(self, *args, **kwargs):
+        # Compatibilidad controlada para cargas históricas y scripts: si no se pasó la
+        # relación, se deriva por la fecha del hecho. La columna es NOT NULL, de modo que
+        # bulk/SQL no pueden dejar una novedad huérfana.
+        if not self.relacion_laboral_id and self.empleado_id and self.fecha_desde:
+            from apps.empleados.models import RelacionLaboral
+
+            self.relacion_laboral = (
+                RelacionLaboral.objects.filter(
+                    Q(fecha_egreso__isnull=True) | Q(fecha_egreso__gte=self.fecha_desde),
+                    empleado_id=self.empleado_id,
+                    fecha_ingreso__lte=self.fecha_desde,
+                )
+                .order_by("-fecha_ingreso", "-id")
+                .first()
+            )
+        if (
+            self.relacion_laboral_id
+            and self.empleado_id
+            and self.relacion_laboral.empleado_id != self.empleado_id
+        ):
+            raise ValidationError(
+                {"relacion_laboral": "La relación laboral debe pertenecer al empleado."}
+            )
         # El flag se recalcula solo cuando el tipo puede haber cambiado: las transiciones de
         # estado guardan con update_fields acotado y no deben pagar un query extra por el tipo.
         campos = kwargs.get("update_fields")

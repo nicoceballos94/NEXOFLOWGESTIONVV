@@ -2,6 +2,7 @@
 import pytest
 from rest_framework.test import APIClient
 
+from apps.auditoria.models import Accion, RegistroAuditoria
 from apps.empleados.models import TipoDocumento
 from apps.organizacion.config_vencimientos import (
     CLAVE_CONTRATOS,
@@ -99,6 +100,10 @@ def test_el_endpoint_lee_y_guarda(crear_usuario, apto):
     assert resp.data["dias"] == 45
     apto.refresh_from_db()
     assert apto.dias_aviso == 45
+    evento = RegistroAuditoria.objects.get(accion=Accion.CONFIG_ACTUALIZADA)
+    assert evento.entidad == "TipoDocumento"
+    assert evento.valores_antes == {"dias_aviso": 30}
+    assert evento.valores_despues == {"dias_aviso": 45}
 
 
 def test_el_endpoint_rechaza_lo_invalido(crear_usuario, apto):

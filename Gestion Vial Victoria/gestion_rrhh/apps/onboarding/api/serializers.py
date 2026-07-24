@@ -6,8 +6,8 @@ de plantillas y los de entrada de las acciones.
 """
 from rest_framework import serializers
 
-from apps.empleados.models import TipoDocumento
-from apps.organizacion.models import Empresa
+from apps.empleados.models import RelacionLaboral, TipoDocumento
+from apps.organizacion.models import Empresa, Sector
 
 from ..models import ItemPlantilla, PlantillaChecklist, TipoItem, TipoProceso
 
@@ -44,28 +44,40 @@ class PlantillaChecklistSerializer(serializers.ModelSerializer):
             "id",
             "empresa",
             "empresa_nombre",
+            "sector",
+            "sector_nombre",
             "tipo_proceso",
+            "version",
+            "estado",
             "activa",
             "items",
         )
+    sector_nombre = serializers.CharField(source="sector.nombre", read_only=True, default=None)
+    activa = serializers.BooleanField(read_only=True)
 
 
 class CrearPlantillaSerializer(serializers.Serializer):
     empresa = serializers.PrimaryKeyRelatedField(queryset=Empresa.objects.all())
+    sector = serializers.PrimaryKeyRelatedField(
+        queryset=Sector.objects.filter(activo=True), required=False, allow_null=True
+    )
     tipo_proceso = serializers.ChoiceField(choices=TipoProceso.choices)
 
 
-class ActualizarPlantillaSerializer(serializers.Serializer):
-    """Solo se edita el estado activo (baja/alta lógica de la plantilla)."""
-
-    activa = serializers.BooleanField()
+class IniciarProcesoSerializer(serializers.Serializer):
+    relacion_laboral = serializers.PrimaryKeyRelatedField(
+        queryset=RelacionLaboral.objects.select_related("empleado")
+    )
+    tipo_proceso = serializers.ChoiceField(choices=TipoProceso.choices)
 
 
 class CrearItemSerializer(serializers.Serializer):
     etiqueta = serializers.CharField(max_length=120)
     tipo_item = serializers.ChoiceField(choices=TipoItem.choices, default=TipoItem.ACCION)
     tipo_documento = serializers.PrimaryKeyRelatedField(
-        queryset=TipoDocumento.objects.all(), required=False, allow_null=True
+        queryset=TipoDocumento.objects.filter(activo=True),
+        required=False,
+        allow_null=True,
     )
     orden = serializers.IntegerField(required=False, min_value=0)
 
@@ -74,7 +86,9 @@ class ActualizarItemSerializer(serializers.Serializer):
     etiqueta = serializers.CharField(max_length=120, required=False)
     tipo_item = serializers.ChoiceField(choices=TipoItem.choices, required=False)
     tipo_documento = serializers.PrimaryKeyRelatedField(
-        queryset=TipoDocumento.objects.all(), required=False, allow_null=True
+        queryset=TipoDocumento.objects.filter(activo=True),
+        required=False,
+        allow_null=True,
     )
     orden = serializers.IntegerField(required=False, min_value=0)
     activo = serializers.BooleanField(required=False)

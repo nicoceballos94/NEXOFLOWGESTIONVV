@@ -1,0 +1,13 @@
+**
+!frontend/
+!frontend/build.py
+!frontend/design/
+!frontend/design/**
+!frontend/integration/
+!frontend/integration/**
+!frontend/vendor/
+!frontend/vendor/**
+!gestion_rrhh/
+!gestion_rrhh/Dockerfile.web
+!gestion_rrhh/deploy/
+!gestion_rrhh/deploy/nginx.conf
