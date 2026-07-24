@@ -40,6 +40,7 @@ INSTALLED_APPS = [
     "apps.novedades",
     "apps.dashboard",
     "apps.onboarding",
+    "apps.auditoria",
 ]
 
 MIDDLEWARE = [

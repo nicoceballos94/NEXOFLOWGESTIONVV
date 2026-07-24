@@ -5,8 +5,8 @@ regla (R11: aprobar/rechazar exige rol RRHH/Admin, se valida en la capa de permi
 cadena de prórrogas concentra RP1–RP7 en `prorrogar_novedad`, todo transaccional.
 
 TODO(RP8): registrar cada eslabón (creación, aprobación, rechazo, anulación, prórroga) en
-RegistroAuditoria con acción semántica cuando exista la app `auditoria` (hoy no existe;
-`empleados` tampoco audita todavía).
+RegistroAuditoria con acción semántica. La app `auditoria` YA EXISTE (motor y acciones
+listos: `apps.auditoria.services.registrar_evento`); falta cablearla acá y en `empleados`.
 """
 from datetime import timedelta
 
