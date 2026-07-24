@@ -1,0 +1,7 @@
+# React vendorizado: su SRI en frontend/design/support.js se calcula sobre los
+# bytes LF originales. Sin esta regla, git con core.autocrlf=true (Windows)
+# convierte LF→CRLF al hacer checkout, cambia los bytes, el hash deja de coincidir
+# y el navegador rechaza React (pantalla negra). `text eol=lf` obliga a LF en el
+# working tree en cualquier plataforma, sin marcarlos como binarios: siguen siendo
+# JavaScript de texto y un editor no puede recommitear CRLF.
+frontend/vendor/*.js text eol=lf

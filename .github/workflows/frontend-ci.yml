@@ -7,6 +7,7 @@ on:
   push:
     paths:
       - "Gestion Vial Victoria/frontend/**"
+      - "Gestion Vial Victoria/.gitattributes"
       - "Gestion Vial Victoria/gestion_rrhh/apps/empleados/api/serializers.py"
       - "Gestion Vial Victoria/gestion_rrhh/apps/novedades/api/serializers.py"
       - "Gestion Vial Victoria/gestion_rrhh/apps/organizacion/api/serializers.py"
@@ -15,6 +16,7 @@ on:
   pull_request:
     paths:
       - "Gestion Vial Victoria/frontend/**"
+      - "Gestion Vial Victoria/.gitattributes"
       - "Gestion Vial Victoria/gestion_rrhh/apps/empleados/api/serializers.py"
       - "Gestion Vial Victoria/gestion_rrhh/apps/novedades/api/serializers.py"
       - "Gestion Vial Victoria/gestion_rrhh/apps/organizacion/api/serializers.py"

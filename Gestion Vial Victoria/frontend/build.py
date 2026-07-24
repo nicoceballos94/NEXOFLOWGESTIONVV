@@ -13,6 +13,7 @@ Uso:  python build.py   →   dist/index.html + support.js + ceibo-api.js
 Servir: python dev_server.py   (estáticos + proxy /api/ same-origin)
 """
 from pathlib import Path
+import base64
 import hashlib
 import re
 import shutil
@@ -2617,6 +2618,46 @@ def _nombre_hasheado(nombre: str, datos: bytes) -> str:
     return f"{base}.{hashlib.sha256(datos).hexdigest()[:10]}.{ext}"
 
 
+def _sri_sha384(datos: bytes) -> str:
+    """SRI (`sha384-<base64>`) de un asset, el mismo formato que usa support.js."""
+    return "sha384-" + base64.b64encode(hashlib.sha384(datos).digest()).decode("ascii")
+
+
+def _verificar_sri_vendor(react: bytes, react_dom: bytes) -> None:
+    """Corta el build si los bytes vendorizados no coinciden con el SRI de support.js.
+
+    support.js carga React con integridad (SRI) calculada sobre los bytes LF
+    originales. Si algo los altera —típicamente git con ``core.autocrlf=true`` en
+    Windows convirtiendo LF→CRLF cuando falta la regla de ``.gitattributes``— el
+    hash deja de coincidir, el navegador rechaza React y la app queda en pantalla
+    negra sin un error legible. Mejor fallar acá, en el build, con el diagnóstico
+    exacto en vez de producir un artefacto roto que pasa el resto de las guardas.
+    """
+    support = (DESIGN / "support.js").read_text(encoding="utf-8")
+    esperados = dict(
+        re.findall(r'(REACT(?:_DOM)?_SRI) = "(sha384-[A-Za-z0-9+/=]+)"', support)
+    )
+    faltantes = {"REACT_SRI", "REACT_DOM_SRI"} - esperados.keys()
+    if faltantes:
+        sys.exit(
+            f"ERROR: no se encontraron los SRI {sorted(faltantes)} en design/support.js."
+        )
+    reales = {"REACT_SRI": _sri_sha384(react), "REACT_DOM_SRI": _sri_sha384(react_dom)}
+    for clave, archivo in (
+        ("REACT_SRI", "react-18.3.1.production.min.js"),
+        ("REACT_DOM_SRI", "react-dom-18.3.1.production.min.js"),
+    ):
+        if reales[clave] != esperados[clave]:
+            sys.exit(
+                f"ERROR: vendor/{archivo} no coincide con el SRI fijado en support.js.\n"
+                f"  esperado (support.js): {esperados[clave]}\n"
+                f"  real (bytes en disco): {reales[clave]}\n"
+                "  Causa tipica en Windows: git convirtio LF->CRLF (core.autocrlf).\n"
+                "  Con 'frontend/vendor/*.js text eol=lf' en .gitattributes y un\n"
+                "  checkout limpio se restauran los bytes LF correctos."
+            )
+
+
 def generar_runtime_csp(html: str, react_nombre: str, react_dom_nombre: str) -> bytes:
     """Convierte el runtime del snapshot en uno estático, same-origin y sin evaluación.
 
@@ -2710,6 +2751,7 @@ def generar_runtime_csp(html: str, react_nombre: str, react_dom_nombre: str) -> 
 def _assets_produccion(html: str) -> list[tuple[str, bytes, bool]]:
     react = (VENDOR / "react-18.3.1.production.min.js").read_bytes()
     react_dom = (VENDOR / "react-dom-18.3.1.production.min.js").read_bytes()
+    _verificar_sri_vendor(react, react_dom)
     react_nombre = _nombre_hasheado("react.js", react)
     react_dom_nombre = _nombre_hasheado("react-dom.js", react_dom)
     runtime = generar_runtime_csp(html, react_nombre, react_dom_nombre)
