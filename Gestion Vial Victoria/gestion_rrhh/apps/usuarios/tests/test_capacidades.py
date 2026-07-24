@@ -15,22 +15,27 @@ ESPERADO = {
     roles.ADMIN: {
         "ve_dotacion": True, "empleados_escribir": True, "novedades_cargar": True,
         "novedades_decidir": True, "catalogos_escribir": True, "config_escribir": True,
+        "auditoria_ver": True,
     },
     roles.RRHH: {
         "ve_dotacion": True, "empleados_escribir": True, "novedades_cargar": True,
         "novedades_decidir": True, "catalogos_escribir": True, "config_escribir": True,
+        "auditoria_ver": False,  # el rol más auditado no lee su propio expediente
     },
     roles.SUPERVISOR: {
         "ve_dotacion": True, "empleados_escribir": False, "novedades_cargar": True,
         "novedades_decidir": False, "catalogos_escribir": False, "config_escribir": False,
+        "auditoria_ver": False,
     },
     roles.EMPLEADO: {
         "ve_dotacion": False, "empleados_escribir": False, "novedades_cargar": False,
         "novedades_decidir": False, "catalogos_escribir": False, "config_escribir": False,
+        "auditoria_ver": False,
     },
     roles.SERVICIO: {
         "ve_dotacion": False, "empleados_escribir": False, "novedades_cargar": False,
         "novedades_decidir": False, "catalogos_escribir": False, "config_escribir": False,
+        "auditoria_ver": False,
     },
 }
 
@@ -47,6 +52,7 @@ PROBES = {
     "novedades_decidir": ("post", "/api/v1/novedades/999999/aprobar/", {}),
     "catalogos_escribir": ("post", "/api/v1/empresas/", {}),
     "config_escribir": ("patch", "/api/v1/config/vencimientos/", {}),
+    "auditoria_ver": ("get", "/api/v1/auditoria/registros/", None),
 }
 
 

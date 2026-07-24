@@ -16,6 +16,9 @@ from common import roles
 # los arma con RolRequerido/LecturaAutenticadaEscrituraPorRol sobre estas mismas tuplas).
 _OPERATIVOS = (roles.ADMIN, roles.RRHH, roles.SUPERVISOR)  # cargar/prorrogar/editar
 _SOLO_RRHH = (roles.ADMIN, roles.RRHH)  # R11 y escritura de fichas/catálogos/config
+# La bitácora es el único permiso que NO incluye a RRHH: es el rol que más aparece
+# auditado (altas, bajas, aprobaciones), y no se le da a nadie su propio expediente.
+_SOLO_ADMIN = (roles.ADMIN,)
 
 
 def capacidades_de(usuario) -> dict[str, bool]:
@@ -29,6 +32,7 @@ def capacidades_de(usuario) -> dict[str, bool]:
     | novedades_decidir   | Admin/RRHH               | _SoloRRHH (aprobar/rechazar/anular)|
     | catalogos_escribir  | Admin/RRHH               | organización (escritura)          |
     | config_escribir     | Admin/RRHH               | config vencimientos (escritura)   |
+    | auditoria_ver       | Admin                    | _SoloAdmin (bitácora)             |
     """
     if usuario is None or not usuario.is_authenticated:
         return {clave: False for clave in _CLAVES}
@@ -39,6 +43,7 @@ def capacidades_de(usuario) -> dict[str, bool]:
         "novedades_decidir": usuario.tiene_rol(*_SOLO_RRHH),
         "catalogos_escribir": usuario.tiene_rol(*_SOLO_RRHH),
         "config_escribir": usuario.tiene_rol(*_SOLO_RRHH),
+        "auditoria_ver": usuario.tiene_rol(*_SOLO_ADMIN),
     }
 
 
@@ -50,4 +55,5 @@ _CLAVES = (
     "novedades_decidir",
     "catalogos_escribir",
     "config_escribir",
+    "auditoria_ver",
 )
